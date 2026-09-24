@@ -273,6 +273,7 @@ public class IdeConfig {
                 .toList();
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public List<ProviderConfig> getAnthropicProviders() {
         return getProvidersByApiType("ANTHROPIC");
     }
@@ -285,28 +286,34 @@ public class IdeConfig {
         this.taskRouting = taskRouting != null ? taskRouting : new EnumMap<>(TaskType.class);
     }
 
-    // Backward-compatibility getters/setters
+    // Backward-compatibility getters/setters (ignored by Jackson to avoid polluting or overwriting config)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getAiProvider() {
         return getActiveProviderId();
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setAiProvider(String aiProvider) {
         setActiveProviderId(aiProvider);
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getModelName() {
         return getActiveModelId();
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setModelName(String modelName) {
         setActiveModelId(modelName);
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getApiKey() {
         ProviderConfig prov = getProvider(getActiveProviderId());
         return prov != null ? prov.getApiKey() : "";
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setApiKey(String apiKey) {
         ProviderConfig prov = getProvider(getActiveProviderId());
         if (prov != null) {
@@ -314,11 +321,13 @@ public class IdeConfig {
         }
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getApiBaseUrl() {
         ProviderConfig prov = getProvider(getActiveProviderId());
         return prov != null ? prov.getBaseUrl() : "";
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setApiBaseUrl(String apiBaseUrl) {
         ProviderConfig prov = getProvider(getActiveProviderId());
         if (prov != null) {

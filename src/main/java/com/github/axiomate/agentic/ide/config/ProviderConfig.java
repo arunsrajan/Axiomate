@@ -49,6 +49,7 @@ public class ProviderConfig {
         return "CUSTOM";
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public boolean isAnthropicType() {
         String type = getProviderType();
         return "ANTHROPIC".equalsIgnoreCase(type) || "CUSTOM_ANTHROPIC".equalsIgnoreCase(type)

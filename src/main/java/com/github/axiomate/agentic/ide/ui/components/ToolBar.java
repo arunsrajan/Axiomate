@@ -89,31 +89,23 @@ public class ToolBar extends JToolBar {
         // Model provider selector
         JLabel provLabel = new JLabel("Provider: ");
         provLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        providerCombo = new JComboBox<>(new String[]{"Mock Simulator (Offline)", "OpenAI (Cloud)", "Custom / Ollama"});
+        providerCombo = new JComboBox<>();
         providerCombo.setFont(new Font("SansSerif", Font.PLAIN, 12));
         providerCombo.setFocusable(false);
 
-        IdeConfig cfg = ConfigManager.getInstance().getConfig();
-        if ("OPENAI".equalsIgnoreCase(cfg.getAiProvider())) {
-            providerCombo.setSelectedIndex(1);
-        } else if ("CUSTOM".equalsIgnoreCase(cfg.getAiProvider())) {
-            providerCombo.setSelectedIndex(2);
-        } else {
-            providerCombo.setSelectedIndex(0);
-        }
+        refreshProviderCombo(ConfigManager.getInstance().getConfig());
 
         providerCombo.addActionListener(e -> {
+            if (updatingToolbar) return;
             IdeConfig cur = ConfigManager.getInstance().getConfig();
-            int idx = providerCombo.getSelectedIndex();
-            if (idx == 1) {
-                cur.setAiProvider("OPENAI");
-            } else if (idx == 2) {
-                cur.setAiProvider("CUSTOM");
-            } else {
-                cur.setAiProvider("MOCK");
+            String selected = (String) providerCombo.getSelectedItem();
+            if (selected != null && cur.getProviders().containsKey(selected)) {
+                cur.setActiveProviderId(selected);
+                ConfigManager.getInstance().saveConfig(cur);
             }
-            ConfigManager.getInstance().saveConfig(cur);
         });
+
+        ConfigManager.getInstance().addListener(this::refreshProviderCombo);
 
         add(provLabel);
         add(providerCombo);
@@ -121,6 +113,24 @@ public class ToolBar extends JToolBar {
 
         JButton settingsBtn = createToolButton("Settings", UIUtils.createGearIcon(16, null), e -> onOpenSettings.run());
         add(settingsBtn);
+    }
+
+    private boolean updatingToolbar = false;
+
+    private void refreshProviderCombo(IdeConfig cfg) {
+        if (providerCombo == null || cfg == null) return;
+        updatingToolbar = true;
+        try {
+            providerCombo.removeAllItems();
+            for (String pId : cfg.getProviders().keySet()) {
+                providerCombo.addItem(pId);
+            }
+            if (cfg.getProviders().containsKey(cfg.getActiveProviderId())) {
+                providerCombo.setSelectedItem(cfg.getActiveProviderId());
+            }
+        } finally {
+            updatingToolbar = false;
+        }
     }
 
     private JButton createToolButton(String tooltip, Icon icon, java.awt.event.ActionListener listener) {

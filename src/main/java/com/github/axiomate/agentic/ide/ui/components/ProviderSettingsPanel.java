@@ -419,13 +419,18 @@ public class ProviderSettingsPanel extends JPanel {
             prov.setBaseUrl(baseUrlField.getText().trim());
             prov.setApiKey(new String(apiKeyField.getPassword()).trim());
             Object def = defaultModelCombo.getSelectedItem();
-            if (def != null) {
-                prov.setDefaultModel(def.toString().trim());
+            if (def != null && !def.toString().trim().isBlank()) {
+                String defModel = def.toString().trim();
+                prov.setDefaultModel(defModel);
+                if (prov.findModel(defModel) == null) {
+                    prov.getModels().add(0, new ModelDefinition(defModel, defModel, 128_000, 4_096, List.of("custom")));
+                }
             }
         }
     }
 
     private void showAddProviderDialog() {
+        saveCurrentProviderFieldsToWorkingMap();
         JTextField idField = new JTextField("anthropic-work", 18);
         JTextField nameInputField = new JTextField("Anthropic Work Account", 18);
         JComboBox<String> typeChoice = new JComboBox<>(new String[]{"ANTHROPIC", "CUSTOM_ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM"});
@@ -508,6 +513,7 @@ public class ProviderSettingsPanel extends JPanel {
     }
 
     private void showAddCustomAnthropicDialog() {
+        saveCurrentProviderFieldsToWorkingMap();
         int count = workingProviders.size() + 1;
         JTextField idField = new JTextField("ANTHROPIC_CUSTOM_" + count, 18);
         JTextField nameInputField = new JTextField("Custom Anthropic (Claude API)", 18);
@@ -563,6 +569,7 @@ public class ProviderSettingsPanel extends JPanel {
     }
 
     private void duplicateCurrentProvider() {
+        saveCurrentProviderFieldsToWorkingMap();
         ProviderConfig current = workingProviders.get(currentSelectedProviderId);
         if (current == null) return;
 
@@ -629,6 +636,7 @@ public class ProviderSettingsPanel extends JPanel {
     }
 
     private void showAddModelDialog() {
+        saveCurrentProviderFieldsToWorkingMap();
         JTextField idField = new JTextField(18);
         JTextField nameModalField = new JTextField(18);
         JSpinner ctxSpinner = new JSpinner(new SpinnerNumberModel(128_000, 1_000, 2_000_000, 1_000));
@@ -672,6 +680,7 @@ public class ProviderSettingsPanel extends JPanel {
     }
 
     private void removeSelectedModel() {
+        saveCurrentProviderFieldsToWorkingMap();
         int selectedRow = modelsTable.getSelectedRow();
         if (selectedRow < 0) {
             JOptionPane.showMessageDialog(this, "Please select a model row to remove.", "Selection", JOptionPane.INFORMATION_MESSAGE);
@@ -715,7 +724,7 @@ public class ProviderSettingsPanel extends JPanel {
     public void applyToConfig(IdeConfig targetConfig) {
         saveCurrentProviderFieldsToWorkingMap();
 
-        targetConfig.setProviders(workingProviders);
+        targetConfig.setProviders(new LinkedHashMap<>(workingProviders));
         targetConfig.setAutoRoutingEnabled(autoRoutingCheck.isSelected());
 
         double threshold = ((Integer) compressionThresholdSpinner.getValue()) / 100.0;
@@ -732,6 +741,11 @@ public class ProviderSettingsPanel extends JPanel {
         targetConfig.setFileMentionsEnabled(fileMentionsCheck.isSelected());
         String trig = mentionTriggerField.getText().trim();
         targetConfig.setMentionTriggerChar(trig.isEmpty() ? "@" : trig);
+
+        // Keep active provider valid if previous was removed
+        if (!workingProviders.containsKey(targetConfig.getActiveProviderId()) && !workingProviders.isEmpty()) {
+            targetConfig.setActiveProviderId(workingProviders.keySet().iterator().next());
+        }
     }
 }
 

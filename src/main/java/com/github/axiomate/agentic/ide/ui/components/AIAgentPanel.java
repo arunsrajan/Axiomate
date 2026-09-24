@@ -509,6 +509,13 @@ public class AIAgentPanel extends JPanel {
         if (session == null) return;
 
         IdeConfig config = ConfigManager.getInstance().getConfig();
+        if (config.getProvider(session.getProviderId()) == null && !config.getProviders().isEmpty()) {
+            String fallbackId = config.getProviders().containsKey(config.getActiveProviderId())
+                    ? config.getActiveProviderId()
+                    : config.getProviders().keySet().iterator().next();
+            session.setProviderId(fallbackId);
+        }
+
         providerCombo.removeAllItems();
         for (String pId : config.getProviders().keySet()) {
             providerCombo.addItem(pId);
@@ -520,6 +527,9 @@ public class AIAgentPanel extends JPanel {
         if (prov != null) {
             for (ModelDefinition m : prov.getModels()) {
                 modelCombo.addItem(m.getId());
+            }
+            if (prov.findModel(session.getModelId()) == null && prov.getDefaultModel() != null) {
+                session.setModelId(prov.getDefaultModel());
             }
             modelCombo.setSelectedItem(session.getModelId());
         }

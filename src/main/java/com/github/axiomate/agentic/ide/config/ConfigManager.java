@@ -91,6 +91,13 @@ public class ConfigManager {
                 return loaded;
             } catch (Exception e) {
                 log.error("Failed to parse config file, creating default config", e);
+                Path backup = configPath.resolveSibling(CONFIG_FILE_NAME + ".bak");
+                try {
+                    Files.copy(configPath, backup, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    log.warn("Backed up corrupted config file to {}", backup);
+                } catch (Exception be) {
+                    log.warn("Failed to backup corrupted config file", be);
+                }
             }
         }
         IdeConfig defaultConfig = new IdeConfig();
