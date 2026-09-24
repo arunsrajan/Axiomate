@@ -1,0 +1,29 @@
+[
+  {
+    "id": "mem-001",
+    "type": "PROJECT_RULE",
+    "title": "Agentic IDE Coding Standards",
+    "content": "Follow clean code architecture. Write clean Java 21 methods, adhere to single responsibility principle, and document all public APIs.",
+    "tags": ["java", "standards", "architecture"],
+    "timestamp": "2026-09-24 10:00:00",
+    "importance": 0.9
+  },
+  {
+    "id": "mem-002",
+    "type": "LONG_TERM",
+    "title": "Calculator Math Engine Knowledge",
+    "content": "The Calculator module supports addition, subtraction, multiplication, and division. Division by zero must throw ArithmeticException with floating-point tolerance check.",
+    "tags": ["calculator", "math", "domain"],
+    "timestamp": "2026-09-24 10:05:00",
+    "importance": 0.85
+  },
+  {
+    "id": "mem-003",
+    "type": "EPISODIC",
+    "title": "Initial Workspace Setup Episode",
+    "content": "Successfully scaffolded the AI Agent IDE with RSyntaxTextArea, FlatLaf Darcula theme, and LangChain4j integration.",
+    "tags": ["setup", "history", "scaffolding"],
+    "timestamp": "2026-09-24 10:10:00",
+    "importance": 0.7
+  }
+]
