@@ -286,6 +286,27 @@ class ProjectSessionAndDisplayFilterTest {
 
         panel.reloadChatFromSession();
 
+        // Verify default collapsed state: intermediate bubbles start collapsed, walkthrough starts expanded
+        for (Component c : chatBox.getComponents()) {
+            if (c instanceof AIAgentPanel.MessageCard card) {
+                switch (card.getDisplayType()) {
+                    case TOOL_REQUEST, TOOL_RESPONSE, THINKING ->
+                        assertTrue(card.isCollapsed(), card.getDisplayType() + " should be collapsed by default");
+                    case WALKTHROUGH ->
+                        assertFalse(card.isCollapsed(), "Walkthrough / final summary should be expanded by default");
+                    default -> {}
+                }
+            }
+        }
+
+        // Test Expand All
+        panel.expandAllCards();
+        for (Component c : chatBox.getComponents()) {
+            if (c instanceof AIAgentPanel.MessageCard card && card.getDisplayType() != AIAgentPanel.MessageDisplayType.USER) {
+                assertFalse(card.isCollapsed(), "Card should be expanded after expandAllCards");
+            }
+        }
+
         // Collapse only THINKING
         panel.setCategoryCollapsed(AIAgentPanel.MessageDisplayType.THINKING, true);
 
@@ -306,5 +327,39 @@ class ProjectSessionAndDisplayFilterTest {
                 assertFalse(card.isCollapsed(), "All cards should now be expanded");
             }
         }
+    }
+
+    @Test
+    @DisplayName("Verify OS determination and platform-aware tool selection (PowerShell for Windows, Bash for Linux)")
+    void testOsAwareToolRouting() throws Exception {
+        boolean isWindows = com.github.axiomate.agentic.ide.util.OSUtils.isWindows();
+        String preferredTool = com.github.axiomate.agentic.ide.util.OSUtils.getPreferredShellTool();
+
+        if (isWindows) {
+            assertEquals("powershell", preferredTool, "Windows should prefer powershell tool");
+        } else {
+            assertEquals("bash", preferredTool, "Linux/macOS should prefer bash tool");
+        }
+
+        // Test MockAgentService dynamically routes general terminal/command requests to the platform shell
+        com.github.axiomate.agentic.ide.agent.MockAgentService mockService = new com.github.axiomate.agentic.ide.agent.MockAgentService();
+        java.util.concurrent.atomic.AtomicReference<String> invokedTool = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+
+        com.github.axiomate.agentic.ide.agent.AgentListener listener = new com.github.axiomate.agentic.ide.agent.AgentListener() {
+            @Override public void onThinking(String thought) {}
+            @Override public void onToolCall(String toolName, String arguments) {
+                invokedTool.set(toolName);
+            }
+            @Override public void onToolResult(String toolName, String result) {}
+            @Override public void onToken(String token) {}
+            @Override public void onComplete(String fullResponse) { latch.countDown(); }
+            @Override public void onError(Throwable error) { latch.countDown(); }
+        };
+
+        mockService.sendMessage("Run command to check project status", "", "", listener);
+        boolean completed = latch.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertTrue(completed, "Mock task should complete within timeout");
+        assertEquals(preferredTool, invokedTool.get(), "Should have invoked " + preferredTool + " based on OS determination");
     }
 }

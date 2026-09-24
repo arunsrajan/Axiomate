@@ -32,6 +32,7 @@ public class BashTool implements AgentTool {
     public String getDescription() {
         return """
             bash: Execute bash commands or scripts in the project working directory.
+            Preferred command execution tool on Linux, Unix, and macOS environments.
             Arguments JSON schema:
             {
               "command": "bash command or script (e.g. ls -la, git status, ./gradlew build, mvn test)"
@@ -104,7 +105,7 @@ public class BashTool implements AgentTool {
     }
 
     public static String findBashExecutable() {
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+        boolean isWindows = com.github.axiomate.agentic.ide.util.OSUtils.isWindows();
         if (!isWindows) {
             return "bash";
         }

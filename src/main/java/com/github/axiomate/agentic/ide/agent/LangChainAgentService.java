@@ -135,6 +135,17 @@ public class LangChainAgentService implements AIAgentService {
                     systemPromptBuilder.append("\n\n").append(memoryContext);
                 }
 
+                // Host Environment & Shell Execution Policy
+                systemPromptBuilder.append("\n\n## Host Environment & Shell Execution Policy\n");
+                systemPromptBuilder.append("- Operating System: ").append(com.github.axiomate.agentic.ide.util.OSUtils.getHostEnvironmentSummary()).append("\n");
+                if (com.github.axiomate.agentic.ide.util.OSUtils.isWindows()) {
+                    systemPromptBuilder.append("- The current host OS is WINDOWS. For command-line execution, running builds/tests, or scripts, ALWAYS invoke the 'powershell' tool (or 'terminal' which defaults to PowerShell).\n");
+                    systemPromptBuilder.append("- Do NOT invoke Linux-only commands or assume /bin/bash unless explicitly requested by the user.\n");
+                } else {
+                    systemPromptBuilder.append("- The current host OS is LINUX / UNIX / MACOS. For command-line execution, running builds/tests, or scripts, ALWAYS invoke the 'bash' tool (or 'terminal' which defaults to Bash).\n");
+                    systemPromptBuilder.append("- Do NOT invoke Windows-specific cmdlets or powershell unless explicitly requested by the user.\n");
+                }
+
                 messages.add(new SystemMessage(systemPromptBuilder.toString()));
 
                 // Replay previous turns from session if applicable

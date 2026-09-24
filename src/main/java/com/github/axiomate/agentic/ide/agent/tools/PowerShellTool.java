@@ -32,6 +32,7 @@ public class PowerShellTool implements AgentTool {
     public String getDescription() {
         return """
             powershell: Execute PowerShell commands, scripts, and cmdlets in the project directory.
+            Preferred command execution tool on Windows environments.
             Arguments JSON schema:
             {
               "command": "PowerShell command or script (e.g. Get-ChildItem, Select-String, Test-Path, mvn test)"
@@ -105,7 +106,7 @@ public class PowerShellTool implements AgentTool {
             return "pwsh.exe";
         }
 
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+        boolean isWindows = com.github.axiomate.agentic.ide.util.OSUtils.isWindows();
         if (!isWindows) {
             return "pwsh";
         }

@@ -341,7 +341,6 @@ public class AIAgentPanel extends JPanel {
         topContainer.setLayout(new BoxLayout(topContainer, BoxLayout.Y_AXIS));
         topContainer.add(headerPanel);
         topContainer.add(sessionBar);
-        topContainer.add(controlBar);
         topContainer.add(chipsPanel);
         topContainer.add(outputDisplayBar);
         add(topContainer, BorderLayout.NORTH);
@@ -358,14 +357,18 @@ public class AIAgentPanel extends JPanel {
         add(chatScrollPane, BorderLayout.CENTER);
 
         // 6. Input Area at Bottom
-        JPanel inputPanel = new JPanel(new BorderLayout(6, 6));
-        inputPanel.setBorder(new EmptyBorder(8, 8, 8, 8));
+        JPanel inputPanel = new JPanel();
+        inputPanel.setLayout(new BoxLayout(inputPanel, BoxLayout.Y_AXIS));
+        inputPanel.setBorder(new EmptyBorder(6, 8, 8, 8));
+        inputPanel.setBackground(new Color(24, 25, 30));
 
         includeContextCheck = new JCheckBox("Active File Context", true);
         includeContextCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        includeContextCheck.setOpaque(false);
 
         includeMemoryCheck = new JCheckBox("Agentic Memory", true);
         includeMemoryCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        includeMemoryCheck.setOpaque(false);
 
         inputArea = new JTextArea(3, 20);
         inputArea.setLineWrap(true);
@@ -387,13 +390,19 @@ public class AIAgentPanel extends JPanel {
         });
 
         JScrollPane inputScroll = new JScrollPane(inputArea);
+        inputScroll.setPreferredSize(new Dimension(0, 72));
+        inputScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 90));
 
         JPanel buttonBar = new JPanel(new BorderLayout());
+        buttonBar.setOpaque(false);
+
         JPanel leftBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        leftBar.setOpaque(false);
         leftBar.add(includeContextCheck);
         leftBar.add(includeMemoryCheck);
 
         JPanel rightBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        rightBar.setOpaque(false);
         stopBtn = new JButton("Stop", UIUtils.createStopIcon(12, UIUtils.ERROR_COLOR));
         stopBtn.setEnabled(false);
         stopBtn.addActionListener(e -> cancelAgent());
@@ -408,8 +417,16 @@ public class AIAgentPanel extends JPanel {
         buttonBar.add(leftBar, BorderLayout.WEST);
         buttonBar.add(rightBar, BorderLayout.EAST);
 
-        inputPanel.add(inputScroll, BorderLayout.CENTER);
-        inputPanel.add(buttonBar, BorderLayout.SOUTH);
+        // 1. Chat prompt text box
+        inputPanel.add(inputScroll);
+        inputPanel.add(Box.createVerticalStrut(4));
+
+        // 2. Provider dropdown, Model dropdown, Auto-Route checkbox, Tokens progressbar below prompt
+        inputPanel.add(controlBar);
+        inputPanel.add(Box.createVerticalStrut(4));
+
+        // 3. Action buttons bar (Context checkboxes + Stop + Send)
+        inputPanel.add(buttonBar);
 
         add(inputPanel, BorderLayout.SOUTH);
 
@@ -1058,7 +1075,11 @@ public class AIAgentPanel extends JPanel {
     }
 
     private JButton createCollapseToggleButton() {
-        JButton btn = new JButton("▴ Collapse");
+        return createCollapseToggleButton(false);
+    }
+
+    private JButton createCollapseToggleButton(boolean startCollapsed) {
+        JButton btn = new JButton(startCollapsed ? "▾ Expand" : "▴ Collapse");
         btn.setFont(new Font("SansSerif", Font.PLAIN, 10));
         btn.setForeground(new Color(160, 165, 180));
         btn.setContentAreaFilled(false);
@@ -1110,7 +1131,7 @@ public class AIAgentPanel extends JPanel {
             header.setFont(new Font("SansSerif", Font.BOLD, 11));
             header.setForeground(UIUtils.ACCENT_PURPLE);
 
-            JButton toggle = createCollapseToggleButton();
+            JButton toggle = createCollapseToggleButton(false);
 
             headerBar.add(header, BorderLayout.WEST);
             headerBar.add(toggle, BorderLayout.EAST);
@@ -1124,7 +1145,8 @@ public class AIAgentPanel extends JPanel {
             inner.add(headerBar, BorderLayout.NORTH);
             inner.add(contentPanel, BorderLayout.CENTER);
 
-            MessageCard card = new MessageCard(MessageDisplayType.WALKTHROUGH, contentPanel, toggle);
+            // Final summary / walkthrough remains in expanded state by default
+            MessageCard card = new MessageCard(MessageDisplayType.WALKTHROUGH, contentPanel, toggle, false);
             toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
             headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             headerBar.addMouseListener(new MouseAdapter() {
@@ -1160,7 +1182,7 @@ public class AIAgentPanel extends JPanel {
         header.setFont(new Font("SansSerif", Font.BOLD, 10));
         header.setForeground(new Color(210, 168, 255));
 
-        JButton toggle = createCollapseToggleButton();
+        JButton toggle = createCollapseToggleButton(true);
 
         headerBar.add(header, BorderLayout.WEST);
         headerBar.add(toggle, BorderLayout.EAST);
@@ -1181,7 +1203,7 @@ public class AIAgentPanel extends JPanel {
         inner.add(headerBar, BorderLayout.NORTH);
         inner.add(contentPanel, BorderLayout.CENTER);
 
-        MessageCard card = new MessageCard(MessageDisplayType.THINKING, contentPanel, toggle);
+        MessageCard card = new MessageCard(MessageDisplayType.THINKING, contentPanel, toggle, true);
         toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
         headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         headerBar.addMouseListener(new MouseAdapter() {
@@ -1246,7 +1268,7 @@ public class AIAgentPanel extends JPanel {
         header.setFont(new Font("Monospaced", Font.BOLD, 11));
         header.setForeground(new Color(88, 166, 255));
 
-        JButton toggle = createCollapseToggleButton();
+        JButton toggle = createCollapseToggleButton(true);
 
         headerBar.add(header, BorderLayout.WEST);
         headerBar.add(toggle, BorderLayout.EAST);
@@ -1263,7 +1285,7 @@ public class AIAgentPanel extends JPanel {
         inner.add(headerBar, BorderLayout.NORTH);
         inner.add(contentPanel, BorderLayout.CENTER);
 
-        MessageCard card = new MessageCard(MessageDisplayType.TOOL_REQUEST, contentPanel, toggle);
+        MessageCard card = new MessageCard(MessageDisplayType.TOOL_REQUEST, contentPanel, toggle, true);
         toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
         headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         headerBar.addMouseListener(new MouseAdapter() {
@@ -1295,7 +1317,7 @@ public class AIAgentPanel extends JPanel {
         header.setFont(new Font("Monospaced", Font.BOLD, 11));
         header.setForeground(new Color(126, 231, 135));
 
-        JButton toggle = createCollapseToggleButton();
+        JButton toggle = createCollapseToggleButton(true);
 
         headerBar.add(header, BorderLayout.WEST);
         headerBar.add(toggle, BorderLayout.EAST);
@@ -1312,7 +1334,7 @@ public class AIAgentPanel extends JPanel {
         inner.add(headerBar, BorderLayout.NORTH);
         inner.add(contentPanel, BorderLayout.CENTER);
 
-        MessageCard card = new MessageCard(MessageDisplayType.TOOL_RESPONSE, contentPanel, toggle);
+        MessageCard card = new MessageCard(MessageDisplayType.TOOL_RESPONSE, contentPanel, toggle, true);
         toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
         headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         headerBar.addMouseListener(new MouseAdapter() {
@@ -1375,11 +1397,18 @@ public class AIAgentPanel extends JPanel {
         private boolean collapsed = false;
 
         public MessageCard(MessageDisplayType displayType, JComponent contentComponent, JButton toggleBtn) {
+            this(displayType, contentComponent, toggleBtn, false);
+        }
+
+        public MessageCard(MessageDisplayType displayType, JComponent contentComponent, JButton toggleBtn, boolean startCollapsed) {
             super(new BorderLayout());
             this.displayType = displayType;
             this.contentComponent = contentComponent;
             this.toggleBtn = toggleBtn;
             setOpaque(false);
+            if (startCollapsed) {
+                setCollapsed(true);
+            }
         }
 
         public MessageDisplayType getDisplayType() {

@@ -32,6 +32,7 @@ public class TerminalTool implements AgentTool {
     public String getDescription() {
         return """
             terminal: Execute a shell command in the project root directory.
+            Automatically selects PowerShell on Windows and Bash on Linux/macOS.
             Arguments JSON schema:
             {
               "command": "command to run (e.g. dir, mvn test, javac HelloWorld.java, git status)",
@@ -63,9 +64,9 @@ public class TerminalTool implements AgentTool {
         log.info("Agent executing terminal command [{}] in {}: '{}'", shell, workingDir, command);
 
         List<String> commandList = new ArrayList<>();
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+        boolean isWindows = com.github.axiomate.agentic.ide.util.OSUtils.isWindows();
 
-        if ("powershell".equals(shell)) {
+        if ("powershell".equals(shell) || ("default".equals(shell) && isWindows)) {
             commandList.add(PowerShellTool.findPowerShellExecutable());
             commandList.add("-NoProfile");
             commandList.add("-NonInteractive");
@@ -73,14 +74,18 @@ public class TerminalTool implements AgentTool {
             commandList.add("Bypass");
             commandList.add("-Command");
             commandList.add(command);
-        } else if ("bash".equals(shell)) {
+        } else if ("bash".equals(shell) || ("default".equals(shell) && !isWindows)) {
             commandList.add(BashTool.findBashExecutable());
             commandList.add("-c");
             commandList.add(command);
-        } else { // default or cmd
+        } else if ("cmd".equals(shell)) {
+            commandList.add("cmd.exe");
+            commandList.add("/c");
+            commandList.add(command);
+        } else {
             if (isWindows) {
-                commandList.add("cmd.exe");
-                commandList.add("/c");
+                commandList.add(PowerShellTool.findPowerShellExecutable());
+                commandList.add("-Command");
                 commandList.add(command);
             } else {
                 commandList.add("bash");

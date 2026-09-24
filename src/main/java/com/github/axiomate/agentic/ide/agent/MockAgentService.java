@@ -98,11 +98,17 @@ public class MockAgentService implements AIAgentService {
 
                 String lower = prompt.toLowerCase();
 
-                // Dynamic tool routing based on prompt intent
+                // Dynamic tool routing based on prompt intent and Host OS determination
                 if (lower.contains("bash")) {
                     handleBashTool(prompt, listener);
                 } else if (lower.contains("powershell") || lower.contains("pwsh")) {
                     handlePowerShellTool(prompt, listener);
+                } else if (lower.contains("terminal") || lower.contains("shell") || lower.contains("run") || lower.contains("command") || lower.contains("cli")) {
+                    if (com.github.axiomate.agentic.ide.util.OSUtils.isWindows()) {
+                        handlePowerShellTool(prompt, listener);
+                    } else {
+                        handleBashTool(prompt, listener);
+                    }
                 } else if (lower.contains("edit") || lower.contains("patch") || lower.contains("replace line")) {
                     handleAutonomousCodeEdit(prompt, contextCode, activeFilePath, memoryContext, listener);
                 } else if (lower.contains("list file") || lower.contains("show file") || lower.contains("directory")) {
@@ -119,8 +125,6 @@ public class MockAgentService implements AIAgentService {
                     handleExplain(prompt, contextCode, activeFilePath, memoryContext, listener);
                 } else if (lower.contains("bug") || lower.contains("fix") || lower.contains("error")) {
                     handleBugFix(prompt, contextCode, activeFilePath, memoryContext, listener);
-                } else if (lower.contains("run") || lower.contains("command") || lower.contains("terminal")) {
-                    handleTerminalCommand(prompt, listener);
                 } else {
                     handleGeneralCoding(prompt, contextCode, activeFilePath, memoryContext, listener);
                 }
@@ -138,9 +142,9 @@ public class MockAgentService implements AIAgentService {
     }
 
     private void handleBashTool(String prompt, AgentListener listener) throws Exception {
-        listener.onThinking("Invoking tool: bash...");
-        String cmd = prompt.replaceAll("(?i).*bash\\s*(command)?\\s*", "").trim();
-        if (cmd.isEmpty()) cmd = "git status -s";
+        listener.onThinking(String.format("Determined OS: %s. Invoking tool: bash...", com.github.axiomate.agentic.ide.util.OSUtils.getHostEnvironmentSummary()));
+        String cmd = prompt.replaceAll("(?i).*(bash|command|terminal|run|exec)\\s*", "").trim();
+        if (cmd.isEmpty() || cmd.equals(prompt.trim())) cmd = "git status -s";
         String args = "{\"command\": \"" + cmd.replace("\"", "\\\"") + "\"}";
         listener.onToolCall("bash", args);
         sleep(300);
@@ -153,9 +157,9 @@ public class MockAgentService implements AIAgentService {
     }
 
     private void handlePowerShellTool(String prompt, AgentListener listener) throws Exception {
-        listener.onThinking("Invoking tool: powershell...");
-        String cmd = prompt.replaceAll("(?i).*(powershell|pwsh)\\s*(command)?\\s*", "").trim();
-        if (cmd.isEmpty()) cmd = "Write-Output 'PowerShell environment active'; Get-Location";
+        listener.onThinking(String.format("Determined OS: %s. Invoking tool: powershell...", com.github.axiomate.agentic.ide.util.OSUtils.getHostEnvironmentSummary()));
+        String cmd = prompt.replaceAll("(?i).*(powershell|pwsh|command|terminal|run|exec)\\s*", "").trim();
+        if (cmd.isEmpty() || cmd.equals(prompt.trim())) cmd = "Write-Output 'PowerShell environment active'; Get-Location";
         String args = "{\"command\": \"" + cmd.replace("\"", "\\\"") + "\"}";
         listener.onToolCall("powershell", args);
         sleep(300);
