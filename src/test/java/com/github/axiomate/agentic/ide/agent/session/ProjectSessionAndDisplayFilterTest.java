@@ -2,7 +2,12 @@ package com.github.axiomate.agentic.ide.agent.session;
 
 import com.github.axiomate.agentic.ide.agent.AgentMessage;
 import com.github.axiomate.agentic.ide.agent.AgentRole;
+import com.github.axiomate.agentic.ide.config.ConfigManager;
+import com.github.axiomate.agentic.ide.config.IdeConfig;
+import com.github.axiomate.agentic.ide.config.ProjectStateManager;
+import com.github.axiomate.agentic.ide.config.ProviderConfig;
 import com.github.axiomate.agentic.ide.ui.components.AIAgentPanel;
+import com.github.axiomate.agentic.ide.ui.components.ProviderSettingsPanel;
 import com.github.axiomate.agentic.ide.ui.components.TerminalPanel;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -177,6 +182,128 @@ class ProjectSessionAndDisplayFilterTest {
         for (Component c : chatBox.getComponents()) {
             if (c instanceof AIAgentPanel.MessageCard card && card.getDisplayType() != AIAgentPanel.MessageDisplayType.USER) {
                 assertFalse(card.isCollapsed(), "Cards should be expanded after expandAllCards");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Sessions should persist per-session provider, model, and autoRouting settings")
+    void testSessionSettingsAutosaveAndPersistence(@TempDir Path tempDir) throws IOException {
+        Path projectPath = tempDir.resolve("my-autosave-project");
+        Files.createDirectories(projectPath);
+
+        SessionManager sm = SessionManager.getInstance();
+        sm.loadSessionsForProject(projectPath.toFile());
+
+        // Create new session with specific settings and autoRoutingEnabled = true
+        AgentSession session = sm.createSession("AutoRouter Session", "CUSTOM_ANTHROPIC", "claude-3-7-sonnet", true);
+        assertEquals("CUSTOM_ANTHROPIC", session.getProviderId());
+        assertEquals("claude-3-7-sonnet", session.getModelId());
+        assertTrue(session.isAutoRoutingEnabled());
+
+        // Modify session settings
+        session.setProviderId("OPENAI");
+        session.setModelId("o1");
+        session.setAutoRoutingEnabled(false);
+
+        // Trigger autosave
+        sm.autoSaveCurrentProjectSessions();
+
+        // Reload project sessions
+        sm.loadSessionsForProject(projectPath.toFile());
+        AgentSession reloaded = sm.getSessions().stream()
+                .filter(s -> s.getId().equals(session.getId()))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(reloaded, "Session should be found after reload");
+        assertEquals("OPENAI", reloaded.getProviderId());
+        assertEquals("o1", reloaded.getModelId());
+        assertFalse(reloaded.isAutoRoutingEnabled());
+
+        // Now test default sessions when project is null
+        sm.loadSessionsForProject(null);
+        AgentSession defaultSession = sm.getActiveSession();
+        assertNotNull(defaultSession);
+        defaultSession.setProviderId("GEMINI");
+        defaultSession.setModelId("gemini-2.0-flash");
+        defaultSession.setAutoRoutingEnabled(true);
+        sm.autoSaveCurrentProjectSessions();
+
+        List<AgentSession> defaults = ProjectStateManager.getInstance().getDefaultSessions();
+        assertFalse(defaults.isEmpty());
+        AgentSession savedDef = defaults.stream()
+                .filter(s -> s.getId().equals(defaultSession.getId()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(savedDef);
+        assertEquals("GEMINI", savedDef.getProviderId());
+        assertEquals("gemini-2.0-flash", savedDef.getModelId());
+        assertTrue(savedDef.isAutoRoutingEnabled());
+    }
+
+    @Test
+    @DisplayName("ProviderSettingsPanel should save provider configurations, API keys, and active provider without clobbering")
+    void testProviderSettingsPersistence() {
+        ConfigManager cm = ConfigManager.getInstance();
+        IdeConfig config = cm.getConfig();
+
+        // Ensure CUSTOM_ANTHROPIC is present with credentials
+        ProviderConfig customAnthropic = config.getProviders().get("CUSTOM_ANTHROPIC");
+        assertNotNull(customAnthropic);
+        customAnthropic.setApiKey("test-sk-anthropic-12345");
+        customAnthropic.setBaseUrl("https://my-proxy.internal.net/v1");
+
+        ProviderSettingsPanel panel = new ProviderSettingsPanel();
+        panel.applyToConfig(config);
+
+        assertEquals("test-sk-anthropic-12345", config.getProviders().get("CUSTOM_ANTHROPIC").getApiKey());
+        assertEquals("https://my-proxy.internal.net/v1", config.getProviders().get("CUSTOM_ANTHROPIC").getBaseUrl());
+    }
+
+    @Test
+    @DisplayName("AIAgentPanel should support category-specific collapse and expand")
+    void testCategorySpecificExpandCollapse() {
+        AIAgentPanel panel = new AIAgentPanel(() -> "code", new TerminalPanel());
+
+        JPanel chatBox = null;
+        for (Component c : panel.getComponents()) {
+            if (c instanceof JScrollPane sp && sp.getViewport().getView() instanceof JPanel p) {
+                chatBox = p;
+                break;
+            }
+        }
+        assertNotNull(chatBox);
+
+        SessionManager sm = SessionManager.getInstance();
+        AgentSession sess = sm.getActiveSession();
+        sess.clearMessages();
+        sess.addMessage(new AgentMessage(AgentRole.USER, "Prompt"));
+        sess.addMessage(new AgentMessage(AgentRole.TOOL_CALL, "{}", "call_api"));
+        sess.addMessage(new AgentMessage(AgentRole.TOOL, "ok", "call_api"));
+        sess.addMessage(new AgentMessage(AgentRole.THINKING, "pondering..."));
+        sess.addMessage(new AgentMessage(AgentRole.ASSISTANT, "summary"));
+
+        panel.reloadChatFromSession();
+
+        // Collapse only THINKING
+        panel.setCategoryCollapsed(AIAgentPanel.MessageDisplayType.THINKING, true);
+
+        for (Component c : chatBox.getComponents()) {
+            if (c instanceof AIAgentPanel.MessageCard card) {
+                if (card.getDisplayType() == AIAgentPanel.MessageDisplayType.THINKING) {
+                    assertTrue(card.isCollapsed(), "Thinking card should be collapsed");
+                } else if (card.getDisplayType() != AIAgentPanel.MessageDisplayType.USER) {
+                    assertFalse(card.isCollapsed(), "Non-thinking card should remain expanded");
+                }
+            }
+        }
+
+        // Expand THINKING back
+        panel.setCategoryCollapsed(AIAgentPanel.MessageDisplayType.THINKING, false);
+        for (Component c : chatBox.getComponents()) {
+            if (c instanceof AIAgentPanel.MessageCard card) {
+                assertFalse(card.isCollapsed(), "All cards should now be expanded");
             }
         }
     }

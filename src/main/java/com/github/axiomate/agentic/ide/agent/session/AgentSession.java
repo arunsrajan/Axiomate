@@ -21,6 +21,7 @@ public class AgentSession {
     private String name;
     private String providerId;
     private String modelId;
+    private boolean autoRoutingEnabled = false;
     private String systemPrompt = "";
     private List<AgentMessage> messages = new CopyOnWriteArrayList<>();
     private TokenTracker tokenTracker;
@@ -33,10 +34,15 @@ public class AgentSession {
     }
 
     public AgentSession(String name, String providerId, String modelId, int maxContextTokens) {
+        this(name, providerId, modelId, false, maxContextTokens);
+    }
+
+    public AgentSession(String name, String providerId, String modelId, boolean autoRoutingEnabled, int maxContextTokens) {
         this();
         this.name = name;
         this.providerId = providerId;
         this.modelId = modelId;
+        this.autoRoutingEnabled = autoRoutingEnabled;
         this.tokenTracker = new TokenTracker(maxContextTokens);
     }
 
@@ -121,9 +127,17 @@ public class AgentSession {
         this.createdAt = createdAt;
     }
 
+    public boolean isAutoRoutingEnabled() {
+        return autoRoutingEnabled;
+    }
+
+    public void setAutoRoutingEnabled(boolean autoRoutingEnabled) {
+        this.autoRoutingEnabled = autoRoutingEnabled;
+    }
+
     @Override
     public String toString() {
-        return name + " [" + providerId + " / " + modelId + "]";
+        return name + " [" + providerId + " / " + modelId + (autoRoutingEnabled ? " (Auto-Route)" : "") + "]";
     }
 }
 

@@ -142,6 +142,34 @@ public class ProjectStateManager {
         saveWorkspaceState(workspaceState);
     }
 
+    public synchronized void saveDefaultSessions(List<AgentSession> sessions, String activeSessionId) {
+        ProjectState state = workspaceState.getProjects().computeIfAbsent("__DEFAULT__", k -> new ProjectState("__DEFAULT__"));
+        state.setProjectName("Default Workspace");
+        if (sessions != null) {
+            state.setSessions(sessions);
+        }
+        if (activeSessionId != null) {
+            state.setActiveSessionId(activeSessionId);
+        }
+        saveWorkspaceState(workspaceState);
+    }
+
+    public synchronized List<AgentSession> getDefaultSessions() {
+        ProjectState state = workspaceState.getProjects().get("__DEFAULT__");
+        if (state != null && state.getSessions() != null) {
+            return new ArrayList<>(state.getSessions());
+        }
+        return new ArrayList<>();
+    }
+
+    public synchronized String getDefaultActiveSessionId() {
+        ProjectState state = workspaceState.getProjects().get("__DEFAULT__");
+        if (state != null && state.getActiveSessionId() != null) {
+            return state.getActiveSessionId();
+        }
+        return "";
+    }
+
     public synchronized List<AgentSession> getProjectSessions(File projectDir) {
         if (projectDir == null) return new ArrayList<>();
         String normPath = normalizePath(projectDir);

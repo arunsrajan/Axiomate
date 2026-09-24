@@ -48,17 +48,22 @@ public class ProviderSettingsPanel extends JPanel {
     // In-memory working copy of providers
     private final Map<String, ProviderConfig> workingProviders = new LinkedHashMap<>();
     private String currentSelectedProviderId = "ANTHROPIC";
+    private String targetActiveProviderId;
+    private JCheckBox setActiveCheck;
     private boolean updatingUi = false;
 
     public ProviderSettingsPanel() {
         this.config = ConfigManager.getInstance().getConfig();
+        this.targetActiveProviderId = config.getActiveProviderId();
 
         // Deep copy existing providers into working map
         for (Map.Entry<String, ProviderConfig> entry : config.getProviders().entrySet()) {
             workingProviders.put(entry.getKey(), copyProvider(entry.getValue()));
         }
 
-        if (!workingProviders.isEmpty()) {
+        if (targetActiveProviderId != null && workingProviders.containsKey(targetActiveProviderId)) {
+            currentSelectedProviderId = targetActiveProviderId;
+        } else if (!workingProviders.isEmpty()) {
             currentSelectedProviderId = workingProviders.keySet().iterator().next();
         }
 
@@ -91,6 +96,9 @@ public class ProviderSettingsPanel extends JPanel {
             if (selected != null && workingProviders.containsKey(selected)) {
                 currentSelectedProviderId = selected;
                 loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
+                if (setActiveCheck != null) {
+                    setActiveCheck.setSelected(currentSelectedProviderId.equals(targetActiveProviderId));
+                }
             }
         });
         selectorPanel.add(providerSelectorCombo);
@@ -120,8 +128,23 @@ public class ProviderSettingsPanel extends JPanel {
 
         providerEnabledCheck = new JCheckBox("Enabled");
         providerEnabledCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
-        selectorPanel.add(Box.createHorizontalStrut(10));
+        selectorPanel.add(Box.createHorizontalStrut(8));
         selectorPanel.add(providerEnabledCheck);
+
+        setActiveCheck = new JCheckBox("Active Provider");
+        setActiveCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
+        setActiveCheck.setForeground(new Color(255, 205, 85));
+        setActiveCheck.setToolTipText("Set this provider as the active AI provider in the IDE");
+        setActiveCheck.setSelected(currentSelectedProviderId.equals(targetActiveProviderId));
+        setActiveCheck.addActionListener(e -> {
+            if (setActiveCheck.isSelected()) {
+                targetActiveProviderId = currentSelectedProviderId;
+            } else if (currentSelectedProviderId.equals(targetActiveProviderId)) {
+                setActiveCheck.setSelected(true);
+            }
+        });
+        selectorPanel.add(Box.createHorizontalStrut(6));
+        selectorPanel.add(setActiveCheck);
 
         providersTab.add(selectorPanel, BorderLayout.NORTH);
 
@@ -505,6 +528,8 @@ public class ProviderSettingsPanel extends JPanel {
 
             workingProviders.put(pId, newProv);
             currentSelectedProviderId = pId;
+            targetActiveProviderId = pId;
+            if (setActiveCheck != null) setActiveCheck.setSelected(true);
 
             refreshProviderSelectorCombo();
             loadProviderFieldsFromWorkingMap(pId);
@@ -561,6 +586,8 @@ public class ProviderSettingsPanel extends JPanel {
 
             workingProviders.put(pId, newProv);
             currentSelectedProviderId = pId;
+            targetActiveProviderId = pId;
+            if (setActiveCheck != null) setActiveCheck.setSelected(true);
 
             refreshProviderSelectorCombo();
             loadProviderFieldsFromWorkingMap(pId);
@@ -742,8 +769,18 @@ public class ProviderSettingsPanel extends JPanel {
         String trig = mentionTriggerField.getText().trim();
         targetConfig.setMentionTriggerChar(trig.isEmpty() ? "@" : trig);
 
-        // Keep active provider valid if previous was removed
-        if (!workingProviders.containsKey(targetConfig.getActiveProviderId()) && !workingProviders.isEmpty()) {
+        // Ensure active provider points to targetActiveProviderId if valid
+        if (setActiveCheck != null && setActiveCheck.isSelected()) {
+            targetActiveProviderId = currentSelectedProviderId;
+        }
+
+        if (targetActiveProviderId != null && workingProviders.containsKey(targetActiveProviderId)) {
+            targetConfig.setActiveProviderId(targetActiveProviderId);
+            ProviderConfig activeProv = workingProviders.get(targetActiveProviderId);
+            if (activeProv != null && activeProv.getDefaultModel() != null) {
+                targetConfig.setActiveModelId(activeProv.getDefaultModel());
+            }
+        } else if (!workingProviders.containsKey(targetConfig.getActiveProviderId()) && !workingProviders.isEmpty()) {
             targetConfig.setActiveProviderId(workingProviders.keySet().iterator().next());
         }
     }

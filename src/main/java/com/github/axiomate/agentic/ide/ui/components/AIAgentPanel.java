@@ -26,6 +26,8 @@ import javax.swing.border.LineBorder;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.File;
 import java.util.List;
 import java.util.function.Supplier;
@@ -52,7 +54,6 @@ public class AIAgentPanel extends JPanel {
     private final JButton newSessionBtn;
     private final JButton renameSessionBtn;
     private final JButton closeSessionBtn;
-    private final JButton saveSessionBtn;
     private final JButton loadSessionBtn;
 
     // Agent Output Display Show/Hide & Collapsible Controls
@@ -62,6 +63,7 @@ public class AIAgentPanel extends JPanel {
     private final JCheckBox showWalkthroughCheck;
     private final JButton collapseAllBtn;
     private final JButton expandAllBtn;
+    private final JButton toggleCategoriesBtn;
 
     // Model & Provider Chooser Controls
     private final JComboBox<String> providerCombo;
@@ -171,15 +173,9 @@ public class AIAgentPanel extends JPanel {
         closeSessionBtn.addActionListener(e -> closeActiveSession());
         sessionLeft.add(closeSessionBtn);
 
-        saveSessionBtn = new JButton("💾 Save");
-        saveSessionBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        saveSessionBtn.setToolTipText("Save all agent sessions for this project");
-        saveSessionBtn.addActionListener(e -> saveProjectSessions());
-        sessionLeft.add(saveSessionBtn);
-
-        loadSessionBtn = new JButton("📂 Load");
+        loadSessionBtn = new JButton("📂 Sessions ▾");
         loadSessionBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        loadSessionBtn.setToolTipText("Load or import sessions for this project");
+        loadSessionBtn.setToolTipText("Load, reload, or export/import project agent sessions");
         loadSessionBtn.addActionListener(e -> promptLoadOrImportSessions());
         sessionLeft.add(loadSessionBtn);
 
@@ -217,13 +213,16 @@ public class AIAgentPanel extends JPanel {
         modelCombo.addActionListener(e -> onModelChanged());
         modelLine.add(modelCombo);
 
-        IdeConfig cfg = ConfigManager.getInstance().getConfig();
-        autoRouteCheck = new JCheckBox("Auto-Route", cfg.isAutoRoutingEnabled());
+        autoRouteCheck = new JCheckBox("Auto-Route", false);
         autoRouteCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        autoRouteCheck.setToolTipText("Automatically chooses provider & model per task (Refactor, Tests, Explain, Debug)");
+        autoRouteCheck.setToolTipText("Automatically chooses provider & model per task for this session");
         autoRouteCheck.addActionListener(e -> {
-            cfg.setAutoRoutingEnabled(autoRouteCheck.isSelected());
-            ConfigManager.getInstance().saveConfig(cfg);
+            AgentSession session = SessionManager.getInstance().getActiveSession();
+            if (session != null) {
+                session.setAutoRoutingEnabled(autoRouteCheck.isSelected());
+                SessionManager.getInstance().autoSaveCurrentProjectSessions();
+                refreshSessionUi();
+            }
         });
         modelLine.add(autoRouteCheck);
 
@@ -309,6 +308,11 @@ public class AIAgentPanel extends JPanel {
         showWalkthroughCheck.addActionListener(e -> applyDisplayFilters());
         filtersLeft.add(showWalkthroughCheck);
 
+        attachCategoryContextMenu(showToolCallsCheck, MessageDisplayType.TOOL_REQUEST, "Requests");
+        attachCategoryContextMenu(showToolResultsCheck, MessageDisplayType.TOOL_RESPONSE, "Responses");
+        attachCategoryContextMenu(showThinkingCheck, MessageDisplayType.THINKING, "Reasoning");
+        attachCategoryContextMenu(showWalkthroughCheck, MessageDisplayType.WALKTHROUGH, "Walkthroughs");
+
         JPanel actionsRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 1));
         actionsRight.setOpaque(false);
 
@@ -323,6 +327,12 @@ public class AIAgentPanel extends JPanel {
         expandAllBtn.setToolTipText("Expand all collapsible bubbles");
         expandAllBtn.addActionListener(e -> expandAllCards());
         actionsRight.add(expandAllBtn);
+
+        toggleCategoriesBtn = new JButton("▾ Categories");
+        toggleCategoriesBtn.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        toggleCategoriesBtn.setToolTipText("Expand or collapse specific output categories");
+        toggleCategoriesBtn.addActionListener(e -> showCategoriesToggleMenu(toggleCategoriesBtn));
+        actionsRight.add(toggleCategoriesBtn);
 
         outputDisplayBar.add(filtersLeft, BorderLayout.CENTER);
         outputDisplayBar.add(actionsRight, BorderLayout.EAST);
@@ -432,17 +442,17 @@ public class AIAgentPanel extends JPanel {
             session.setProviderId(provider);
             populateModelsForProvider(provider);
 
-            // Synchronize with global config & AgentManager
+            // Explicit provider selection pauses auto-routing for this session
+            session.setAutoRoutingEnabled(false);
+            autoRouteCheck.setSelected(false);
+            SessionManager.getInstance().autoSaveCurrentProjectSessions();
+
+            // Synchronize runtime active provider for immediate execution
             IdeConfig config = ConfigManager.getInstance().getConfig();
             config.setActiveProviderId(provider);
             if (session.getModelId() != null) {
                 config.setActiveModelId(session.getModelId());
             }
-            // Explicit provider selection pauses auto-routing so user's chosen provider is used
-            autoRouteCheck.setSelected(false);
-            config.setAutoRoutingEnabled(false);
-
-            ConfigManager.getInstance().saveConfig(config);
             AgentManager.getInstance().updateActiveService(config);
         }
     }
@@ -453,11 +463,10 @@ public class AIAgentPanel extends JPanel {
         AgentSession session = SessionManager.getInstance().getActiveSession();
         if (session != null && model != null) {
             session.setModelId(model);
+            SessionManager.getInstance().autoSaveCurrentProjectSessions();
 
-            // Update max context limit
             IdeConfig config = ConfigManager.getInstance().getConfig();
             config.setActiveModelId(model);
-            ConfigManager.getInstance().saveConfig(config);
 
             ProviderConfig prov = config.getProvider(session.getProviderId());
             if (prov != null) {
@@ -467,6 +476,7 @@ public class AIAgentPanel extends JPanel {
                 }
             }
             updateTokenDisplay();
+            AgentManager.getInstance().updateActiveService(config);
         }
     }
 
@@ -500,6 +510,7 @@ public class AIAgentPanel extends JPanel {
         JTextField nameField = new JTextField("Specialist Agent " + (SessionManager.getInstance().getSessions().size() + 1), 18);
         JComboBox<String> provBox = new JComboBox<>(ConfigManager.getInstance().getConfig().getProviders().keySet().toArray(new String[0]));
         JComboBox<String> modBox = new JComboBox<>();
+        JCheckBox autoRouteNewCheck = new JCheckBox("Enable Task-Based Auto-Routing", false);
 
         Runnable updateMods = () -> {
             modBox.removeAllItems();
@@ -512,20 +523,22 @@ public class AIAgentPanel extends JPanel {
         provBox.addActionListener(e -> updateMods.run());
         updateMods.run();
 
-        JPanel panel = new JPanel(new GridLayout(3, 2, 6, 6));
+        JPanel panel = new JPanel(new GridLayout(4, 2, 6, 6));
         panel.add(new JLabel("Agent Session Name:"));
         panel.add(nameField);
         panel.add(new JLabel("Provider:"));
         panel.add(provBox);
         panel.add(new JLabel("Model:"));
         panel.add(modBox);
+        panel.add(new JLabel("Auto-Routing:"));
+        panel.add(autoRouteNewCheck);
 
         int res = JOptionPane.showConfirmDialog(this, panel, "Launch New Agent Session", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (res == JOptionPane.OK_OPTION && !nameField.getText().isBlank()) {
             String name = nameField.getText().trim();
             String p = (String) provBox.getSelectedItem();
             String m = (String) modBox.getSelectedItem();
-            SessionManager.getInstance().createSession(name, p, m != null ? m : "default");
+            SessionManager.getInstance().createSession(name, p, m != null ? m : "default", autoRouteNewCheck.isSelected());
             refreshSessionUi();
             reloadChatFromSession();
         }
@@ -572,7 +585,8 @@ public class AIAgentPanel extends JPanel {
             int selectedIdx = 0;
             for (int i = 0; i < sessions.size(); i++) {
                 AgentSession s = sessions.get(i);
-                sessionSelectorCombo.addItem(s.getName() + " (" + s.getProviderId() + ")");
+                String routeTag = s.isAutoRoutingEnabled() ? ", auto" : "";
+                sessionSelectorCombo.addItem(s.getName() + " (" + s.getProviderId() + routeTag + ")");
                 if (active != null && s.getId().equals(active.getId())) {
                     selectedIdx = i;
                 }
@@ -615,12 +629,8 @@ public class AIAgentPanel extends JPanel {
             }
             modelCombo.setSelectedItem(session.getModelId());
         }
-        autoRouteCheck.setSelected(config.isAutoRoutingEnabled());
+        autoRouteCheck.setSelected(session.isAutoRoutingEnabled());
 
-        config.setActiveProviderId(session.getProviderId());
-        if (session.getModelId() != null) {
-            config.setActiveModelId(session.getModelId());
-        }
         AgentManager.getInstance().updateActiveService(config);
     }
 
@@ -720,6 +730,74 @@ public class AIAgentPanel extends JPanel {
         chatBox.repaint();
     }
 
+    public void setCategoryCollapsed(MessageDisplayType type, boolean collapsed) {
+        for (Component comp : chatBox.getComponents()) {
+            if (comp instanceof MessageCard card) {
+                if (card.getDisplayType() == type) {
+                    card.setCollapsed(collapsed);
+                }
+            }
+        }
+        chatBox.revalidate();
+        chatBox.repaint();
+    }
+
+    private void attachCategoryContextMenu(JCheckBox check, MessageDisplayType type, String categoryName) {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem expItem = new JMenuItem("▾ Expand All " + categoryName);
+        expItem.addActionListener(e -> setCategoryCollapsed(type, false));
+        JMenuItem colItem = new JMenuItem("▴ Collapse All " + categoryName);
+        colItem.addActionListener(e -> setCategoryCollapsed(type, true));
+        menu.add(expItem);
+        menu.add(colItem);
+        check.setComponentPopupMenu(menu);
+    }
+
+    private void showCategoriesToggleMenu(Component invoker) {
+        JPopupMenu menu = new JPopupMenu();
+
+        JMenuItem expAll = new JMenuItem("▾ Expand All Outputs");
+        expAll.addActionListener(e -> expandAllCards());
+        JMenuItem colAll = new JMenuItem("▴ Collapse All Outputs");
+        colAll.addActionListener(e -> collapseAllCards());
+        menu.add(expAll);
+        menu.add(colAll);
+        menu.addSeparator();
+
+        JMenuItem expReq = new JMenuItem("🔧 Expand All Requests");
+        expReq.addActionListener(e -> setCategoryCollapsed(MessageDisplayType.TOOL_REQUEST, false));
+        JMenuItem colReq = new JMenuItem("🔧 Collapse All Requests");
+        colReq.addActionListener(e -> setCategoryCollapsed(MessageDisplayType.TOOL_REQUEST, true));
+        menu.add(expReq);
+        menu.add(colReq);
+        menu.addSeparator();
+
+        JMenuItem expRes = new JMenuItem("📥 Expand All Responses");
+        expRes.addActionListener(e -> setCategoryCollapsed(MessageDisplayType.TOOL_RESPONSE, false));
+        JMenuItem colRes = new JMenuItem("📥 Collapse All Responses");
+        colRes.addActionListener(e -> setCategoryCollapsed(MessageDisplayType.TOOL_RESPONSE, true));
+        menu.add(expRes);
+        menu.add(colRes);
+        menu.addSeparator();
+
+        JMenuItem expThk = new JMenuItem("🧠 Expand All Reasoning");
+        expThk.addActionListener(e -> setCategoryCollapsed(MessageDisplayType.THINKING, false));
+        JMenuItem colThk = new JMenuItem("🧠 Collapse All Reasoning");
+        colThk.addActionListener(e -> setCategoryCollapsed(MessageDisplayType.THINKING, true));
+        menu.add(expThk);
+        menu.add(colThk);
+        menu.addSeparator();
+
+        JMenuItem expWlk = new JMenuItem("📝 Expand All Walkthroughs");
+        expWlk.addActionListener(e -> setCategoryCollapsed(MessageDisplayType.WALKTHROUGH, false));
+        JMenuItem colWlk = new JMenuItem("📝 Collapse All Walkthroughs");
+        colWlk.addActionListener(e -> setCategoryCollapsed(MessageDisplayType.WALKTHROUGH, true));
+        menu.add(expWlk);
+        menu.add(colWlk);
+
+        menu.show(invoker, 0, invoker.getHeight());
+    }
+
     public void saveProjectSessions() {
         File projDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         if (projDir != null) {
@@ -813,6 +891,7 @@ public class AIAgentPanel extends JPanel {
             }
         }
         session.addMessage(msg);
+        SessionManager.getInstance().autoSaveCurrentProjectSessions();
     }
 
     private JButton createChip(String text, String promptText) {
@@ -1047,6 +1126,13 @@ public class AIAgentPanel extends JPanel {
 
             MessageCard card = new MessageCard(MessageDisplayType.WALKTHROUGH, contentPanel, toggle);
             toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+            headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            headerBar.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    card.setCollapsed(!card.isCollapsed());
+                }
+            });
             card.setBorder(new EmptyBorder(6, 6, 6, 6));
             card.add(inner, BorderLayout.CENTER);
 
@@ -1097,6 +1183,13 @@ public class AIAgentPanel extends JPanel {
 
         MessageCard card = new MessageCard(MessageDisplayType.THINKING, contentPanel, toggle);
         toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+        headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        headerBar.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                card.setCollapsed(!card.isCollapsed());
+            }
+        });
         card.setBorder(new EmptyBorder(4, 12, 4, 12));
         card.add(inner, BorderLayout.CENTER);
 
@@ -1172,6 +1265,13 @@ public class AIAgentPanel extends JPanel {
 
         MessageCard card = new MessageCard(MessageDisplayType.TOOL_REQUEST, contentPanel, toggle);
         toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+        headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        headerBar.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                card.setCollapsed(!card.isCollapsed());
+            }
+        });
         card.setBorder(new EmptyBorder(4, 12, 4, 12));
         card.add(inner, BorderLayout.CENTER);
 
@@ -1214,6 +1314,13 @@ public class AIAgentPanel extends JPanel {
 
         MessageCard card = new MessageCard(MessageDisplayType.TOOL_RESPONSE, contentPanel, toggle);
         toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+        headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        headerBar.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                card.setCollapsed(!card.isCollapsed());
+            }
+        });
         card.setBorder(new EmptyBorder(4, 12, 4, 12));
         card.add(inner, BorderLayout.CENTER);
 
@@ -1293,6 +1400,23 @@ public class AIAgentPanel extends JPanel {
             }
             revalidate();
             repaint();
+            Container parent = getParent();
+            if (parent != null) {
+                parent.revalidate();
+                parent.repaint();
+            }
+        }
+
+        public void toggleCollapsed() {
+            setCollapsed(!collapsed);
+        }
+
+        public JButton getToggleBtn() {
+            return toggleBtn;
+        }
+
+        public JComponent getContentComponent() {
+            return contentComponent;
         }
     }
 }

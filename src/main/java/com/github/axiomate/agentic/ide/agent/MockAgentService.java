@@ -76,7 +76,7 @@ public class MockAgentService implements AIAgentService {
 
                 // 2. Task-Based Model & Provider Routing display
                 AutonomousTaskRouter.RoutedModel routed = AutonomousTaskRouter.route(
-                        prompt, session.getProviderId(), session.getModelId());
+                        prompt, session.getProviderId(), session.getModelId(), session.isAutoRoutingEnabled());
                 if (!routed.rationale().startsWith("Default")) {
                     listener.onThinking("🎯 " + routed.rationale());
                 }
@@ -500,6 +500,7 @@ public class MockAgentService implements AIAgentService {
                 log.info("Post-generation context compression: {}", postComp.summary());
             }
             SessionManager.getInstance().notifyListeners();
+            SessionManager.getInstance().autoSaveCurrentProjectSessions();
         }
 
         listener.onComplete(current.toString());

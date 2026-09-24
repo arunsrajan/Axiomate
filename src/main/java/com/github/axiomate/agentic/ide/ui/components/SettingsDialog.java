@@ -134,6 +134,7 @@ public class SettingsDialog extends JDialog {
         config.setFontSize((Integer) fontSizeSpinner.getValue());
 
         ConfigManager.getInstance().saveConfig(config);
+        com.github.axiomate.agentic.ide.agent.AgentManager.getInstance().updateActiveService(config);
         UIUtils.applyTheme(newTheme, parent);
 
         dispose();

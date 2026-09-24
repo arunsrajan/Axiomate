@@ -52,6 +52,7 @@ public class SessionManager {
         IdeConfig config = ConfigManager.getInstance().getConfig();
         String provider = config.getActiveProviderId();
         String model = config.getActiveModelId();
+        boolean autoRoute = config.isAutoRoutingEnabled();
 
         int maxCtx = 128_000;
         ProviderConfig provCfg = config.getProvider(provider);
@@ -65,7 +66,25 @@ public class SessionManager {
             name = "Agent - " + currentProjectDirectory.getName();
         }
 
-        AgentSession defaultSession = new AgentSession(name, provider, model, maxCtx);
+        List<AgentSession> defaults = ProjectStateManager.getInstance().getDefaultSessions();
+        if (currentProjectDirectory == null && !defaults.isEmpty()) {
+            sessions.clear();
+            sessions.addAll(defaults);
+            String savedId = ProjectStateManager.getInstance().getDefaultActiveSessionId();
+            AgentSession matched = null;
+            if (savedId != null && !savedId.isBlank()) {
+                for (AgentSession s : sessions) {
+                    if (s.getId().equals(savedId)) {
+                        matched = s;
+                        break;
+                    }
+                }
+            }
+            activeSession = (matched != null) ? matched : sessions.get(0);
+            return;
+        }
+
+        AgentSession defaultSession = new AgentSession(name, provider, model, autoRoute, maxCtx);
         sessions.clear();
         sessions.add(defaultSession);
         activeSession = defaultSession;
@@ -83,6 +102,10 @@ public class SessionManager {
     }
 
     public synchronized AgentSession createSession(String name, String providerId, String modelId) {
+        return createSession(name, providerId, modelId, false);
+    }
+
+    public synchronized AgentSession createSession(String name, String providerId, String modelId, boolean autoRoutingEnabled) {
         IdeConfig config = ConfigManager.getInstance().getConfig();
         int maxCtx = 128_000;
         ProviderConfig provCfg = config.getProvider(providerId);
@@ -91,10 +114,10 @@ public class SessionManager {
             if (m != null) maxCtx = m.getMaxContextTokens();
         }
 
-        AgentSession session = new AgentSession(name, providerId, modelId, maxCtx);
+        AgentSession session = new AgentSession(name, providerId, modelId, autoRoutingEnabled, maxCtx);
         sessions.add(session);
         activeSession = session;
-        log.info("Created new Agent Session: '{}' ({}:{})", name, providerId, modelId);
+        log.info("Created new Agent Session: '{}' ({}:{}, autoRoute={})", name, providerId, modelId, autoRoutingEnabled);
         notifyListeners();
         autoSaveCurrentProjectSessions();
         return session;
@@ -167,14 +190,16 @@ public class SessionManager {
      * and optionally to a local project directory (.axiomate/sessions.json).
      */
     public synchronized void saveSessionsForProject(File projectDir) {
-        if (projectDir == null) {
-            projectDir = currentProjectDirectory != null ? currentProjectDirectory : ProjectManager.getInstance().getCurrentProjectDirectory();
-        }
-        if (projectDir == null) return;
-
-        this.currentProjectDirectory = projectDir;
         String activeId = (activeSession != null) ? activeSession.getId() : "";
         List<AgentSession> currentSessionsList = new ArrayList<>(sessions);
+
+        if (projectDir == null) {
+            ProjectStateManager.getInstance().saveDefaultSessions(currentSessionsList, activeId);
+            log.info("Autosaved {} sessions to default workspace state in ProjectStateManager", currentSessionsList.size());
+            return;
+        }
+
+        this.currentProjectDirectory = projectDir;
 
         // 1. Centralized storage via ProjectStateManager
         ProjectStateManager.getInstance().saveProjectSessions(projectDir, currentSessionsList, activeId);
@@ -202,7 +227,34 @@ public class SessionManager {
      * Restores all agent sessions, active session selection, and notifies listeners.
      */
     public synchronized void loadSessionsForProject(File projectDir) {
-        if (projectDir == null || !projectDir.exists() || !projectDir.isDirectory()) return;
+        if (projectDir == null) {
+            this.currentProjectDirectory = null;
+            List<AgentSession> loaded = ProjectStateManager.getInstance().getDefaultSessions();
+            String savedActiveId = ProjectStateManager.getInstance().getDefaultActiveSessionId();
+            sessions.clear();
+            if (loaded != null && !loaded.isEmpty()) {
+                sessions.addAll(loaded);
+                AgentSession matched = null;
+                if (savedActiveId != null && !savedActiveId.isBlank()) {
+                    for (AgentSession s : sessions) {
+                        if (s.getId().equals(savedActiveId)) {
+                            matched = s;
+                            break;
+                        }
+                    }
+                }
+                activeSession = (matched != null) ? matched : sessions.get(0);
+                log.info("Successfully loaded {} default workspace sessions (active: '{}')",
+                        sessions.size(), activeSession.getName());
+            } else {
+                initDefaultSession();
+                log.info("No saved default sessions found, initialized default session");
+            }
+            notifyListeners();
+            return;
+        }
+
+        if (!projectDir.exists() || !projectDir.isDirectory()) return;
 
         this.currentProjectDirectory = projectDir;
 
@@ -251,10 +303,7 @@ public class SessionManager {
     }
 
     public synchronized void autoSaveCurrentProjectSessions() {
-        File dir = currentProjectDirectory != null ? currentProjectDirectory : ProjectManager.getInstance().getCurrentProjectDirectory();
-        if (dir != null) {
-            saveSessionsForProject(dir);
-        }
+        saveSessionsForProject(currentProjectDirectory);
     }
 
     /**

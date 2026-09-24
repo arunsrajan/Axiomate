@@ -42,10 +42,14 @@ public class AutonomousTaskRouter {
     }
 
     public static RoutedModel route(String prompt, String defaultProviderId, String defaultModelId) {
+        return route(prompt, defaultProviderId, defaultModelId, ConfigManager.getInstance().getConfig().isAutoRoutingEnabled());
+    }
+
+    public static RoutedModel route(String prompt, String defaultProviderId, String defaultModelId, boolean autoRoutingEnabled) {
         IdeConfig config = ConfigManager.getInstance().getConfig();
         TaskType taskType = classifyTask(prompt);
 
-        if (!config.isAutoRoutingEnabled()) {
+        if (!autoRoutingEnabled) {
             return new RoutedModel(taskType, defaultProviderId, defaultModelId, "Manual / Session Model Selected");
         }
 

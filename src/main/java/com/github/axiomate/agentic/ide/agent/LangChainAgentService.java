@@ -93,7 +93,7 @@ public class LangChainAgentService implements AIAgentService {
 
                 // 2. Intelligent Task-Based Model & Provider Routing
                 AutonomousTaskRouter.RoutedModel routed = AutonomousTaskRouter.route(
-                        prompt, session.getProviderId(), session.getModelId());
+                        prompt, session.getProviderId(), session.getModelId(), session.isAutoRoutingEnabled());
 
                 String providerId = routed.providerId();
                 String targetModel = routed.modelId();
@@ -251,6 +251,7 @@ public class LangChainAgentService implements AIAgentService {
                             listener.onToken(finalResponse);
                         }
 
+                        SessionManager.getInstance().autoSaveCurrentProjectSessions();
                         listener.onComplete(finalResponse);
                         return;
                     }
@@ -259,6 +260,7 @@ public class LangChainAgentService implements AIAgentService {
                 if (iteration >= MAX_TOOL_ITERATIONS) {
                     String msg = "Task reached maximum tool calling iterations (" + MAX_TOOL_ITERATIONS + "). Completed.";
                     session.addMessage(new AgentMessage(AgentRole.ASSISTANT, msg));
+                    SessionManager.getInstance().autoSaveCurrentProjectSessions();
                     listener.onToken(msg);
                     listener.onComplete(msg);
                 }
