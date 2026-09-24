@@ -83,13 +83,19 @@ class AnthropicThinkingModelDeserializationTest {
         AiMessage aiMessage = AnthropicMapper.toAiMessage(response.content);
         assertNotNull(aiMessage);
         assertNotNull(aiMessage.text());
-        assertTrue(aiMessage.text().contains("The answer is 42."), "Should contain text response");
-        assertTrue(aiMessage.text().contains("Let me analyze"), "Should contain thinking content");
+        // Actual AI text should only be the final answer — NOT the thinking
+        assertEquals("The answer is 42.", aiMessage.text(), "AiMessage text should contain only the final answer");
         assertFalse(aiMessage.hasToolExecutionRequests());
+
+        // Thinking is surfaced separately via LAST_THINKING thread-local
+        String capturedThinking = AnthropicMapper.LAST_THINKING.get();
+        AnthropicMapper.LAST_THINKING.remove();
+        assertNotNull(capturedThinking, "Thinking content should be captured in LAST_THINKING");
+        assertTrue(capturedThinking.contains("Let me analyze"), "Thinking should contain reasoning text");
     }
 
     @Test
-    @DisplayName("Should produce AiMessage with only thinking when no text block present")
+    @DisplayName("Should produce AiMessage with only actual text when thinking block is present")
     void shouldProduceAiMessageWithOnlyThinking() throws Exception {
         String json = """
                 {
@@ -100,7 +106,12 @@ class AnthropicThinkingModelDeserializationTest {
         AnthropicContent thinkingBlock = MAPPER.readValue(json, AnthropicContent.class);
         AiMessage aiMessage = AnthropicMapper.toAiMessage(List.of(thinkingBlock));
         assertNotNull(aiMessage);
-        assertEquals("Internal reasoning only...", aiMessage.text());
+        // When ONLY thinking is present, text is empty; thinking is in thread-local
+        assertEquals("", aiMessage.text(), "AiMessage text should be empty when only thinking block is present");
+
+        String capturedThinking = AnthropicMapper.LAST_THINKING.get();
+        AnthropicMapper.LAST_THINKING.remove();
+        assertEquals("Internal reasoning only...", capturedThinking);
     }
 
     @Test

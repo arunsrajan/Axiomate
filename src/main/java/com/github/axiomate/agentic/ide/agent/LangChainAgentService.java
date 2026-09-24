@@ -218,6 +218,20 @@ public class LangChainAgentService implements AIAgentService {
                     } else {
                         // Final resolution reached
                         String finalResponse = (aiMessage.text() != null) ? aiMessage.text() : "";
+
+                        // Surface any thinking/reasoning from the model (DeepSeek, Claude 3.7, etc.)
+                        // AnthropicMapper stores thinking via LAST_THINKING thread-local after generate()
+                        try {
+                            String thinkingContent = dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.get();
+                            if (thinkingContent != null && !thinkingContent.isBlank()) {
+                                log.debug("Surfacing {} chars of model thinking to UI", thinkingContent.length());
+                                listener.onThinking("💭 Model Reasoning:\n" + thinkingContent);
+                            }
+                        } finally {
+                            dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.remove();
+                        }
+
+                        // Store in session (actual response only, without thinking)
                         session.addMessage(new AgentMessage(AgentRole.ASSISTANT, finalResponse));
                         MemoryManager.getInstance().recordEpisode(prompt, "Completed via " + providerId + ":" + targetModel);
 
@@ -228,6 +242,13 @@ public class LangChainAgentService implements AIAgentService {
                             log.info("Post-generation context compression: {}", postComp.summary());
                         }
 
+                        // Emit the response as a token so the chat bubble is populated.
+                        // chatModel.generate() is synchronous (non-streaming), so onToken() is
+                        // the only way to push text into the streaming chat bubble in the UI.
+                        if (!finalResponse.isBlank()) {
+                            listener.onToken(finalResponse);
+                        }
+
                         listener.onComplete(finalResponse);
                         return;
                     }
@@ -236,6 +257,7 @@ public class LangChainAgentService implements AIAgentService {
                 if (iteration >= MAX_TOOL_ITERATIONS) {
                     String msg = "Task reached maximum tool calling iterations (" + MAX_TOOL_ITERATIONS + "). Completed.";
                     session.addMessage(new AgentMessage(AgentRole.ASSISTANT, msg));
+                    listener.onToken(msg);
                     listener.onComplete(msg);
                 }
 

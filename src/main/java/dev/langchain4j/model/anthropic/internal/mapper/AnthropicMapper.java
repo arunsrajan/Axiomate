@@ -45,6 +45,13 @@ public class AnthropicMapper {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /**
+     * Holds the thinking/reasoning text captured from the most recent toAiMessage() call
+     * on the same thread. LangChainAgentService reads this after chatModel.generate() returns
+     * to surface reasoning to the UI via onThinking().
+     */
+    public static final ThreadLocal<String> LAST_THINKING = new ThreadLocal<>();
+
     public AnthropicMapper() {
     }
 
@@ -168,17 +175,12 @@ public class AnthropicMapper {
                 })
                 .collect(Collectors.toList());
 
-        // Format combined text if thinking is present
-        String combinedText;
-        if (Utils.isNotNullOrBlank(thinking) && Utils.isNotNullOrBlank(text)) {
-            combinedText = "> [Thinking Process]\n> " + thinking.replace("\n", "\n> ") + "\n\n" + text;
-        } else if (Utils.isNotNullOrBlank(text)) {
-            combinedText = text;
-        } else if (Utils.isNotNullOrBlank(thinking)) {
-            combinedText = thinking;
-        } else {
-            combinedText = "";
-        }
+        // Store thinking separately via thread-local so the agent service can
+        // surface it through onThinking() without embedding it in the chat text.
+        LAST_THINKING.set(Utils.isNotNullOrBlank(thinking) ? thinking : null);
+
+        // The AiMessage text is ONLY the final answer (not the thinking)
+        String combinedText = Utils.isNotNullOrBlank(text) ? text : "";
 
         if (Utils.isNotNullOrBlank(combinedText) && !Utils.isNullOrEmpty(toolExecutionRequests)) {
             return AiMessage.from(combinedText, toolExecutionRequests);

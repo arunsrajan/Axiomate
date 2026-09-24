@@ -681,6 +681,8 @@ public class AIAgentPanel extends JPanel {
             public void onThinking(String thought) {
                 SwingUtilities.invokeLater(() -> {
                     setAgentState("Thinking...", UIUtils.WARNING_COLOR, true);
+                    // Show reasoning in chat AND log it to terminal
+                    appendThinkingBubble(thought);
                     terminalPanel.appendAgentLog("AGENT REASONING", thought);
                 });
             }
@@ -705,6 +707,11 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onComplete(String fullResponse) {
                 SwingUtilities.invokeLater(() -> {
+                    // If onToken() was never called (e.g. empty response), ensure bubble is closed
+                    if (currentAssistantMessagePanel != null && currentAssistantTextArea != null) {
+                        currentAssistantMessagePanel = null;
+                        currentAssistantTextArea = null;
+                    }
                     setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);
                     updateTokenDisplay();
                     scrollToBottom();
@@ -785,6 +792,42 @@ public class AIAgentPanel extends JPanel {
 
             currentAssistantMessagePanel = bubble;
         }
+    }
+
+    /**
+     * Renders the model's thinking/reasoning in a styled dark-purple bubble in the chat.
+     * The bubble is clearly distinguished from the final answer with a "🧠 Reasoning" header.
+     */
+    private void appendThinkingBubble(String thought) {
+        JPanel bubble = new JPanel(new BorderLayout());
+        bubble.setBorder(new EmptyBorder(4, 12, 4, 12));
+
+        JPanel inner = new JPanel(new BorderLayout());
+        inner.setBackground(new Color(32, 28, 50));
+        inner.setBorder(new LineBorder(new Color(110, 80, 180), 1));
+
+        JLabel header = new JLabel("🧠  Model Reasoning  (thinking block)");
+        header.setFont(new Font("SansSerif", Font.BOLD, 10));
+        header.setForeground(new Color(170, 130, 255));
+        header.setBorder(new EmptyBorder(5, 8, 3, 8));
+
+        // Trim long thinking to a preview — full content visible in terminal log
+        String display = thought;
+        if (display.length() > 800) {
+            display = display.substring(0, 800) + "\n… (see terminal log for full reasoning)";
+        }
+        JTextArea area = createBubbleTextArea(display);
+        area.setFont(new Font("SansSerif", Font.ITALIC, 12));
+        area.setForeground(new Color(190, 170, 230));
+        area.setBorder(new EmptyBorder(2, 8, 6, 8));
+
+        inner.add(header, BorderLayout.NORTH);
+        inner.add(area, BorderLayout.CENTER);
+
+        bubble.add(inner, BorderLayout.CENTER);
+        chatBox.add(bubble);
+        chatBox.add(Box.createVerticalStrut(4));
+        scrollToBottom();
     }
 
     private void appendAssistantBubble(String text) {
