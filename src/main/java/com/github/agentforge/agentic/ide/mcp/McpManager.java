@@ -34,15 +34,7 @@ public class McpManager {
     private McpManager() {
         this.mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
-        String userHome = System.getProperty("user.home", ".");
-        Path dir = Paths.get(userHome, ".agentic-ide");
-        try {
-            if (!Files.exists(dir)) {
-                Files.createDirectories(dir);
-            }
-        } catch (IOException e) {
-            log.warn("Could not create MCP config directory: {}", dir, e);
-        }
+        Path dir = com.github.agentforge.agentic.ide.config.ConfigManager.getAppDirectory();
         this.configPath = dir.resolve("mcp_servers.json");
         loadConfigs();
 

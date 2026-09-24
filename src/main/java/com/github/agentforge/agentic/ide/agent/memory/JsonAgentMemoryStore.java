@@ -30,15 +30,7 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
     public JsonAgentMemoryStore() {
         this.mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
-        String userHome = System.getProperty("user.home", ".");
-        Path dir = Paths.get(userHome, ".agentic-ide");
-        try {
-            if (!Files.exists(dir)) {
-                Files.createDirectories(dir);
-            }
-        } catch (IOException e) {
-            log.warn("Could not create memory directory: {}", dir, e);
-        }
+        Path dir = com.github.agentforge.agentic.ide.config.ConfigManager.getAppDirectory();
         this.storagePath = dir.resolve("agent_memory.json");
         loadMemories();
     }

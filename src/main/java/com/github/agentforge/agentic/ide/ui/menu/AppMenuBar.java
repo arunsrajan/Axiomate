@@ -61,7 +61,20 @@ public class AppMenuBar extends JMenuBar {
             chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
             if (chooser.showOpenDialog(mainFrame) == JFileChooser.APPROVE_OPTION) {
                 File dir = chooser.getSelectedFile();
-                ProjectManager.getInstance().setCurrentProjectDirectory(dir);
+                if (mainFrame instanceof com.github.agentforge.agentic.ide.ui.MainFrame mf) {
+                    mf.openProjectDirectory(dir);
+                } else {
+                    ProjectManager.getInstance().setCurrentProjectDirectory(dir);
+                }
+            }
+        });
+
+        JMenuItem closeProjectItem = new JMenuItem("Close Project Folder");
+        closeProjectItem.addActionListener(e -> {
+            if (mainFrame instanceof com.github.agentforge.agentic.ide.ui.MainFrame mf) {
+                mf.closeProjectDirectory();
+            } else {
+                editorPanel.closeAllTabs();
             }
         });
 
@@ -79,11 +92,17 @@ public class AppMenuBar extends JMenuBar {
 
         JMenuItem exitItem = new JMenuItem("Exit", KeyEvent.VK_X);
         exitItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Q, InputEvent.CTRL_DOWN_MASK));
-        exitItem.addActionListener(e -> System.exit(0));
+        exitItem.addActionListener(e -> {
+            if (mainFrame instanceof com.github.agentforge.agentic.ide.ui.MainFrame mf) {
+                mf.saveCurrentProjectState();
+            }
+            System.exit(0);
+        });
 
         fileMenu.add(newFileItem);
         fileMenu.add(openFileItem);
         fileMenu.add(openProjectItem);
+        fileMenu.add(closeProjectItem);
         fileMenu.addSeparator();
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);

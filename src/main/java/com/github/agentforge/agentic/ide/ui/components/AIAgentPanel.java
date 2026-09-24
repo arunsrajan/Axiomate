@@ -65,6 +65,7 @@ public class AIAgentPanel extends JPanel {
 
     private final Supplier<String> activeCodeSupplier;
     private final TerminalPanel terminalPanel;
+    private final FileMentionController fileMentionController;
 
     private JPanel currentAssistantMessagePanel;
     private JTextArea currentAssistantTextArea;
@@ -279,6 +280,9 @@ public class AIAgentPanel extends JPanel {
         inputArea.setWrapStyleWord(true);
         inputArea.setFont(new Font("SansSerif", Font.PLAIN, 13));
         inputArea.setBorder(new EmptyBorder(6, 6, 6, 6));
+        inputArea.setToolTipText("Type your prompt... Type '@' to mention and inject files from the workspace");
+
+        fileMentionController = new FileMentionController(inputArea);
 
         inputArea.addKeyListener(new KeyAdapter() {
             @Override
@@ -583,6 +587,7 @@ public class AIAgentPanel extends JPanel {
             - 👥 **Multi-Agent Sessions**: Launch and switch between multiple concurrent agent sessions.
             - 📊 **Token Usage & Limit Meter**: Displays real-time context consumption and % limit.
             - ⚡ **95% Context Compression**: Automatically condenses conversation history into episodic memory when reaching 95% capacity.
+            - 📎 **`@` File Mentions**: Type `@` to select and inject workspace files directly into the AI agent prompt.
             """);
     }
 
@@ -617,6 +622,18 @@ public class AIAgentPanel extends JPanel {
         appendUserBubble(prompt);
 
         String contextCode = includeContextCheck.isSelected() ? activeCodeSupplier.get() : "";
+        if (contextCode == null) contextCode = "";
+
+        // Auto-inject '@' file mentions from prompt
+        IdeConfig config = ConfigManager.getInstance().getConfig();
+        if (config.isFileMentionsEnabled()) {
+            File projectDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+            String mentionsContext = FileMentionController.buildMentionedFilesContext(prompt, projectDir);
+            if (!mentionsContext.isBlank()) {
+                contextCode = contextCode.isBlank() ? mentionsContext : contextCode + "\n\n" + mentionsContext;
+            }
+        }
+
         File activeFile = ProjectManager.getInstance().getActiveFile();
         String activeFilePath = (activeFile != null) ? activeFile.getName() : "";
 

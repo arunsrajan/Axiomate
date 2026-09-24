@@ -2,6 +2,8 @@ package com.github.agentforge.agentic.ide.ui;
 
 import com.github.agentforge.agentic.ide.config.ConfigManager;
 import com.github.agentforge.agentic.ide.config.IdeConfig;
+import com.github.agentforge.agentic.ide.config.ProjectState;
+import com.github.agentforge.agentic.ide.config.ProjectStateManager;
 import com.github.agentforge.agentic.ide.ui.components.AIAgentPanel;
 import com.github.agentforge.agentic.ide.ui.components.EditorPanel;
 import com.github.agentforge.agentic.ide.ui.components.ProjectTreePanel;
@@ -139,7 +141,102 @@ public class MainFrame extends JFrame {
 
         setContentPane(contentPane);
 
-        loadInitialSample();
+        restoreSavedProjectStateOrInitial();
+        setupProjectStateHooks();
+    }
+
+    private void restoreSavedProjectStateOrInitial() {
+        ProjectStateManager stateManager = ProjectStateManager.getInstance();
+        String lastPath = stateManager.getLastOpenProjectPath();
+        File targetDir = null;
+        if (lastPath != null && !lastPath.isBlank()) {
+            File dir = new File(lastPath);
+            if (dir.exists() && dir.isDirectory()) {
+                targetDir = dir;
+            }
+        }
+        if (targetDir == null) {
+            targetDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        }
+
+        if (targetDir != null && targetDir.exists() && targetDir.isDirectory()) {
+            ProjectManager.getInstance().setCurrentProjectDirectory(targetDir);
+            boolean restored = restoreProjectTabs(targetDir);
+            if (!restored) {
+                loadInitialSample();
+            }
+        } else {
+            loadInitialSample();
+        }
+    }
+
+    public boolean restoreProjectTabs(File projectDir) {
+        if (projectDir == null) return false;
+        ProjectState state = ProjectStateManager.getInstance().getProjectState(projectDir);
+        if (state == null || state.getOpenFiles() == null || state.getOpenFiles().isEmpty()) {
+            return false;
+        }
+
+        int openedCount = 0;
+        for (String filePath : state.getOpenFiles()) {
+            File file = new File(filePath);
+            if (file.exists() && !file.isDirectory()) {
+                editorPanel.openFile(file);
+                openedCount++;
+            }
+        }
+
+        if (state.getActiveFile() != null && !state.getActiveFile().isBlank()) {
+            File active = new File(state.getActiveFile());
+            if (active.exists()) {
+                editorPanel.selectFile(active);
+            }
+        }
+
+        return openedCount > 0;
+    }
+
+    public void openProjectDirectory(File newDir) {
+        if (newDir == null || !newDir.exists() || !newDir.isDirectory()) return;
+
+        File oldDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        if (oldDir != null) {
+            ProjectStateManager.getInstance().saveProjectState(oldDir, editorPanel.getOpenFiles(), editorPanel.getActiveFile());
+        }
+
+        editorPanel.closeAllTabs();
+        ProjectManager.getInstance().setCurrentProjectDirectory(newDir);
+
+        boolean restored = restoreProjectTabs(newDir);
+        if (!restored) {
+            loadInitialSample();
+        }
+    }
+
+    public void closeProjectDirectory() {
+        File currentDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        if (currentDir != null) {
+            ProjectStateManager.getInstance().closeProject(currentDir, editorPanel.getOpenFiles(), editorPanel.getActiveFile());
+        }
+        editorPanel.closeAllTabs();
+        ProjectManager.getInstance().setActiveFile(null);
+    }
+
+    public void saveCurrentProjectState() {
+        File currentDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        if (currentDir != null) {
+            ProjectStateManager.getInstance().saveProjectState(currentDir, editorPanel.getOpenFiles(), editorPanel.getActiveFile());
+        }
+    }
+
+    private void setupProjectStateHooks() {
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                saveCurrentProjectState();
+            }
+        });
+        Runtime.getRuntime().addShutdownHook(new Thread(this::saveCurrentProjectState));
     }
 
     private void loadInitialSample() {

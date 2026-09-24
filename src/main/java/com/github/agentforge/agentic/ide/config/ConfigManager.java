@@ -19,8 +19,10 @@ import java.util.function.Consumer;
 public class ConfigManager {
 
     private static final Logger log = LoggerFactory.getLogger(ConfigManager.class);
-    private static final String APP_DIR_NAME = ".agentic-ide";
-    private static final String CONFIG_FILE_NAME = "config.json";
+
+    public static final String APP_DIR_NAME = ".agentforge-ide";
+    public static final String LEGACY_APP_DIR_NAME = ".agentic-ide";
+    public static final String CONFIG_FILE_NAME = "config.json";
 
     private static ConfigManager instance;
 
@@ -29,17 +31,37 @@ public class ConfigManager {
     private IdeConfig config;
     private final List<Consumer<IdeConfig>> listeners = new ArrayList<>();
 
-    private ConfigManager() {
-        this.objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+    public static Path getAppDirectory() {
         String userHome = System.getProperty("user.home", ".");
         Path appDir = Paths.get(userHome, APP_DIR_NAME);
         try {
             if (!Files.exists(appDir)) {
                 Files.createDirectories(appDir);
+                // Migrate any legacy config files if present
+                Path legacyDir = Paths.get(userHome, LEGACY_APP_DIR_NAME);
+                if (Files.exists(legacyDir)) {
+                    log.info("Migrating configuration files from legacy {} to {}", legacyDir, appDir);
+                    try (var stream = Files.list(legacyDir)) {
+                        for (Path src : stream.toList()) {
+                            Path dest = appDir.resolve(src.getFileName());
+                            if (!Files.exists(dest)) {
+                                Files.copy(src, dest);
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.warn("Error migrating legacy configs", e);
+                    }
+                }
             }
         } catch (IOException e) {
             log.warn("Could not create app directory: {}", appDir, e);
         }
+        return appDir;
+    }
+
+    private ConfigManager() {
+        this.objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        Path appDir = getAppDirectory();
         this.configPath = appDir.resolve(CONFIG_FILE_NAME);
         this.config = loadConfig();
     }

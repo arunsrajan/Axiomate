@@ -23,6 +23,10 @@ public class IdeConfig {
     private boolean autoRoutingEnabled = true;
     private double autoCompressionThreshold = 0.95; // 95% limit triggers compression
 
+    // File Mentions (@)
+    private boolean fileMentionsEnabled = true;
+    private String mentionTriggerChar = "@";
+
     private double temperature = 0.2;
     private String systemPrompt = """
             You are an autonomous AI software engineer inside the AgentForge IDE.
@@ -172,6 +176,22 @@ public class IdeConfig {
 
     public void setAutoCompressionThreshold(double autoCompressionThreshold) {
         this.autoCompressionThreshold = Math.max(0.5, Math.min(0.99, autoCompressionThreshold));
+    }
+
+    public boolean isFileMentionsEnabled() {
+        return fileMentionsEnabled;
+    }
+
+    public void setFileMentionsEnabled(boolean fileMentionsEnabled) {
+        this.fileMentionsEnabled = fileMentionsEnabled;
+    }
+
+    public String getMentionTriggerChar() {
+        return mentionTriggerChar != null ? mentionTriggerChar : "@";
+    }
+
+    public void setMentionTriggerChar(String mentionTriggerChar) {
+        this.mentionTriggerChar = mentionTriggerChar != null ? mentionTriggerChar : "@";
     }
 
     public double getTemperature() {

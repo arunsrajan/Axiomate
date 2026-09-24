@@ -21,7 +21,9 @@ import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -278,6 +280,40 @@ public class EditorPanel extends JPanel {
     public File getActiveFile() {
         Component selected = tabbedPane.getSelectedComponent();
         return tabFileMap.get(selected);
+    }
+
+    public List<File> getOpenFiles() {
+        List<File> files = new ArrayList<>();
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            File f = tabFileMap.get(c);
+            if (f != null) {
+                files.add(f);
+            }
+        }
+        return files;
+    }
+
+    public boolean selectFile(File file) {
+        if (file == null) return false;
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            File open = tabFileMap.get(c);
+            if (open != null && open.getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath())) {
+                tabbedPane.setSelectedIndex(i);
+                ProjectManager.getInstance().setActiveFile(open);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void closeAllTabs() {
+        tabbedPane.removeAll();
+        tabFileMap.clear();
+        tabEditorMap.clear();
+        dirtyMap.clear();
+        ProjectManager.getInstance().setActiveFile(null);
     }
 
     public String getActiveText() {

@@ -41,6 +41,10 @@ public class ProviderSettingsPanel extends JPanel {
     // Context compression controls
     private final JSpinner compressionThresholdSpinner;
 
+    // File mentions (@) controls
+    private final JCheckBox fileMentionsCheck;
+    private final JTextField mentionTriggerField;
+
     // In-memory working copy of providers
     private final Map<String, ProviderConfig> workingProviders = new LinkedHashMap<>();
     private String currentSelectedProviderId = "ANTHROPIC";
@@ -283,11 +287,30 @@ public class ProviderSettingsPanel extends JPanel {
         compPanel.add(compressionThresholdSpinner);
         compPanel.add(new JLabel("% of maximum model context (Default: 95%)"));
 
+        // File Mentions (@) Setting Panel
+        JPanel mentionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 4));
+        mentionPanel.setBorder(new CompoundBorder(new TitledBorder("File Mentions (@) & Workspace Context"), new EmptyBorder(6, 10, 6, 10)));
+        fileMentionsCheck = new JCheckBox("Enable '@' File Mentions & Auto-Context Injection in Agent Chat", config.isFileMentionsEnabled());
+        fileMentionsCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
+        mentionPanel.add(fileMentionsCheck);
+
+        mentionPanel.add(Box.createHorizontalStrut(10));
+        mentionPanel.add(new JLabel("Trigger Symbol:"));
+        mentionTriggerField = new JTextField(config.getMentionTriggerChar(), 3);
+        mentionPanel.add(mentionTriggerField);
+
+        JLabel mentionHelp = new JLabel("(Lists workspace files when typed, injects file content into prompt)");
+        mentionHelp.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        mentionHelp.setForeground(Color.GRAY);
+        mentionPanel.add(mentionHelp);
+
         JPanel routingCenter = new JPanel();
         routingCenter.setLayout(new BoxLayout(routingCenter, BoxLayout.Y_AXIS));
         routingCenter.add(gridPanel);
         routingCenter.add(Box.createVerticalStrut(10));
         routingCenter.add(compPanel);
+        routingCenter.add(Box.createVerticalStrut(10));
+        routingCenter.add(mentionPanel);
 
         routingTab.add(new JScrollPane(routingCenter), BorderLayout.CENTER);
         subTabbedPane.addTab("Task-Based Model Routing & Limits", routingTab);
@@ -629,5 +652,8 @@ public class ProviderSettingsPanel extends JPanel {
             }
         }
         targetConfig.setTaskRouting(routings);
+        targetConfig.setFileMentionsEnabled(fileMentionsCheck.isSelected());
+        String trig = mentionTriggerField.getText().trim();
+        targetConfig.setMentionTriggerChar(trig.isEmpty() ? "@" : trig);
     }
 }
