@@ -99,7 +99,13 @@ public class MockAgentService implements AIAgentService {
                 String lower = prompt.toLowerCase();
 
                 // Dynamic tool routing based on prompt intent
-                if (lower.contains("list file") || lower.contains("show file") || lower.contains("directory")) {
+                if (lower.contains("bash")) {
+                    handleBashTool(prompt, listener);
+                } else if (lower.contains("powershell") || lower.contains("pwsh")) {
+                    handlePowerShellTool(prompt, listener);
+                } else if (lower.contains("edit") || lower.contains("patch") || lower.contains("replace line")) {
+                    handleAutonomousCodeEdit(prompt, contextCode, activeFilePath, memoryContext, listener);
+                } else if (lower.contains("list file") || lower.contains("show file") || lower.contains("directory")) {
                     handleListFilesTool(prompt, listener);
                 } else if (lower.contains("remember") || lower.contains("save memory")) {
                     handleMemoryTool(prompt, listener);
@@ -129,6 +135,63 @@ public class MockAgentService implements AIAgentService {
                 listener.onError(e);
             }
         });
+    }
+
+    private void handleBashTool(String prompt, AgentListener listener) throws Exception {
+        listener.onThinking("Invoking tool: bash...");
+        String cmd = prompt.replaceAll("(?i).*bash\\s*(command)?\\s*", "").trim();
+        if (cmd.isEmpty()) cmd = "git status -s";
+        String args = "{\"command\": \"" + cmd.replace("\"", "\\\"") + "\"}";
+        listener.onToolCall("bash", args);
+        sleep(300);
+
+        String result = executeRegisteredTool("bash", args);
+        listener.onToolResult("bash", result);
+        sleep(200);
+
+        streamResponse("### Bash Execution Result\n\n```bash\n" + result + "\n```\n", listener);
+    }
+
+    private void handlePowerShellTool(String prompt, AgentListener listener) throws Exception {
+        listener.onThinking("Invoking tool: powershell...");
+        String cmd = prompt.replaceAll("(?i).*(powershell|pwsh)\\s*(command)?\\s*", "").trim();
+        if (cmd.isEmpty()) cmd = "Write-Output 'PowerShell environment active'; Get-Location";
+        String args = "{\"command\": \"" + cmd.replace("\"", "\\\"") + "\"}";
+        listener.onToolCall("powershell", args);
+        sleep(300);
+
+        String result = executeRegisteredTool("powershell", args);
+        listener.onToolResult("powershell", result);
+        sleep(200);
+
+        streamResponse("### PowerShell Execution Result\n\n```powershell\n" + result + "\n```\n", listener);
+    }
+
+    private void handleAutonomousCodeEdit(String prompt, String contextCode, String activeFilePath, String memoryContext, AgentListener listener) throws Exception {
+        listener.onThinking("Analyzing target source code for autonomous precision editing...");
+        String targetFile = (activeFilePath != null && !activeFilePath.isBlank()) ? activeFilePath : "src/App.java";
+        String args = "{\"action\": \"read_file\", \"filePath\": \"" + targetFile + "\", \"startLine\": 1, \"endLine\": 30}";
+        listener.onToolCall("code_editor", args);
+        sleep(300);
+
+        String readResult = executeRegisteredTool("code_editor", args);
+        listener.onToolResult("code_editor", readResult);
+        sleep(200);
+
+        listener.onThinking("Applying autonomous code patch via code_editor...");
+        String editArgs = "{\"action\": \"replace_content\", \"filePath\": \"" + targetFile + "\", \"target\": \"// TODO\", \"replacement\": \"// Implemented autonomously by AgentForge\"}";
+        listener.onToolCall("code_editor", editArgs);
+        sleep(200);
+
+        String editResult = executeRegisteredTool("code_editor", editArgs);
+        listener.onToolResult("code_editor", editResult);
+
+        streamResponse("### Autonomous Code Editing Completed\n" +
+                "- **File:** `" + targetFile + "`\n" +
+                "- **Operation:** Precision code patch applied & synchronized with editor tab.\n\n" +
+                "```diff\n" +
+                "+ // Implemented autonomously by AgentForge\n" +
+                "```\n", listener);
     }
 
     private void handleListFilesTool(String prompt, AgentListener listener) throws Exception {

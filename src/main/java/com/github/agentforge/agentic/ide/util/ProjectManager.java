@@ -21,8 +21,13 @@ public class ProjectManager {
     private File currentProjectDirectory;
     private File activeFile;
 
+    public interface FileContentListener {
+        void onFileModified(File file, String newContent);
+    }
+
     private final List<Consumer<File>> projectChangeListeners = new ArrayList<>();
     private final List<Consumer<File>> activeFileChangeListeners = new ArrayList<>();
+    private final List<FileContentListener> fileContentListeners = new ArrayList<>();
 
     private ProjectManager() {
         String workingDir = System.getProperty("user.dir");
@@ -75,6 +80,20 @@ public class ProjectManager {
 
     public void addActiveFileChangeListener(Consumer<File> listener) {
         activeFileChangeListeners.add(listener);
+    }
+
+    public void addFileContentListener(FileContentListener listener) {
+        fileContentListeners.add(listener);
+    }
+
+    public void notifyFileModified(File file, String newContent) {
+        for (FileContentListener listener : fileContentListeners) {
+            try {
+                listener.onFileModified(file, newContent);
+            } catch (Exception e) {
+                log.error("Error notifying file content listener", e);
+            }
+        }
     }
 
     public String readFile(File file) throws IOException {

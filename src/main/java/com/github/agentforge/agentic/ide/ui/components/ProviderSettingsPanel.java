@@ -14,9 +14,10 @@ import java.util.*;
 import java.util.List;
 
 /**
- * Settings configuration panel for AI Providers (Anthropic, OpenAI, Google Gemini, Custom/Local),
- * configurable endpoint URLs, multiple models per provider, automatic task-based routing,
- * and context compression limits.
+ * Settings configuration panel for AI Providers.
+ * Supports multiple ANTHROPIC providers, multiple GEMINI providers, multiple OPENAI providers,
+ * or multiple CUSTOM/Local providers with individual endpoint URLs, API keys, models,
+ * task-based routing, and context compression limits.
  */
 public class ProviderSettingsPanel extends JPanel {
 
@@ -24,6 +25,8 @@ public class ProviderSettingsPanel extends JPanel {
     private final JComboBox<String> providerSelectorCombo;
 
     // Provider fields
+    private final JTextField nameField;
+    private final JComboBox<String> typeCombo;
     private final JCheckBox providerEnabledCheck;
     private final JTextField baseUrlField;
     private final JPasswordField apiKeyField;
@@ -41,6 +44,7 @@ public class ProviderSettingsPanel extends JPanel {
     // In-memory working copy of providers
     private final Map<String, ProviderConfig> workingProviders = new LinkedHashMap<>();
     private String currentSelectedProviderId = "ANTHROPIC";
+    private boolean updatingUi = false;
 
     public ProviderSettingsPanel() {
         this.config = ConfigManager.getInstance().getConfig();
@@ -48,6 +52,10 @@ public class ProviderSettingsPanel extends JPanel {
         // Deep copy existing providers into working map
         for (Map.Entry<String, ProviderConfig> entry : config.getProviders().entrySet()) {
             workingProviders.put(entry.getKey(), copyProvider(entry.getValue()));
+        }
+
+        if (!workingProviders.isEmpty()) {
+            currentSelectedProviderId = workingProviders.keySet().iterator().next();
         }
 
         setLayout(new BorderLayout(10, 10));
@@ -60,28 +68,49 @@ public class ProviderSettingsPanel extends JPanel {
         JPanel providersTab = new JPanel(new BorderLayout(8, 8));
         providersTab.setBorder(new EmptyBorder(8, 8, 8, 8));
 
-        // Provider Header Selector
-        JPanel selectorPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 6));
+        // Provider Header Selector & Management Toolbar
+        JPanel selectorPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
         selectorPanel.setBorder(new CompoundBorder(new LineBorder(new Color(60, 60, 65), 1), new EmptyBorder(6, 10, 6, 10)));
         selectorPanel.setBackground(new Color(36, 38, 44));
 
-        JLabel selectLabel = new JLabel("Select Provider to Configure:");
+        JLabel selectLabel = new JLabel("Provider:");
         selectLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
         selectorPanel.add(selectLabel);
 
-        providerSelectorCombo = new JComboBox<>(new String[]{"ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM", "MOCK"});
+        providerSelectorCombo = new JComboBox<>();
         providerSelectorCombo.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        providerSelectorCombo.setSelectedItem("ANTHROPIC");
+        providerSelectorCombo.setPreferredSize(new Dimension(240, 24));
         providerSelectorCombo.addActionListener(e -> {
+            if (updatingUi) return;
             saveCurrentProviderFieldsToWorkingMap();
-            currentSelectedProviderId = (String) providerSelectorCombo.getSelectedItem();
-            loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
+            String selected = (String) providerSelectorCombo.getSelectedItem();
+            if (selected != null && workingProviders.containsKey(selected)) {
+                currentSelectedProviderId = selected;
+                loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
+            }
         });
         selectorPanel.add(providerSelectorCombo);
 
-        providerEnabledCheck = new JCheckBox("Provider Enabled");
+        JButton addProviderBtn = new JButton("+ Add Provider");
+        addProviderBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        addProviderBtn.setToolTipText("Add a new provider instance (e.g. second Anthropic or Gemini endpoint)");
+        addProviderBtn.addActionListener(e -> showAddProviderDialog());
+        selectorPanel.add(addProviderBtn);
+
+        JButton cloneProviderBtn = new JButton("📋 Duplicate");
+        cloneProviderBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        cloneProviderBtn.setToolTipText("Clone selected provider with a new ID");
+        cloneProviderBtn.addActionListener(e -> duplicateCurrentProvider());
+        selectorPanel.add(cloneProviderBtn);
+
+        JButton removeProviderBtn = new JButton("🗑 Remove");
+        removeProviderBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        removeProviderBtn.addActionListener(e -> removeCurrentProvider());
+        selectorPanel.add(removeProviderBtn);
+
+        providerEnabledCheck = new JCheckBox("Enabled");
         providerEnabledCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
-        selectorPanel.add(Box.createHorizontalStrut(15));
+        selectorPanel.add(Box.createHorizontalStrut(10));
         selectorPanel.add(providerEnabledCheck);
 
         providersTab.add(selectorPanel, BorderLayout.NORTH);
@@ -93,41 +122,63 @@ public class ProviderSettingsPanel extends JPanel {
 
         JPanel credentialsPanel = new JPanel(new GridBagLayout());
         credentialsPanel.setBorder(new CompoundBorder(
-                new TitledBorder("Endpoint URL & Credentials"),
+                new TitledBorder("Provider Identity & Credentials"),
                 new EmptyBorder(8, 10, 8, 10)));
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(4, 6, 4, 6);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        // Base URL
+        // Provider Display Name
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.25;
+        JLabel nameLabel = new JLabel("Provider Name:");
+        nameLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        credentialsPanel.add(nameLabel, gbc);
+
+        gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 0.75;
+        nameField = new JTextField(35);
+        nameField.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        credentialsPanel.add(nameField, gbc);
+
+        // Provider Type
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.25;
+        JLabel typeLabel = new JLabel("Provider Type / Protocol:");
+        typeLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        credentialsPanel.add(typeLabel, gbc);
+
+        gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 0.75;
+        typeCombo = new JComboBox<>(new String[]{"ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM", "MOCK"});
+        typeCombo.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        credentialsPanel.add(typeCombo, gbc);
+
+        // Base URL
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.25;
         JLabel urlLabel = new JLabel("API Base URL:");
         urlLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
         credentialsPanel.add(urlLabel, gbc);
 
-        gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 0.75;
+        gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 0.75;
         baseUrlField = new JTextField(35);
         baseUrlField.setFont(new Font("Consolas", Font.PLAIN, 12));
         credentialsPanel.add(baseUrlField, gbc);
 
         // API Key
-        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.25;
+        gbc.gridx = 0; gbc.gridy = 3; gbc.weightx = 0.25;
         JLabel keyLabel = new JLabel("API Key / Token:");
         keyLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
         credentialsPanel.add(keyLabel, gbc);
 
-        gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 0.75;
+        gbc.gridx = 1; gbc.gridy = 3; gbc.weightx = 0.75;
         apiKeyField = new JPasswordField(35);
         credentialsPanel.add(apiKeyField, gbc);
 
         // Default Model
-        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.25;
+        gbc.gridx = 0; gbc.gridy = 4; gbc.weightx = 0.25;
         JLabel defModelLabel = new JLabel("Default Model:");
         defModelLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
         credentialsPanel.add(defModelLabel, gbc);
 
-        gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 0.75;
+        gbc.gridx = 1; gbc.gridy = 4; gbc.weightx = 0.75;
         defaultModelCombo = new JComboBox<>();
         defaultModelCombo.setEditable(true);
         credentialsPanel.add(defaultModelCombo, gbc);
@@ -186,7 +237,7 @@ public class ProviderSettingsPanel extends JPanel {
 
         autoRoutingCheck = new JCheckBox("Enable Autonomous Task-Based Model Routing", config.isAutoRoutingEnabled());
         autoRoutingCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
-        JLabel routeDesc = new JLabel("Automatically delegates tasks (Refactor, Tests, Explain, Debug) to the best configured provider and model.");
+        JLabel routeDesc = new JLabel("Automatically delegates tasks (Refactor, Tests, Explain, Debug, Tools) to the best configured provider and model.");
         routeDesc.setFont(new Font("SansSerif", Font.PLAIN, 11));
         routeDesc.setForeground(Color.LIGHT_GRAY);
 
@@ -244,7 +295,26 @@ public class ProviderSettingsPanel extends JPanel {
         add(subTabbedPane, BorderLayout.CENTER);
 
         // Initial load
+        refreshProviderSelectorCombo();
         loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
+    }
+
+    private void refreshProviderSelectorCombo() {
+        updatingUi = true;
+        try {
+            providerSelectorCombo.removeAllItems();
+            for (String pId : workingProviders.keySet()) {
+                providerSelectorCombo.addItem(pId);
+            }
+            if (workingProviders.containsKey(currentSelectedProviderId)) {
+                providerSelectorCombo.setSelectedItem(currentSelectedProviderId);
+            } else if (!workingProviders.isEmpty()) {
+                currentSelectedProviderId = workingProviders.keySet().iterator().next();
+                providerSelectorCombo.setSelectedItem(currentSelectedProviderId);
+            }
+        } finally {
+            updatingUi = false;
+        }
     }
 
     private String formatTaskName(TaskType type) {
@@ -269,34 +339,53 @@ public class ProviderSettingsPanel extends JPanel {
         return options.toArray(new String[0]);
     }
 
+    private void refreshRoutingCombos() {
+        String[] options = buildAllProviderModelOptions();
+        for (Map.Entry<TaskType, JComboBox<String>> entry : taskRoutingCombos.entrySet()) {
+            Object selected = entry.getValue().getSelectedItem();
+            entry.getValue().setModel(new DefaultComboBoxModel<>(options));
+            if (selected != null) {
+                entry.getValue().setSelectedItem(selected);
+            }
+        }
+    }
+
     private void loadProviderFieldsFromWorkingMap(String providerId) {
         ProviderConfig prov = workingProviders.get(providerId);
         if (prov == null) return;
 
-        providerEnabledCheck.setSelected(prov.isEnabled());
-        baseUrlField.setText(prov.getBaseUrl());
-        apiKeyField.setText(prov.getApiKey());
+        updatingUi = true;
+        try {
+            nameField.setText(prov.getName());
+            typeCombo.setSelectedItem(prov.getProviderType());
+            providerEnabledCheck.setSelected(prov.isEnabled());
+            baseUrlField.setText(prov.getBaseUrl());
+            apiKeyField.setText(prov.getApiKey());
 
-        // Update default model combo and table
-        defaultModelCombo.removeAllItems();
-        modelsTableModel.setRowCount(0);
+            defaultModelCombo.removeAllItems();
+            modelsTableModel.setRowCount(0);
 
-        for (ModelDefinition m : prov.getModels()) {
-            defaultModelCombo.addItem(m.getId());
-            modelsTableModel.addRow(new Object[]{
-                    m.getId(),
-                    m.getDisplayName(),
-                    String.format("%,d", m.getMaxContextTokens()),
-                    String.format("%,d", m.getMaxOutputTokens()),
-                    String.join(", ", m.getTags())
-            });
+            for (ModelDefinition m : prov.getModels()) {
+                defaultModelCombo.addItem(m.getId());
+                modelsTableModel.addRow(new Object[]{
+                        m.getId(),
+                        m.getDisplayName(),
+                        String.format("%,d", m.getMaxContextTokens()),
+                        String.format("%,d", m.getMaxOutputTokens()),
+                        String.join(", ", m.getTags())
+                });
+            }
+            defaultModelCombo.setSelectedItem(prov.getDefaultModel());
+        } finally {
+            updatingUi = false;
         }
-        defaultModelCombo.setSelectedItem(prov.getDefaultModel());
     }
 
     private void saveCurrentProviderFieldsToWorkingMap() {
         ProviderConfig prov = workingProviders.get(currentSelectedProviderId);
         if (prov != null) {
+            prov.setName(nameField.getText().trim());
+            prov.setProviderType((String) typeCombo.getSelectedItem());
             prov.setEnabled(providerEnabledCheck.isSelected());
             prov.setBaseUrl(baseUrlField.getText().trim());
             prov.setApiKey(new String(apiKeyField.getPassword()).trim());
@@ -307,9 +396,141 @@ public class ProviderSettingsPanel extends JPanel {
         }
     }
 
+    private void showAddProviderDialog() {
+        JTextField idField = new JTextField("anthropic-work", 18);
+        JTextField nameInputField = new JTextField("Anthropic Work Account", 18);
+        JComboBox<String> typeChoice = new JComboBox<>(new String[]{"ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM"});
+        JTextField urlField = new JTextField("https://api.anthropic.com/v1", 25);
+        JPasswordField keyField = new JPasswordField(25);
+
+        typeChoice.addActionListener(e -> {
+            String selectedType = (String) typeChoice.getSelectedItem();
+            switch (selectedType) {
+                case "ANTHROPIC" -> {
+                    urlField.setText("https://api.anthropic.com/v1");
+                    if (nameInputField.getText().contains("Account")) nameInputField.setText("Anthropic Account " + (workingProviders.size() + 1));
+                }
+                case "GEMINI" -> {
+                    urlField.setText("https://generativelanguage.googleapis.com/v1beta");
+                    if (nameInputField.getText().contains("Account")) nameInputField.setText("Google Gemini " + (workingProviders.size() + 1));
+                }
+                case "OPENAI" -> {
+                    urlField.setText("https://api.openai.com/v1");
+                    if (nameInputField.getText().contains("Account")) nameInputField.setText("OpenAI Endpoint " + (workingProviders.size() + 1));
+                }
+                case "CUSTOM" -> {
+                    urlField.setText("http://localhost:11434/v1");
+                    if (nameInputField.getText().contains("Account")) nameInputField.setText("Local Ollama " + (workingProviders.size() + 1));
+                }
+            }
+        });
+
+        JPanel panel = new JPanel(new GridLayout(5, 2, 6, 6));
+        panel.add(new JLabel("Provider Unique ID:"));
+        panel.add(idField);
+        panel.add(new JLabel("Provider Type / Protocol:"));
+        panel.add(typeChoice);
+        panel.add(new JLabel("Display Name:"));
+        panel.add(nameInputField);
+        panel.add(new JLabel("API Base URL:"));
+        panel.add(urlField);
+        panel.add(new JLabel("API Key:"));
+        panel.add(keyField);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "Add New Configurable AI Provider",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+        if (result == JOptionPane.OK_OPTION && !idField.getText().isBlank()) {
+            String pId = idField.getText().trim().toUpperCase().replace(" ", "_");
+            String pType = (String) typeChoice.getSelectedItem();
+            String pName = nameInputField.getText().isBlank() ? pId : nameInputField.getText().trim();
+            String pUrl = urlField.getText().trim();
+            String pKey = new String(keyField.getPassword()).trim();
+
+            List<ModelDefinition> defaultModels = createDefaultModelsForType(pType);
+            String defModel = defaultModels.isEmpty() ? "default" : defaultModels.get(0).getId();
+
+            ProviderConfig newProv = new ProviderConfig(pId, pType, pName, pUrl, defModel, defaultModels);
+            newProv.setApiKey(pKey);
+
+            workingProviders.put(pId, newProv);
+            currentSelectedProviderId = pId;
+
+            refreshProviderSelectorCombo();
+            loadProviderFieldsFromWorkingMap(pId);
+            refreshRoutingCombos();
+        }
+    }
+
+    private void duplicateCurrentProvider() {
+        ProviderConfig current = workingProviders.get(currentSelectedProviderId);
+        if (current == null) return;
+
+        String newId = current.getId() + "_COPY";
+        int count = 2;
+        while (workingProviders.containsKey(newId)) {
+            newId = current.getId() + "_COPY_" + (count++);
+        }
+
+        ProviderConfig clone = copyProvider(current);
+        clone.setId(newId);
+        clone.setName(current.getName() + " (Copy)");
+
+        workingProviders.put(newId, clone);
+        currentSelectedProviderId = newId;
+
+        refreshProviderSelectorCombo();
+        loadProviderFieldsFromWorkingMap(newId);
+        refreshRoutingCombos();
+    }
+
+    private void removeCurrentProvider() {
+        if (workingProviders.size() <= 1) {
+            JOptionPane.showMessageDialog(this, "At least one provider must remain configured.", "Cannot Remove", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Are you sure you want to remove provider '" + currentSelectedProviderId + "'?",
+                "Remove Provider", JOptionPane.YES_NO_OPTION);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            workingProviders.remove(currentSelectedProviderId);
+            currentSelectedProviderId = workingProviders.keySet().iterator().next();
+            refreshProviderSelectorCombo();
+            loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
+            refreshRoutingCombos();
+        }
+    }
+
+    private List<ModelDefinition> createDefaultModelsForType(String type) {
+        return switch (type) {
+            case "ANTHROPIC" -> List.of(
+                    new ModelDefinition("claude-3-7-sonnet", "Claude 3.7 Sonnet", 200_000, 8_192, List.of("reasoning", "coding")),
+                    new ModelDefinition("claude-3-5-sonnet", "Claude 3.5 Sonnet", 200_000, 8_192, List.of("coding", "tools")),
+                    new ModelDefinition("claude-3-5-haiku", "Claude 3.5 Haiku", 200_000, 4_096, List.of("fast"))
+            );
+            case "GEMINI" -> List.of(
+                    new ModelDefinition("gemini-2.0-flash", "Gemini 2.0 Flash", 1_000_000, 8_192, List.of("fast", "tools")),
+                    new ModelDefinition("gemini-1.5-pro", "Gemini 1.5 Pro", 2_000_000, 8_192, List.of("massive-context")),
+                    new ModelDefinition("gemini-1.5-flash", "Gemini 1.5 Flash", 1_000_000, 8_192, List.of("fast"))
+            );
+            case "OPENAI" -> List.of(
+                    new ModelDefinition("gpt-4o", "GPT-4o", 128_000, 4_096, List.of("coding", "general")),
+                    new ModelDefinition("gpt-4o-mini", "GPT-4o Mini", 128_000, 4_096, List.of("fast")),
+                    new ModelDefinition("o1", "o1 (Reasoning)", 200_000, 32_768, List.of("reasoning")),
+                    new ModelDefinition("o3-mini", "o3-mini", 200_000, 16_384, List.of("reasoning"))
+            );
+            default -> List.of(
+                    new ModelDefinition("qwen2.5-coder", "Qwen 2.5 Coder", 32_768, 4_096, List.of("coding", "local")),
+                    new ModelDefinition("llama3.2", "Llama 3.2", 8_192, 2_048, List.of("local"))
+            );
+        };
+    }
+
     private void showAddModelDialog() {
         JTextField idField = new JTextField(18);
-        JTextField nameField = new JTextField(18);
+        JTextField nameModalField = new JTextField(18);
         JSpinner ctxSpinner = new JSpinner(new SpinnerNumberModel(128_000, 1_000, 2_000_000, 1_000));
         JSpinner outSpinner = new JSpinner(new SpinnerNumberModel(4_096, 512, 64_000, 512));
         JTextField tagsField = new JTextField("coding, tools", 18);
@@ -318,7 +539,7 @@ public class ProviderSettingsPanel extends JPanel {
         panel.add(new JLabel("Model ID (e.g. claude-3-7-sonnet):"));
         panel.add(idField);
         panel.add(new JLabel("Display Name:"));
-        panel.add(nameField);
+        panel.add(nameModalField);
         panel.add(new JLabel("Max Context Tokens:"));
         panel.add(ctxSpinner);
         panel.add(new JLabel("Max Output Tokens:"));
@@ -331,7 +552,7 @@ public class ProviderSettingsPanel extends JPanel {
 
         if (result == JOptionPane.OK_OPTION && !idField.getText().isBlank()) {
             String mId = idField.getText().trim();
-            String mName = nameField.getText().isBlank() ? mId : nameField.getText().trim();
+            String mName = nameModalField.getText().isBlank() ? mId : nameModalField.getText().trim();
             int maxCtx = (Integer) ctxSpinner.getValue();
             int maxOut = (Integer) outSpinner.getValue();
             List<String> tags = Arrays.stream(tagsField.getText().split(","))
@@ -345,6 +566,7 @@ public class ProviderSettingsPanel extends JPanel {
                 current.getModels().removeIf(m -> m.getId().equalsIgnoreCase(mId));
                 current.getModels().add(modelDef);
                 loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
+                refreshRoutingCombos();
             }
         }
     }
@@ -361,6 +583,7 @@ public class ProviderSettingsPanel extends JPanel {
         if (current != null && current.getModels().size() > 1) {
             current.getModels().removeIf(m -> m.getId().equals(modelId));
             loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
+            refreshRoutingCombos();
         } else {
             JOptionPane.showMessageDialog(this, "A provider must retain at least one model.", "Cannot Remove", JOptionPane.WARNING_MESSAGE);
         }
@@ -375,6 +598,7 @@ public class ProviderSettingsPanel extends JPanel {
         }
         ProviderConfig copy = new ProviderConfig(
                 original.getId(),
+                original.getProviderType(),
                 original.getName(),
                 original.getBaseUrl(),
                 original.getDefaultModel(),

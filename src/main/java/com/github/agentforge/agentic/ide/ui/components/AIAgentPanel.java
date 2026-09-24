@@ -177,9 +177,9 @@ public class AIAgentPanel extends JPanel {
         provLabel.setForeground(Color.LIGHT_GRAY);
         modelLine.add(provLabel);
 
-        providerCombo = new JComboBox<>(new String[]{"ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM", "MOCK"});
+        providerCombo = new JComboBox<>();
         providerCombo.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        providerCombo.setPreferredSize(new Dimension(110, 22));
+        providerCombo.setPreferredSize(new Dimension(130, 22));
         providerCombo.addActionListener(e -> onProviderChanged());
         modelLine.add(providerCombo);
 
@@ -395,7 +395,7 @@ public class AIAgentPanel extends JPanel {
 
     private void promptNewSession() {
         JTextField nameField = new JTextField("Specialist Agent " + (SessionManager.getInstance().getSessions().size() + 1), 18);
-        JComboBox<String> provBox = new JComboBox<>(new String[]{"ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM", "MOCK"});
+        JComboBox<String> provBox = new JComboBox<>(ConfigManager.getInstance().getConfig().getProviders().keySet().toArray(new String[0]));
         JComboBox<String> modBox = new JComboBox<>();
 
         Runnable updateMods = () -> {
@@ -486,10 +486,15 @@ public class AIAgentPanel extends JPanel {
 
     private void syncControlsToSession(AgentSession session) {
         if (session == null) return;
+
+        IdeConfig config = ConfigManager.getInstance().getConfig();
+        providerCombo.removeAllItems();
+        for (String pId : config.getProviders().keySet()) {
+            providerCombo.addItem(pId);
+        }
         providerCombo.setSelectedItem(session.getProviderId());
 
         modelCombo.removeAllItems();
-        IdeConfig config = ConfigManager.getInstance().getConfig();
         ProviderConfig prov = config.getProvider(session.getProviderId());
         if (prov != null) {
             for (ModelDefinition m : prov.getModels()) {

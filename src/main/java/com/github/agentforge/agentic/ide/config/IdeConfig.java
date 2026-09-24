@@ -218,6 +218,18 @@ public class IdeConfig {
         return providers.get(providerId);
     }
 
+    public void addProvider(ProviderConfig provider) {
+        if (provider != null && provider.getId() != null) {
+            this.providers.put(provider.getId(), provider);
+        }
+    }
+
+    public void removeProvider(String providerId) {
+        if (providerId != null) {
+            this.providers.remove(providerId);
+        }
+    }
+
     public Map<TaskType, String> getTaskRouting() {
         return taskRouting;
     }

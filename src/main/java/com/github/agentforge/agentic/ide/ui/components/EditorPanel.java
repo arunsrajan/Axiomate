@@ -51,6 +51,27 @@ public class EditorPanel extends JPanel {
         });
 
         add(tabbedPane, BorderLayout.CENTER);
+        ProjectManager.getInstance().addFileContentListener(this::reloadOrUpdateFile);
+    }
+
+    public void reloadOrUpdateFile(File file, String newContent) {
+        if (file == null) return;
+        SwingUtilities.invokeLater(() -> {
+            for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+                Component c = tabbedPane.getComponentAt(i);
+                File openFile = tabFileMap.get(c);
+                if (openFile != null && openFile.getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath())) {
+                    RSyntaxTextArea area = tabEditorMap.get(c);
+                    if (area != null && !area.getText().equals(newContent)) {
+                        int pos = Math.min(area.getCaretPosition(), newContent.length());
+                        area.setText(newContent);
+                        area.setCaretPosition(pos);
+                        markDirty(c, false);
+                    }
+                    return;
+                }
+            }
+        });
     }
 
     public void openFile(File file) {

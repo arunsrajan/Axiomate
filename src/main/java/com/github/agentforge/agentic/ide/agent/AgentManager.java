@@ -1,17 +1,14 @@
 package com.github.agentforge.agentic.ide.agent;
 
-import com.github.agentforge.agentic.ide.agent.tools.AgentTool;
-import com.github.agentforge.agentic.ide.agent.tools.CodeRefactorTool;
-import com.github.agentforge.agentic.ide.agent.tools.FileSystemTool;
-import com.github.agentforge.agentic.ide.agent.tools.MemoryTool;
-import com.github.agentforge.agentic.ide.agent.tools.TerminalTool;
+import com.github.agentforge.agentic.ide.agent.tools.*;
 import com.github.agentforge.agentic.ide.config.ConfigManager;
 import com.github.agentforge.agentic.ide.config.IdeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Singleton manager coordinating the active AI Agent instance and registered tools.
+ * Singleton manager coordinating the active AI Agent instance and registered tools,
+ * including autonomous code editing and bash/powershell tools.
  */
 public class AgentManager {
 
@@ -27,11 +24,17 @@ public class AgentManager {
         this.langChainService = new LangChainAgentService();
 
         // Register default tools
+        AutonomousCodeEditorTool editorTool = new AutonomousCodeEditorTool();
+        BashTool bashTool = new BashTool();
+        PowerShellTool powerShellTool = new PowerShellTool();
         FileSystemTool fsTool = new FileSystemTool();
         TerminalTool termTool = new TerminalTool();
         CodeRefactorTool refactorTool = new CodeRefactorTool();
         MemoryTool memoryTool = new MemoryTool();
 
+        registerTool(editorTool);
+        registerTool(bashTool);
+        registerTool(powerShellTool);
         registerTool(fsTool);
         registerTool(termTool);
         registerTool(refactorTool);
@@ -58,7 +61,7 @@ public class AgentManager {
 
     private void updateActiveService(IdeConfig config) {
         String provider = config.getAiProvider();
-        if ("OPENAI".equalsIgnoreCase(provider) || "CUSTOM".equalsIgnoreCase(provider)) {
+        if (!"MOCK".equalsIgnoreCase(provider)) {
             this.activeService = langChainService;
             log.info("Active AI Agent switched to LangChain (Provider: {})", provider);
         } else {

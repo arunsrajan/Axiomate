@@ -15,27 +15,26 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Tool allowing the AI Agent to execute shell / terminal commands in the project directory,
- * with explicit support for PowerShell, Bash, and default OS shell.
+ * Tool allowing the AI Agent to execute PowerShell commands and scripts.
+ * Supports Windows PowerShell and cross-platform PowerShell Core (pwsh).
  */
-public class TerminalTool implements AgentTool {
+public class PowerShellTool implements AgentTool {
 
-    private static final Logger log = LoggerFactory.getLogger(TerminalTool.class);
+    private static final Logger log = LoggerFactory.getLogger(PowerShellTool.class);
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Override
     public String getName() {
-        return "terminal";
+        return "powershell";
     }
 
     @Override
     public String getDescription() {
         return """
-            terminal: Execute a shell command in the project root directory.
+            powershell: Execute PowerShell commands, scripts, and cmdlets in the project directory.
             Arguments JSON schema:
             {
-              "command": "command to run (e.g. dir, mvn test, javac HelloWorld.java, git status)",
-              "shell": "optional shell choice: 'powershell', 'bash', 'cmd', or 'default'"
+              "command": "PowerShell command or script (e.g. Get-ChildItem, Select-String, Test-Path, mvn test)"
             }
             """;
     }
@@ -43,51 +42,33 @@ public class TerminalTool implements AgentTool {
     @Override
     public String execute(String arguments) throws Exception {
         String command;
-        String shell = "default";
-
         if (arguments.trim().startsWith("{")) {
             JsonNode json = mapper.readTree(arguments);
             command = json.path("command").asText();
-            if (json.has("shell")) {
-                shell = json.path("shell").asText("default").toLowerCase();
+            if (command.isBlank() && json.has("script")) {
+                command = json.path("script").asText();
             }
         } else {
             command = arguments.trim();
         }
 
         if (command == null || command.isBlank()) {
-            return "ERROR: Empty command provided";
+            return "ERROR: Empty powershell command provided.";
         }
 
         File workingDir = ProjectManager.getInstance().getCurrentProjectDirectory();
-        log.info("Agent executing terminal command [{}] in {}: '{}'", shell, workingDir, command);
+        String psExecutable = findPowerShellExecutable();
+
+        log.info("Executing PowerShell using [{}]: '{}'", psExecutable, command);
 
         List<String> commandList = new ArrayList<>();
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
-
-        if ("powershell".equals(shell)) {
-            commandList.add(PowerShellTool.findPowerShellExecutable());
-            commandList.add("-NoProfile");
-            commandList.add("-NonInteractive");
-            commandList.add("-ExecutionPolicy");
-            commandList.add("Bypass");
-            commandList.add("-Command");
-            commandList.add(command);
-        } else if ("bash".equals(shell)) {
-            commandList.add(BashTool.findBashExecutable());
-            commandList.add("-c");
-            commandList.add(command);
-        } else { // default or cmd
-            if (isWindows) {
-                commandList.add("cmd.exe");
-                commandList.add("/c");
-                commandList.add(command);
-            } else {
-                commandList.add("bash");
-                commandList.add("-c");
-                commandList.add(command);
-            }
-        }
+        commandList.add(psExecutable);
+        commandList.add("-NoProfile");
+        commandList.add("-NonInteractive");
+        commandList.add("-ExecutionPolicy");
+        commandList.add("Bypass");
+        commandList.add("-Command");
+        commandList.add(command);
 
         ProcessBuilder pb = new ProcessBuilder(commandList);
         pb.directory(workingDir);
@@ -110,10 +91,31 @@ public class TerminalTool implements AgentTool {
         boolean finished = process.waitFor(60, TimeUnit.SECONDS);
         if (!finished) {
             process.destroyForcibly();
-            return "ERROR: Command timed out after 60 seconds.\nPartial output:\n" + output;
+            return "ERROR: PowerShell command timed out after 60 seconds.\nPartial output:\n" + output;
         }
 
         int exitCode = process.exitValue();
         return "Exit code: " + exitCode + "\nOutput:\n" + (output.isEmpty() ? "(No output)" : output.toString());
+    }
+
+    public static String findPowerShellExecutable() {
+        // Try pwsh (PowerShell Core 7+) first
+        String pathEnv = System.getenv("PATH");
+        if (pathEnv != null && pathEnv.contains("PowerShell\\7")) {
+            return "pwsh.exe";
+        }
+
+        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+        if (!isWindows) {
+            return "pwsh";
+        }
+
+        // Standard Windows PowerShell path
+        File winPs = new File("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        if (winPs.exists() && winPs.canExecute()) {
+            return winPs.getAbsolutePath();
+        }
+
+        return "powershell.exe";
     }
 }
