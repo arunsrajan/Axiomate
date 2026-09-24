@@ -1,13 +1,14 @@
 package com.github.axiomate.agentic.ide.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.github.axiomate.agentic.ide.agent.session.AgentSession;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Encapsulates the persisted state of a project directory, including open editor tabs,
- * active tab, and access timestamps.
+ * active tab, access timestamps, and multiple AI Agent sessions.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class ProjectState {
@@ -16,6 +17,8 @@ public class ProjectState {
     private String projectName = "";
     private List<String> openFiles = new ArrayList<>();
     private String activeFile = "";
+    private List<AgentSession> sessions = new ArrayList<>();
+    private String activeSessionId = "";
     private long lastOpenedTime;
     private long lastClosedTime;
 
@@ -60,6 +63,22 @@ public class ProjectState {
         this.activeFile = activeFile;
     }
 
+    public List<AgentSession> getSessions() {
+        return sessions != null ? sessions : new ArrayList<>();
+    }
+
+    public void setSessions(List<AgentSession> sessions) {
+        this.sessions = sessions != null ? new ArrayList<>(sessions) : new ArrayList<>();
+    }
+
+    public String getActiveSessionId() {
+        return activeSessionId != null ? activeSessionId : "";
+    }
+
+    public void setActiveSessionId(String activeSessionId) {
+        this.activeSessionId = activeSessionId != null ? activeSessionId : "";
+    }
+
     public long getLastOpenedTime() {
         return lastOpenedTime;
     }
@@ -76,4 +95,5 @@ public class ProjectState {
         this.lastClosedTime = lastClosedTime;
     }
 }
+
 

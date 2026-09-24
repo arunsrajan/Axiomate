@@ -1,5 +1,6 @@
 package com.github.axiomate.agentic.ide.config;
 
+import com.github.axiomate.agentic.ide.agent.session.AgentSession;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.slf4j.Logger;
@@ -13,8 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Manages loading and persisting project states (open editor tabs, active file, timestamps)
- * to ~/.axiomate-ide/project_state.json.
+ * Manages loading and persisting project states (open editor tabs, active file, timestamps,
+ * and multiple AI Agent sessions) to ~/.axiomate-ide/project_state.json.
  */
 public class ProjectStateManager {
 
@@ -73,6 +74,14 @@ public class ProjectStateManager {
     }
 
     public synchronized void saveProjectState(File projectDir, List<File> openFiles, File activeFile) {
+        ProjectState existing = getProjectState(projectDir);
+        List<AgentSession> existingSessions = (existing != null) ? existing.getSessions() : null;
+        String existingActiveId = (existing != null) ? existing.getActiveSessionId() : null;
+        saveProjectState(projectDir, openFiles, activeFile, existingSessions, existingActiveId);
+    }
+
+    public synchronized void saveProjectState(File projectDir, List<File> openFiles, File activeFile,
+                                             List<AgentSession> sessions, String activeSessionId) {
         if (projectDir == null) return;
 
         String normPath = normalizePath(projectDir);
@@ -100,12 +109,57 @@ public class ProjectStateManager {
             state.setActiveFile("");
         }
 
+        if (sessions != null) {
+            state.setSessions(sessions);
+        }
+        if (activeSessionId != null) {
+            state.setActiveSessionId(activeSessionId);
+        }
+
         state.setLastOpenedTime(System.currentTimeMillis());
 
         workspaceState.getProjects().put(normPath, state);
         workspaceState.setLastOpenProjectPath(normPath);
 
         saveWorkspaceState(workspaceState);
+    }
+
+    public synchronized void saveProjectSessions(File projectDir, List<AgentSession> sessions, String activeSessionId) {
+        if (projectDir == null) return;
+        String normPath = normalizePath(projectDir);
+        ProjectState state = workspaceState.getProjects().get(normPath);
+        if (state == null) {
+            state = new ProjectState(normPath);
+            state.setProjectName(projectDir.getName());
+        }
+        if (sessions != null) {
+            state.setSessions(sessions);
+        }
+        if (activeSessionId != null) {
+            state.setActiveSessionId(activeSessionId);
+        }
+        workspaceState.getProjects().put(normPath, state);
+        saveWorkspaceState(workspaceState);
+    }
+
+    public synchronized List<AgentSession> getProjectSessions(File projectDir) {
+        if (projectDir == null) return new ArrayList<>();
+        String normPath = normalizePath(projectDir);
+        ProjectState state = workspaceState.getProjects().get(normPath);
+        if (state != null && state.getSessions() != null) {
+            return new ArrayList<>(state.getSessions());
+        }
+        return new ArrayList<>();
+    }
+
+    public synchronized String getProjectActiveSessionId(File projectDir) {
+        if (projectDir == null) return "";
+        String normPath = normalizePath(projectDir);
+        ProjectState state = workspaceState.getProjects().get(normPath);
+        if (state != null && state.getActiveSessionId() != null) {
+            return state.getActiveSessionId();
+        }
+        return "";
     }
 
     public synchronized void closeProject(File projectDir, List<File> openFiles, File activeFile) {

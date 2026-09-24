@@ -14,6 +14,7 @@ import com.github.axiomate.agentic.ide.ui.components.ToolBar;
 import com.github.axiomate.agentic.ide.ui.menu.AppMenuBar;
 import com.github.axiomate.agentic.ide.ui.util.UIUtils;
 import com.github.axiomate.agentic.ide.util.ProjectManager;
+import com.github.axiomate.agentic.ide.agent.session.SessionManager;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -161,6 +162,7 @@ public class MainFrame extends JFrame {
 
         if (targetDir != null && targetDir.exists() && targetDir.isDirectory()) {
             ProjectManager.getInstance().setCurrentProjectDirectory(targetDir);
+            SessionManager.getInstance().loadSessionsForProject(targetDir);
             boolean restored = restoreProjectTabs(targetDir);
             if (!restored) {
                 loadInitialSample();
@@ -201,11 +203,15 @@ public class MainFrame extends JFrame {
 
         File oldDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         if (oldDir != null) {
-            ProjectStateManager.getInstance().saveProjectState(oldDir, editorPanel.getOpenFiles(), editorPanel.getActiveFile());
+            SessionManager.getInstance().saveSessionsForProject(oldDir);
+            ProjectStateManager.getInstance().saveProjectState(oldDir, editorPanel.getOpenFiles(), editorPanel.getActiveFile(),
+                    SessionManager.getInstance().getSessions(),
+                    SessionManager.getInstance().getActiveSession() != null ? SessionManager.getInstance().getActiveSession().getId() : "");
         }
 
         editorPanel.closeAllTabs();
         ProjectManager.getInstance().setCurrentProjectDirectory(newDir);
+        SessionManager.getInstance().loadSessionsForProject(newDir);
 
         boolean restored = restoreProjectTabs(newDir);
         if (!restored) {
@@ -216,6 +222,7 @@ public class MainFrame extends JFrame {
     public void closeProjectDirectory() {
         File currentDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         if (currentDir != null) {
+            SessionManager.getInstance().saveSessionsForProject(currentDir);
             ProjectStateManager.getInstance().closeProject(currentDir, editorPanel.getOpenFiles(), editorPanel.getActiveFile());
         }
         editorPanel.closeAllTabs();
@@ -225,7 +232,10 @@ public class MainFrame extends JFrame {
     public void saveCurrentProjectState() {
         File currentDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         if (currentDir != null) {
-            ProjectStateManager.getInstance().saveProjectState(currentDir, editorPanel.getOpenFiles(), editorPanel.getActiveFile());
+            SessionManager.getInstance().saveSessionsForProject(currentDir);
+            ProjectStateManager.getInstance().saveProjectState(currentDir, editorPanel.getOpenFiles(), editorPanel.getActiveFile(),
+                    SessionManager.getInstance().getSessions(),
+                    SessionManager.getInstance().getActiveSession() != null ? SessionManager.getInstance().getActiveSession().getId() : "");
         }
     }
 

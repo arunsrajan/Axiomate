@@ -4,6 +4,8 @@ public enum AgentRole {
     USER,
     ASSISTANT,
     SYSTEM,
-    TOOL
+    TOOL,
+    TOOL_CALL,
+    THINKING
 }
 

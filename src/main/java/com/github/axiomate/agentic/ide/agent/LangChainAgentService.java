@@ -195,6 +195,7 @@ public class LangChainAgentService implements AIAgentService {
                             String toolName = req.name();
                             String arguments = normalizeArguments(req.arguments());
 
+                            session.addMessage(new AgentMessage(AgentRole.TOOL_CALL, arguments, toolName));
                             listener.onToolCall(toolName, arguments);
 
                             String toolResult;
@@ -225,6 +226,7 @@ public class LangChainAgentService implements AIAgentService {
                             String thinkingContent = dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.get();
                             if (thinkingContent != null && !thinkingContent.isBlank()) {
                                 log.debug("Surfacing {} chars of model thinking to UI", thinkingContent.length());
+                                session.addMessage(new AgentMessage(AgentRole.THINKING, thinkingContent, null));
                                 listener.onThinking("💭 Model Reasoning:\n" + thinkingContent);
                             }
                         } finally {

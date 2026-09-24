@@ -31,11 +31,13 @@ public class TokenTracker {
         this.totalTokens = this.promptTokens + this.completionTokens;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public double getUsagePercentage() {
         if (maxContextTokens <= 0) return 0.0;
         return ((double) totalTokens / maxContextTokens) * 100.0;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public boolean isThresholdReached(double thresholdRatio) {
         if (maxContextTokens <= 0) return false;
         return ((double) totalTokens / maxContextTokens) >= thresholdRatio;
@@ -85,6 +87,7 @@ public class TokenTracker {
         this.totalTokens = 0;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getFormattedDisplay() {
         return String.format("Tokens: %,d / %,d (%.1f%%)", totalTokens, maxContextTokens, getUsagePercentage());
     }

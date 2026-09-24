@@ -52,6 +52,16 @@ public class AIAgentPanel extends JPanel {
     private final JButton newSessionBtn;
     private final JButton renameSessionBtn;
     private final JButton closeSessionBtn;
+    private final JButton saveSessionBtn;
+    private final JButton loadSessionBtn;
+
+    // Agent Output Display Show/Hide & Collapsible Controls
+    private final JCheckBox showToolCallsCheck;
+    private final JCheckBox showToolResultsCheck;
+    private final JCheckBox showThinkingCheck;
+    private final JCheckBox showWalkthroughCheck;
+    private final JButton collapseAllBtn;
+    private final JButton expandAllBtn;
 
     // Model & Provider Chooser Controls
     private final JComboBox<String> providerCombo;
@@ -140,7 +150,7 @@ public class AIAgentPanel extends JPanel {
 
         sessionSelectorCombo = new JComboBox<>();
         sessionSelectorCombo.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        sessionSelectorCombo.setPreferredSize(new Dimension(190, 24));
+        sessionSelectorCombo.setPreferredSize(new Dimension(170, 24));
         sessionSelectorCombo.addActionListener(e -> onSessionSelected());
         sessionLeft.add(sessionSelectorCombo);
 
@@ -160,6 +170,18 @@ public class AIAgentPanel extends JPanel {
         closeSessionBtn.setToolTipText("Close current session");
         closeSessionBtn.addActionListener(e -> closeActiveSession());
         sessionLeft.add(closeSessionBtn);
+
+        saveSessionBtn = new JButton("💾 Save");
+        saveSessionBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        saveSessionBtn.setToolTipText("Save all agent sessions for this project");
+        saveSessionBtn.addActionListener(e -> saveProjectSessions());
+        sessionLeft.add(saveSessionBtn);
+
+        loadSessionBtn = new JButton("📂 Load");
+        loadSessionBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        loadSessionBtn.setToolTipText("Load or import sessions for this project");
+        loadSessionBtn.addActionListener(e -> promptLoadOrImportSessions());
+        sessionLeft.add(loadSessionBtn);
 
         sessionBar.add(sessionLeft, BorderLayout.CENTER);
 
@@ -246,12 +268,72 @@ public class AIAgentPanel extends JPanel {
         chipsPanel.add(createChip("🐛 Find Bugs", "Diagnose potential bugs, security issues, and edge cases"));
         chipsPanel.add(createChip("🧠 View Memory", "Show all project rules and stored agent memories"));
 
+        // 5. Output Display Filtering & Visibility Bar
+        JPanel outputDisplayBar = new JPanel(new BorderLayout(4, 0));
+        outputDisplayBar.setBorder(new CompoundBorder(new LineBorder(new Color(45, 48, 56), 1), new EmptyBorder(2, 6, 2, 6)));
+        outputDisplayBar.setBackground(new Color(24, 26, 32));
+
+        JPanel filtersLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 1));
+        filtersLeft.setOpaque(false);
+
+        JLabel filterLabel = new JLabel("Output:");
+        filterLabel.setFont(new Font("SansSerif", Font.BOLD, 10));
+        filterLabel.setForeground(new Color(160, 165, 180));
+        filtersLeft.add(filterLabel);
+
+        showToolCallsCheck = new JCheckBox("🔧 Requests", true);
+        showToolCallsCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        showToolCallsCheck.setForeground(new Color(88, 166, 255));
+        showToolCallsCheck.setToolTipText("Show or hide tool calling requests and input arguments");
+        showToolCallsCheck.addActionListener(e -> applyDisplayFilters());
+        filtersLeft.add(showToolCallsCheck);
+
+        showToolResultsCheck = new JCheckBox("📥 Responses", true);
+        showToolResultsCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        showToolResultsCheck.setForeground(new Color(126, 231, 135));
+        showToolResultsCheck.setToolTipText("Show or hide tool execution results and stdout");
+        showToolResultsCheck.addActionListener(e -> applyDisplayFilters());
+        filtersLeft.add(showToolResultsCheck);
+
+        showThinkingCheck = new JCheckBox("🧠 Reasoning", true);
+        showThinkingCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        showThinkingCheck.setForeground(new Color(210, 168, 255));
+        showThinkingCheck.setToolTipText("Show or hide model thinking and reasoning blocks");
+        showThinkingCheck.addActionListener(e -> applyDisplayFilters());
+        filtersLeft.add(showThinkingCheck);
+
+        showWalkthroughCheck = new JCheckBox("📝 Walkthrough", true);
+        showWalkthroughCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        showWalkthroughCheck.setForeground(new Color(240, 136, 62));
+        showWalkthroughCheck.setToolTipText("Show or hide assistant final walkthrough and answers");
+        showWalkthroughCheck.addActionListener(e -> applyDisplayFilters());
+        filtersLeft.add(showWalkthroughCheck);
+
+        JPanel actionsRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 1));
+        actionsRight.setOpaque(false);
+
+        collapseAllBtn = new JButton("▴ Collapse All");
+        collapseAllBtn.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        collapseAllBtn.setToolTipText("Collapse all collapsible bubbles");
+        collapseAllBtn.addActionListener(e -> collapseAllCards());
+        actionsRight.add(collapseAllBtn);
+
+        expandAllBtn = new JButton("▾ Expand All");
+        expandAllBtn.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        expandAllBtn.setToolTipText("Expand all collapsible bubbles");
+        expandAllBtn.addActionListener(e -> expandAllCards());
+        actionsRight.add(expandAllBtn);
+
+        outputDisplayBar.add(filtersLeft, BorderLayout.CENTER);
+        outputDisplayBar.add(actionsRight, BorderLayout.EAST);
+
         JPanel topContainer = new JPanel();
         topContainer.setLayout(new BoxLayout(topContainer, BoxLayout.Y_AXIS));
         topContainer.add(headerPanel);
         topContainer.add(sessionBar);
         topContainer.add(controlBar);
         topContainer.add(chipsPanel);
+        topContainer.add(outputDisplayBar);
         add(topContainer, BorderLayout.NORTH);
 
         // 5. Chat Messages Container
@@ -579,17 +661,158 @@ public class AIAgentPanel extends JPanel {
                     appendUserBubble(msg.getContent());
                 } else if (msg.isAssistant()) {
                     appendAssistantBubble(msg.getContent());
+                } else if (msg.getRole() == AgentRole.TOOL_CALL) {
+                    appendToolRequestBubble(msg.getToolName() != null ? msg.getToolName() : "Tool", msg.getContent());
                 } else if (msg.getRole() == AgentRole.TOOL) {
-                    appendToolBubble(msg.getToolName() != null ? msg.getToolName() : "Tool", null, msg.getContent());
+                    appendToolResultBubble(msg.getToolName() != null ? msg.getToolName() : "Tool", msg.getContent());
+                } else if (msg.getRole() == AgentRole.THINKING) {
+                    appendThinkingBubble(msg.getContent());
                 } else if (msg.getRole() == AgentRole.SYSTEM) {
                     appendSystemBubble(msg.getContent());
                 }
             }
         }
+        applyDisplayFilters();
         updateTokenDisplay();
         chatBox.revalidate();
         chatBox.repaint();
         scrollToBottom();
+    }
+
+    public void applyDisplayFilters() {
+        boolean showToolCalls = showToolCallsCheck.isSelected();
+        boolean showToolResults = showToolResultsCheck.isSelected();
+        boolean showThinking = showThinkingCheck.isSelected();
+        boolean showWalkthrough = showWalkthroughCheck.isSelected();
+
+        for (Component comp : chatBox.getComponents()) {
+            if (comp instanceof MessageCard card) {
+                switch (card.getDisplayType()) {
+                    case TOOL_REQUEST -> card.setVisible(showToolCalls);
+                    case TOOL_RESPONSE -> card.setVisible(showToolResults);
+                    case THINKING -> card.setVisible(showThinking);
+                    case WALKTHROUGH -> card.setVisible(showWalkthrough);
+                    case USER, SYSTEM -> card.setVisible(true);
+                }
+            }
+        }
+        chatBox.revalidate();
+        chatBox.repaint();
+    }
+
+    public void collapseAllCards() {
+        for (Component comp : chatBox.getComponents()) {
+            if (comp instanceof MessageCard card) {
+                card.setCollapsed(true);
+            }
+        }
+        chatBox.revalidate();
+        chatBox.repaint();
+    }
+
+    public void expandAllCards() {
+        for (Component comp : chatBox.getComponents()) {
+            if (comp instanceof MessageCard card) {
+                card.setCollapsed(false);
+            }
+        }
+        chatBox.revalidate();
+        chatBox.repaint();
+    }
+
+    public void saveProjectSessions() {
+        File projDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        if (projDir != null) {
+            SessionManager.getInstance().saveSessionsForProject(projDir);
+            JOptionPane.showMessageDialog(this,
+                    "Saved " + SessionManager.getInstance().getSessions().size() + " session(s) for project [" + projDir.getName() + "]",
+                    "Sessions Saved", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            SessionManager.getInstance().autoSaveCurrentProjectSessions();
+            JOptionPane.showMessageDialog(this, "Saved active sessions!", "Sessions Saved", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+    public void promptLoadOrImportSessions() {
+        JPopupMenu menu = new JPopupMenu();
+
+        JMenuItem reloadItem = new JMenuItem("🔄 Reload Sessions from Project State");
+        reloadItem.addActionListener(e -> {
+            File projDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+            if (projDir != null) {
+                SessionManager.getInstance().loadSessionsForProject(projDir);
+                reloadChatFromSession();
+            } else {
+                JOptionPane.showMessageDialog(this, "No active project directory.", "Notice", JOptionPane.INFORMATION_MESSAGE);
+            }
+        });
+
+        JMenuItem exportItem = new JMenuItem("📤 Export Sessions to JSON File...");
+        exportItem.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            File projDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+            if (projDir != null) {
+                chooser.setCurrentDirectory(projDir);
+                chooser.setSelectedFile(new File(projDir, "agent-sessions.json"));
+            } else {
+                chooser.setSelectedFile(new File("agent-sessions.json"));
+            }
+            if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+                try {
+                    SessionManager.getInstance().exportSessionsToFile(chooser.getSelectedFile());
+                    JOptionPane.showMessageDialog(this,
+                            "Exported sessions to:\n" + chooser.getSelectedFile().getAbsolutePath(),
+                            "Export Successful", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(this, "Failed to export sessions: " + ex.getMessage(),
+                            "Export Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+
+        JMenuItem importItem = new JMenuItem("📥 Import Sessions from JSON File...");
+        importItem.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            File projDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+            if (projDir != null) chooser.setCurrentDirectory(projDir);
+            if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+                int opt = JOptionPane.showConfirmDialog(this,
+                        "Do you want to append these sessions to current sessions? (Choose 'No' to replace)",
+                        "Import Mode", JOptionPane.YES_NO_CANCEL_OPTION);
+                if (opt == JOptionPane.CANCEL_OPTION || opt == JOptionPane.CLOSED_OPTION) return;
+                boolean append = (opt == JOptionPane.YES_OPTION);
+                try {
+                    SessionManager.getInstance().importSessionsFromFile(chooser.getSelectedFile(), append);
+                    reloadChatFromSession();
+                    JOptionPane.showMessageDialog(this, "Successfully imported sessions!",
+                            "Import Successful", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(this, "Failed to import sessions: " + ex.getMessage(),
+                            "Import Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+
+        menu.add(reloadItem);
+        menu.addSeparator();
+        menu.add(exportItem);
+        menu.add(importItem);
+        menu.show(loadSessionBtn, 0, loadSessionBtn.getHeight());
+    }
+
+    private void recordSessionMessageIfNew(AgentMessage msg) {
+        AgentSession session = SessionManager.getInstance().getActiveSession();
+        if (session == null || msg == null) return;
+        List<AgentMessage> list = session.getMessages();
+        if (!list.isEmpty()) {
+            AgentMessage last = list.get(list.size() - 1);
+            if (last.getRole() == msg.getRole() &&
+                last.getContent().equals(msg.getContent()) &&
+                java.util.Objects.equals(last.getToolName(), msg.getToolName())) {
+                return;
+            }
+        }
+        session.addMessage(msg);
     }
 
     private JButton createChip(String text, String promptText) {
@@ -617,7 +840,8 @@ public class AIAgentPanel extends JPanel {
             Key Features:
             - 🌐 **Anthropic, OpenAI & Gemini URLs**: Independently configurable endpoints and custom models.
             - 🎯 **Autonomous Task Routing**: Automatically routes Refactoring to Claude, Explanations to Gemini, Tests to OpenAI.
-            - 👥 **Multi-Agent Sessions**: Launch and switch between multiple concurrent agent sessions.
+            - 👥 **Multi-Agent Sessions**: Launch, save, load, and switch between multiple concurrent agent sessions per project.
+            - 🎛 **Output Display Filters**: Show or hide tool requests, responses, model reasoning, and walkthroughs on demand.
             - 📊 **Token Usage & Limit Meter**: Displays real-time context consumption and % limit.
             - ⚡ **95% Context Compression**: Automatically condenses conversation history into episodic memory when reaching 95% capacity.
             - 📎 **`@` File Mentions**: Type `@` to select and inject workspace files directly into the AI agent prompt.
@@ -691,7 +915,7 @@ public class AIAgentPanel extends JPanel {
             public void onThinking(String thought) {
                 SwingUtilities.invokeLater(() -> {
                     setAgentState("Thinking...", UIUtils.WARNING_COLOR, true);
-                    // Show reasoning in chat AND log it to terminal
+                    recordSessionMessageIfNew(new AgentMessage(AgentRole.THINKING, thought, null));
                     appendThinkingBubble(thought);
                     terminalPanel.appendAgentLog("AGENT REASONING", thought);
                 });
@@ -701,7 +925,8 @@ public class AIAgentPanel extends JPanel {
             public void onToolCall(String toolName, String input) {
                 SwingUtilities.invokeLater(() -> {
                     setAgentState("Running tool: " + toolName, UIUtils.ACCENT_COLOR, true);
-                    appendToolBubble(toolName, input, null);
+                    recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL_CALL, input, toolName));
+                    appendToolRequestBubble(toolName, input);
                     terminalPanel.appendAgentLog("TOOL INVOCATION: " + toolName, input);
                 });
             }
@@ -709,7 +934,8 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onToolResult(String toolName, String output) {
                 SwingUtilities.invokeLater(() -> {
-                    appendToolBubble(toolName, null, output);
+                    recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL, output, toolName));
+                    appendToolResultBubble(toolName, output);
                     terminalPanel.appendAgentLog("TOOL RESULT: " + toolName, output);
                 });
             }
@@ -717,13 +943,13 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onComplete(String fullResponse) {
                 SwingUtilities.invokeLater(() -> {
-                    // If onToken() was never called (e.g. empty response), ensure bubble is closed
                     if (currentAssistantMessagePanel != null && currentAssistantTextArea != null) {
                         currentAssistantMessagePanel = null;
                         currentAssistantTextArea = null;
                     }
                     setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);
                     updateTokenDisplay();
+                    SessionManager.getInstance().autoSaveCurrentProjectSessions();
                     scrollToBottom();
                 });
             }
@@ -752,10 +978,19 @@ public class AIAgentPanel extends JPanel {
         stopBtn.setEnabled(isBusy);
     }
 
-    private void appendUserBubble(String text) {
-        JPanel bubble = new JPanel(new BorderLayout());
-        bubble.setBorder(new EmptyBorder(6, 6, 6, 6));
+    private JButton createCollapseToggleButton() {
+        JButton btn = new JButton("▴ Collapse");
+        btn.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        btn.setForeground(new Color(160, 165, 180));
+        btn.setContentAreaFilled(false);
+        btn.setBorderPainted(false);
+        btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.setMargin(new Insets(1, 4, 1, 4));
+        return btn;
+    }
 
+    private void appendUserBubble(String text) {
         JPanel inner = new JPanel(new BorderLayout());
         inner.setBackground(new Color(37, 50, 75));
         inner.setBorder(new EmptyBorder(8, 12, 8, 12));
@@ -768,17 +1003,17 @@ public class AIAgentPanel extends JPanel {
         inner.add(header, BorderLayout.NORTH);
         inner.add(area, BorderLayout.CENTER);
 
-        bubble.add(inner, BorderLayout.CENTER);
-        chatBox.add(bubble);
+        MessageCard card = new MessageCard(MessageDisplayType.USER, inner, null);
+        card.setBorder(new EmptyBorder(6, 6, 6, 6));
+        card.add(inner, BorderLayout.CENTER);
+
+        chatBox.add(card);
         chatBox.add(Box.createVerticalStrut(6));
         scrollToBottom();
     }
 
     private void ensureAssistantBubble() {
         if (currentAssistantMessagePanel == null) {
-            JPanel bubble = new JPanel(new BorderLayout());
-            bubble.setBorder(new EmptyBorder(6, 6, 6, 6));
-
             JPanel inner = new JPanel(new BorderLayout());
             inner.setBackground(new Color(36, 38, 44));
             inner.setBorder(new EmptyBorder(8, 12, 8, 12));
@@ -788,54 +1023,85 @@ public class AIAgentPanel extends JPanel {
                     ? session.getName() + " [" + session.getModelId() + "]"
                     : "Axiomate AI";
 
-            JLabel header = new JLabel(title, UIUtils.createSparkleIcon(14, UIUtils.ACCENT_PURPLE), JLabel.LEFT);
+            JPanel headerBar = new JPanel(new BorderLayout());
+            headerBar.setOpaque(false);
+            headerBar.setBorder(new EmptyBorder(0, 0, 4, 0));
+
+            JLabel header = new JLabel(title + " — Walkthrough / Response", UIUtils.createSparkleIcon(14, UIUtils.ACCENT_PURPLE), JLabel.LEFT);
             header.setFont(new Font("SansSerif", Font.BOLD, 11));
             header.setForeground(UIUtils.ACCENT_PURPLE);
 
-            currentAssistantTextArea = createBubbleTextArea("");
-            inner.add(header, BorderLayout.NORTH);
-            inner.add(currentAssistantTextArea, BorderLayout.CENTER);
+            JButton toggle = createCollapseToggleButton();
 
-            bubble.add(inner, BorderLayout.CENTER);
-            chatBox.add(bubble);
+            headerBar.add(header, BorderLayout.WEST);
+            headerBar.add(toggle, BorderLayout.EAST);
+
+            currentAssistantTextArea = createBubbleTextArea("");
+
+            JPanel contentPanel = new JPanel(new BorderLayout());
+            contentPanel.setOpaque(false);
+            contentPanel.add(currentAssistantTextArea, BorderLayout.CENTER);
+
+            inner.add(headerBar, BorderLayout.NORTH);
+            inner.add(contentPanel, BorderLayout.CENTER);
+
+            MessageCard card = new MessageCard(MessageDisplayType.WALKTHROUGH, contentPanel, toggle);
+            toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+            card.setBorder(new EmptyBorder(6, 6, 6, 6));
+            card.add(inner, BorderLayout.CENTER);
+
+            card.setVisible(showWalkthroughCheck.isSelected());
+            chatBox.add(card);
             chatBox.add(Box.createVerticalStrut(6));
 
-            currentAssistantMessagePanel = bubble;
+            currentAssistantMessagePanel = card;
         }
     }
 
     /**
      * Renders the model's thinking/reasoning in a styled dark-purple bubble in the chat.
-     * The bubble is clearly distinguished from the final answer with a "🧠 Reasoning" header.
      */
     private void appendThinkingBubble(String thought) {
-        JPanel bubble = new JPanel(new BorderLayout());
-        bubble.setBorder(new EmptyBorder(4, 12, 4, 12));
-
         JPanel inner = new JPanel(new BorderLayout());
-        inner.setBackground(new Color(32, 28, 50));
+        inner.setBackground(new Color(32, 26, 48));
         inner.setBorder(new LineBorder(new Color(110, 80, 180), 1));
+
+        JPanel headerBar = new JPanel(new BorderLayout());
+        headerBar.setOpaque(false);
+        headerBar.setBorder(new EmptyBorder(4, 8, 4, 8));
 
         JLabel header = new JLabel("🧠  Model Reasoning  (thinking block)");
         header.setFont(new Font("SansSerif", Font.BOLD, 10));
-        header.setForeground(new Color(170, 130, 255));
-        header.setBorder(new EmptyBorder(5, 8, 3, 8));
+        header.setForeground(new Color(210, 168, 255));
 
-        // Trim long thinking to a preview — full content visible in terminal log
+        JButton toggle = createCollapseToggleButton();
+
+        headerBar.add(header, BorderLayout.WEST);
+        headerBar.add(toggle, BorderLayout.EAST);
+
         String display = thought;
         if (display.length() > 800) {
             display = display.substring(0, 800) + "\n… (see terminal log for full reasoning)";
         }
         JTextArea area = createBubbleTextArea(display);
         area.setFont(new Font("SansSerif", Font.ITALIC, 12));
-        area.setForeground(new Color(190, 170, 230));
-        area.setBorder(new EmptyBorder(2, 8, 6, 8));
+        area.setForeground(new Color(215, 195, 245));
+        area.setBorder(new EmptyBorder(4, 8, 6, 8));
 
-        inner.add(header, BorderLayout.NORTH);
-        inner.add(area, BorderLayout.CENTER);
+        JPanel contentPanel = new JPanel(new BorderLayout());
+        contentPanel.setOpaque(false);
+        contentPanel.add(area, BorderLayout.CENTER);
 
-        bubble.add(inner, BorderLayout.CENTER);
-        chatBox.add(bubble);
+        inner.add(headerBar, BorderLayout.NORTH);
+        inner.add(contentPanel, BorderLayout.CENTER);
+
+        MessageCard card = new MessageCard(MessageDisplayType.THINKING, contentPanel, toggle);
+        toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+        card.setBorder(new EmptyBorder(4, 12, 4, 12));
+        card.add(inner, BorderLayout.CENTER);
+
+        card.setVisible(showThinkingCheck.isSelected());
+        chatBox.add(card);
         chatBox.add(Box.createVerticalStrut(4));
         scrollToBottom();
     }
@@ -849,9 +1115,6 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void appendSystemBubble(String text) {
-        JPanel bubble = new JPanel(new BorderLayout());
-        bubble.setBorder(new EmptyBorder(4, 12, 4, 12));
-
         JPanel inner = new JPanel(new BorderLayout());
         inner.setBackground(new Color(45, 38, 55));
         inner.setBorder(new LineBorder(UIUtils.ACCENT_PURPLE, 1));
@@ -868,38 +1131,105 @@ public class AIAgentPanel extends JPanel {
         inner.add(header, BorderLayout.NORTH);
         inner.add(area, BorderLayout.CENTER);
 
-        bubble.add(inner, BorderLayout.CENTER);
-        chatBox.add(bubble);
+        MessageCard card = new MessageCard(MessageDisplayType.SYSTEM, inner, null);
+        card.setBorder(new EmptyBorder(4, 12, 4, 12));
+        card.add(inner, BorderLayout.CENTER);
+
+        chatBox.add(card);
+        chatBox.add(Box.createVerticalStrut(4));
+        scrollToBottom();
+    }
+
+    private void appendToolRequestBubble(String toolName, String input) {
+        JPanel inner = new JPanel(new BorderLayout());
+        inner.setBackground(new Color(24, 28, 38));
+        inner.setBorder(new LineBorder(new Color(56, 90, 140), 1));
+
+        JPanel headerBar = new JPanel(new BorderLayout());
+        headerBar.setOpaque(false);
+        headerBar.setBorder(new EmptyBorder(4, 8, 4, 8));
+
+        JLabel header = new JLabel("🔧  Tool Call: " + toolName);
+        header.setFont(new Font("Monospaced", Font.BOLD, 11));
+        header.setForeground(new Color(88, 166, 255));
+
+        JButton toggle = createCollapseToggleButton();
+
+        headerBar.add(header, BorderLayout.WEST);
+        headerBar.add(toggle, BorderLayout.EAST);
+
+        JTextArea area = createBubbleTextArea(input != null ? input : "{}");
+        area.setFont(new Font("Consolas", Font.PLAIN, 11));
+        area.setForeground(new Color(190, 220, 255));
+        area.setBorder(new EmptyBorder(4, 8, 6, 8));
+
+        JPanel contentPanel = new JPanel(new BorderLayout());
+        contentPanel.setOpaque(false);
+        contentPanel.add(area, BorderLayout.CENTER);
+
+        inner.add(headerBar, BorderLayout.NORTH);
+        inner.add(contentPanel, BorderLayout.CENTER);
+
+        MessageCard card = new MessageCard(MessageDisplayType.TOOL_REQUEST, contentPanel, toggle);
+        toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+        card.setBorder(new EmptyBorder(4, 12, 4, 12));
+        card.add(inner, BorderLayout.CENTER);
+
+        card.setVisible(showToolCallsCheck.isSelected());
+        chatBox.add(card);
+        chatBox.add(Box.createVerticalStrut(4));
+        scrollToBottom();
+    }
+
+    private void appendToolResultBubble(String toolName, String output) {
+        JPanel inner = new JPanel(new BorderLayout());
+        inner.setBackground(new Color(22, 32, 26));
+        inner.setBorder(new LineBorder(new Color(40, 100, 60), 1));
+
+        JPanel headerBar = new JPanel(new BorderLayout());
+        headerBar.setOpaque(false);
+        headerBar.setBorder(new EmptyBorder(4, 8, 4, 8));
+
+        int lines = (output != null) ? output.split("\r\n|\r|\n").length : 0;
+        JLabel header = new JLabel("📥  Tool Result: " + toolName + " (" + lines + " lines)");
+        header.setFont(new Font("Monospaced", Font.BOLD, 11));
+        header.setForeground(new Color(126, 231, 135));
+
+        JButton toggle = createCollapseToggleButton();
+
+        headerBar.add(header, BorderLayout.WEST);
+        headerBar.add(toggle, BorderLayout.EAST);
+
+        JTextArea area = createBubbleTextArea(output != null ? output : "(empty)");
+        area.setFont(new Font("Consolas", Font.PLAIN, 11));
+        area.setForeground(new Color(185, 235, 195));
+        area.setBorder(new EmptyBorder(4, 8, 6, 8));
+
+        JPanel contentPanel = new JPanel(new BorderLayout());
+        contentPanel.setOpaque(false);
+        contentPanel.add(area, BorderLayout.CENTER);
+
+        inner.add(headerBar, BorderLayout.NORTH);
+        inner.add(contentPanel, BorderLayout.CENTER);
+
+        MessageCard card = new MessageCard(MessageDisplayType.TOOL_RESPONSE, contentPanel, toggle);
+        toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+        card.setBorder(new EmptyBorder(4, 12, 4, 12));
+        card.add(inner, BorderLayout.CENTER);
+
+        card.setVisible(showToolResultsCheck.isSelected());
+        chatBox.add(card);
         chatBox.add(Box.createVerticalStrut(4));
         scrollToBottom();
     }
 
     private void appendToolBubble(String toolName, String input, String output) {
-        JPanel bubble = new JPanel(new BorderLayout());
-        bubble.setBorder(new EmptyBorder(4, 12, 4, 12));
-
-        JPanel inner = new JPanel(new BorderLayout());
-        inner.setBackground(new Color(28, 30, 34));
-        inner.setBorder(new LineBorder(new Color(70, 70, 80), 1));
-
-        String title = (input != null) ? "Tool Call: " + toolName : "Tool Result: " + toolName;
-        JLabel header = new JLabel(title);
-        header.setFont(new Font("Monospaced", Font.BOLD, 10));
-        header.setForeground(Color.LIGHT_GRAY);
-        header.setBorder(new EmptyBorder(4, 6, 4, 6));
-
-        JTextArea area = createBubbleTextArea(input != null ? input : output);
-        area.setFont(new Font("Consolas", Font.PLAIN, 11));
-        area.setForeground(new Color(180, 220, 180));
-        area.setBorder(new EmptyBorder(2, 6, 6, 6));
-
-        inner.add(header, BorderLayout.NORTH);
-        inner.add(area, BorderLayout.CENTER);
-
-        bubble.add(inner, BorderLayout.CENTER);
-        chatBox.add(bubble);
-        chatBox.add(Box.createVerticalStrut(4));
-        scrollToBottom();
+        if (input != null) {
+            appendToolRequestBubble(toolName, input);
+        }
+        if (output != null) {
+            appendToolResultBubble(toolName, output);
+        }
     }
 
     private JTextArea createBubbleTextArea(String text) {
@@ -921,5 +1251,50 @@ public class AIAgentPanel extends JPanel {
             vertical.setValue(vertical.getMaximum());
         });
     }
+
+    public enum MessageDisplayType {
+        USER,
+        TOOL_REQUEST,
+        TOOL_RESPONSE,
+        THINKING,
+        WALKTHROUGH,
+        SYSTEM
+    }
+
+    public static class MessageCard extends JPanel {
+        private final MessageDisplayType displayType;
+        private final JComponent contentComponent;
+        private final JButton toggleBtn;
+        private boolean collapsed = false;
+
+        public MessageCard(MessageDisplayType displayType, JComponent contentComponent, JButton toggleBtn) {
+            super(new BorderLayout());
+            this.displayType = displayType;
+            this.contentComponent = contentComponent;
+            this.toggleBtn = toggleBtn;
+            setOpaque(false);
+        }
+
+        public MessageDisplayType getDisplayType() {
+            return displayType;
+        }
+
+        public boolean isCollapsed() {
+            return collapsed;
+        }
+
+        public void setCollapsed(boolean collapsed) {
+            this.collapsed = collapsed;
+            if (contentComponent != null) {
+                contentComponent.setVisible(!collapsed);
+            }
+            if (toggleBtn != null) {
+                toggleBtn.setText(collapsed ? "▾ Expand" : "▴ Collapse");
+            }
+            revalidate();
+            repaint();
+        }
+    }
 }
+
 
