@@ -30,15 +30,26 @@ public class UniversalChatModelFactory {
         log.info("Instantiating ChatLanguageModel for Provider [{}] (Type: {}) with Model [{}] at BaseURL [{}]",
                 providerId, providerType, targetModel, baseUrl);
 
-        return switch (providerType) {
+        String normalizedType = providerType != null ? providerType.trim().toUpperCase() : "OPENAI";
+        if (normalizedType.contains("ANTHROPIC") || normalizedType.contains("CLAUDE")) {
+            normalizedType = "ANTHROPIC";
+        } else if (normalizedType.contains("GEMINI")) {
+            normalizedType = "GEMINI";
+        }
+
+        return switch (normalizedType) {
             case "ANTHROPIC" -> {
                 AnthropicChatModel.AnthropicChatModelBuilder builder = AnthropicChatModel.builder()
                         .apiKey(apiKey)
                         .modelName(targetModel)
                         .temperature(temperature)
                         .timeout(Duration.ofSeconds(60));
-                if (baseUrl != null && !baseUrl.isBlank() && !baseUrl.contains("anthropic.com")) {
-                    builder.baseUrl(baseUrl);
+                if (baseUrl != null && !baseUrl.isBlank()) {
+                    String formattedUrl = baseUrl.trim();
+                    if (!formattedUrl.endsWith("/")) {
+                        formattedUrl = formattedUrl + "/";
+                    }
+                    builder.baseUrl(formattedUrl);
                 }
                 yield builder.build();
             }

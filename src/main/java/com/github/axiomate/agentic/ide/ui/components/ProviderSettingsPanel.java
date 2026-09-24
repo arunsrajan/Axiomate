@@ -97,9 +97,15 @@ public class ProviderSettingsPanel extends JPanel {
 
         JButton addProviderBtn = new JButton("+ Add Provider");
         addProviderBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        addProviderBtn.setToolTipText("Add a new provider instance (e.g. second Anthropic or Gemini endpoint)");
+        addProviderBtn.setToolTipText("Add a new provider instance (e.g. Anthropic, Gemini, OpenAI, or Custom endpoint)");
         addProviderBtn.addActionListener(e -> showAddProviderDialog());
         selectorPanel.add(addProviderBtn);
+
+        JButton addCustomAnthropicBtn = new JButton("+ Custom Anthropic");
+        addCustomAnthropicBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        addCustomAnthropicBtn.setToolTipText("Add a custom provider under ANTHROPIC API type (Claude proxy, Bedrock, LiteLLM, Cloudflare)");
+        addCustomAnthropicBtn.addActionListener(e -> showAddCustomAnthropicDialog());
+        selectorPanel.add(addCustomAnthropicBtn);
 
         JButton cloneProviderBtn = new JButton("📋 Duplicate");
         cloneProviderBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
@@ -151,7 +157,7 @@ public class ProviderSettingsPanel extends JPanel {
         credentialsPanel.add(typeLabel, gbc);
 
         gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 0.75;
-        typeCombo = new JComboBox<>(new String[]{"ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM", "MOCK"});
+        typeCombo = new JComboBox<>(new String[]{"ANTHROPIC", "CUSTOM_ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM", "MOCK"});
         typeCombo.setFont(new Font("SansSerif", Font.PLAIN, 12));
         credentialsPanel.add(typeCombo, gbc);
 
@@ -422,7 +428,7 @@ public class ProviderSettingsPanel extends JPanel {
     private void showAddProviderDialog() {
         JTextField idField = new JTextField("anthropic-work", 18);
         JTextField nameInputField = new JTextField("Anthropic Work Account", 18);
-        JComboBox<String> typeChoice = new JComboBox<>(new String[]{"ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM"});
+        JComboBox<String> typeChoice = new JComboBox<>(new String[]{"ANTHROPIC", "CUSTOM_ANTHROPIC", "OPENAI", "GEMINI", "CUSTOM"});
         JTextField urlField = new JTextField("https://api.anthropic.com/v1", 25);
         JPasswordField keyField = new JPasswordField(25);
 
@@ -431,19 +437,32 @@ public class ProviderSettingsPanel extends JPanel {
             switch (selectedType) {
                 case "ANTHROPIC" -> {
                     urlField.setText("https://api.anthropic.com/v1");
-                    if (nameInputField.getText().contains("Account")) nameInputField.setText("Anthropic Account " + (workingProviders.size() + 1));
+                    if (nameInputField.getText().contains("Account") || nameInputField.getText().contains("Custom")) {
+                        nameInputField.setText("Anthropic Account " + (workingProviders.size() + 1));
+                    }
+                }
+                case "CUSTOM_ANTHROPIC" -> {
+                    urlField.setText("https://api.anthropic.com/v1");
+                    idField.setText("anthropic-custom-" + (workingProviders.size() + 1));
+                    nameInputField.setText("Custom Anthropic (Claude API)");
                 }
                 case "GEMINI" -> {
                     urlField.setText("https://generativelanguage.googleapis.com/v1beta");
-                    if (nameInputField.getText().contains("Account")) nameInputField.setText("Google Gemini " + (workingProviders.size() + 1));
+                    if (nameInputField.getText().contains("Account") || nameInputField.getText().contains("Custom")) {
+                        nameInputField.setText("Google Gemini " + (workingProviders.size() + 1));
+                    }
                 }
                 case "OPENAI" -> {
                     urlField.setText("https://api.openai.com/v1");
-                    if (nameInputField.getText().contains("Account")) nameInputField.setText("OpenAI Endpoint " + (workingProviders.size() + 1));
+                    if (nameInputField.getText().contains("Account") || nameInputField.getText().contains("Custom")) {
+                        nameInputField.setText("OpenAI Endpoint " + (workingProviders.size() + 1));
+                    }
                 }
                 case "CUSTOM" -> {
                     urlField.setText("http://localhost:11434/v1");
-                    if (nameInputField.getText().contains("Account")) nameInputField.setText("Local Ollama " + (workingProviders.size() + 1));
+                    if (nameInputField.getText().contains("Account") || nameInputField.getText().contains("Custom")) {
+                        nameInputField.setText("Local Ollama " + (workingProviders.size() + 1));
+                    }
                 }
             }
         });
@@ -466,6 +485,9 @@ public class ProviderSettingsPanel extends JPanel {
         if (result == JOptionPane.OK_OPTION && !idField.getText().isBlank()) {
             String pId = idField.getText().trim().toUpperCase().replace(" ", "_");
             String pType = (String) typeChoice.getSelectedItem();
+            if ("CUSTOM_ANTHROPIC".equalsIgnoreCase(pType)) {
+                pType = "ANTHROPIC";
+            }
             String pName = nameInputField.getText().isBlank() ? pId : nameInputField.getText().trim();
             String pUrl = urlField.getText().trim();
             String pKey = new String(keyField.getPassword()).trim();
@@ -474,6 +496,61 @@ public class ProviderSettingsPanel extends JPanel {
             String defModel = defaultModels.isEmpty() ? "default" : defaultModels.get(0).getId();
 
             ProviderConfig newProv = new ProviderConfig(pId, pType, pName, pUrl, defModel, defaultModels);
+            newProv.setApiKey(pKey);
+
+            workingProviders.put(pId, newProv);
+            currentSelectedProviderId = pId;
+
+            refreshProviderSelectorCombo();
+            loadProviderFieldsFromWorkingMap(pId);
+            refreshRoutingCombos();
+        }
+    }
+
+    private void showAddCustomAnthropicDialog() {
+        int count = workingProviders.size() + 1;
+        JTextField idField = new JTextField("ANTHROPIC_CUSTOM_" + count, 18);
+        JTextField nameInputField = new JTextField("Custom Anthropic (Claude API)", 18);
+        JTextField urlField = new JTextField("https://api.anthropic.com/v1", 25);
+        urlField.setToolTipText("Custom base URL (e.g. https://api.anthropic.com/v1 or custom proxy endpoint)");
+        JPasswordField keyField = new JPasswordField(25);
+        JTextField defaultModelField = new JTextField("claude-3-7-sonnet", 18);
+
+        JPanel panel = new JPanel(new GridLayout(6, 2, 6, 6));
+        panel.add(new JLabel("Provider Unique ID:"));
+        panel.add(idField);
+        panel.add(new JLabel("API Protocol Type:"));
+        JLabel protocolLabel = new JLabel("ANTHROPIC (Claude API Protocol)");
+        protocolLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        protocolLabel.setForeground(new Color(180, 100, 240));
+        panel.add(protocolLabel);
+        panel.add(new JLabel("Display Name:"));
+        panel.add(nameInputField);
+        panel.add(new JLabel("API Base URL:"));
+        panel.add(urlField);
+        panel.add(new JLabel("API Key:"));
+        panel.add(keyField);
+        panel.add(new JLabel("Default Model:"));
+        panel.add(defaultModelField);
+
+        int result = JOptionPane.showConfirmDialog(this, panel,
+                "Add Custom Provider under ANTHROPIC API Type",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+        if (result == JOptionPane.OK_OPTION && !idField.getText().isBlank()) {
+            String pId = idField.getText().trim().toUpperCase().replace(" ", "_");
+            String pName = nameInputField.getText().isBlank() ? pId : nameInputField.getText().trim();
+            String pUrl = urlField.getText().trim();
+            String pKey = new String(keyField.getPassword()).trim();
+            String defModel = defaultModelField.getText().isBlank() ? "claude-3-7-sonnet" : defaultModelField.getText().trim();
+
+            List<ModelDefinition> models = new ArrayList<>(createDefaultModelsForType("ANTHROPIC"));
+            boolean modelPresent = models.stream().anyMatch(m -> m.getId().equalsIgnoreCase(defModel));
+            if (!modelPresent) {
+                models.add(0, new ModelDefinition(defModel, defModel, 200_000, 8_192, List.of("custom", "claude")));
+            }
+
+            ProviderConfig newProv = new ProviderConfig(pId, "ANTHROPIC", pName, pUrl, defModel, models);
             newProv.setApiKey(pKey);
 
             workingProviders.put(pId, newProv);
@@ -528,7 +605,7 @@ public class ProviderSettingsPanel extends JPanel {
 
     private List<ModelDefinition> createDefaultModelsForType(String type) {
         return switch (type) {
-            case "ANTHROPIC" -> List.of(
+            case "ANTHROPIC", "CUSTOM_ANTHROPIC" -> List.of(
                     new ModelDefinition("claude-3-7-sonnet", "Claude 3.7 Sonnet", 200_000, 8_192, List.of("reasoning", "coding")),
                     new ModelDefinition("claude-3-5-sonnet", "Claude 3.5 Sonnet", 200_000, 8_192, List.of("coding", "tools")),
                     new ModelDefinition("claude-3-5-haiku", "Claude 3.5 Haiku", 200_000, 4_096, List.of("fast"))

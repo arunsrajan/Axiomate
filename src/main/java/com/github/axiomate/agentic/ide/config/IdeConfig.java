@@ -60,6 +60,19 @@ public class IdeConfig {
                 )
         );
         providers.put("ANTHROPIC", anthropic);
+ 
+        // 2. Custom Anthropic Provider (Claude-Compatible Endpoint / Proxy / Bedrock / LiteLLM)
+        ProviderConfig customAnthropic = new ProviderConfig(
+                "CUSTOM_ANTHROPIC", "ANTHROPIC", "Custom Anthropic (Claude API)",
+                "https://api.anthropic.com/v1",
+                "claude-3-7-sonnet",
+                List.of(
+                        new ModelDefinition("claude-3-7-sonnet", "Claude 3.7 Sonnet (Hybrid Reasoning)", 200_000, 8_192, List.of("reasoning", "coding", "refactor")),
+                        new ModelDefinition("claude-3-5-sonnet", "Claude 3.5 Sonnet (Coding Champion)", 200_000, 8_192, List.of("coding", "tools", "refactor")),
+                        new ModelDefinition("claude-3-5-haiku", "Claude 3.5 Haiku (Lightning Fast)", 200_000, 4_096, List.of("fast", "explain"))
+                )
+        );
+        providers.put("CUSTOM_ANTHROPIC", customAnthropic);
 
         // 2. OpenAI Provider
         ProviderConfig openai = new ProviderConfig(
@@ -248,6 +261,20 @@ public class IdeConfig {
         if (providerId != null) {
             this.providers.remove(providerId);
         }
+    }
+
+    public List<ProviderConfig> getProvidersByApiType(String apiType) {
+        if (apiType == null || apiType.isBlank()) {
+            return new ArrayList<>(providers.values());
+        }
+        return providers.values().stream()
+                .filter(p -> apiType.equalsIgnoreCase(p.getProviderType())
+                        || (apiType.equalsIgnoreCase("ANTHROPIC") && p.isAnthropicType()))
+                .toList();
+    }
+
+    public List<ProviderConfig> getAnthropicProviders() {
+        return getProvidersByApiType("ANTHROPIC");
     }
 
     public Map<TaskType, String> getTaskRouting() {

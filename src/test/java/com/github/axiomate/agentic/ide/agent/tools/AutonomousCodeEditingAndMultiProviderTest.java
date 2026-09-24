@@ -210,5 +210,47 @@ class AutonomousCodeEditingAndMultiProviderTest {
         ChatLanguageModel g2 = UniversalChatModelFactory.createChatModel(geminiVertexProxy, "gemini-1.5-pro", 0.2);
         assertTrue(g2 instanceof GoogleAiGeminiChatModel, "GEMINI_VERTEX must create GoogleAiGeminiChatModel");
     }
+
+    @Test
+    @DisplayName("Verify custom provider configured under ANTHROPIC api type dynamically creates AnthropicChatModel")
+    void testCustomProviderUnderAnthropicApiType() {
+        IdeConfig config = ConfigManager.getInstance().getConfig();
+
+        // 1. Verify default CUSTOM_ANTHROPIC provider exists under ANTHROPIC API type
+        ProviderConfig defaultCustomAnthropic = config.getProvider("CUSTOM_ANTHROPIC");
+        assertNotNull(defaultCustomAnthropic, "Default CUSTOM_ANTHROPIC provider must be initialized");
+        assertEquals("ANTHROPIC", defaultCustomAnthropic.getProviderType());
+        assertTrue(defaultCustomAnthropic.isAnthropicType());
+
+        // 2. Dynamically add custom provider under ANTHROPIC api type with custom gateway URL and custom model
+        ProviderConfig customBedrock = new ProviderConfig(
+                "BEDROCK_CLAUDE",
+                "ANTHROPIC",
+                "AWS Bedrock Claude Gateway",
+                "https://bedrock-proxy.internal.net/v1",
+                "anthropic.claude-3-sonnet-20240229-v1:0",
+                List.of(
+                        new ModelDefinition("anthropic.claude-3-sonnet-20240229-v1:0", "Bedrock Claude 3 Sonnet", 200_000, 8_192, List.of("bedrock", "claude")),
+                        new ModelDefinition("claude-3-7-sonnet", "Claude 3.7", 200_000, 8_192, List.of("reasoning"))
+                )
+        );
+        customBedrock.setApiKey("bedrock-custom-key");
+        config.addProvider(customBedrock);
+
+        assertTrue(customBedrock.isAnthropicType());
+        assertEquals("ANTHROPIC", customBedrock.getProviderType());
+
+        // 3. Verify getAnthropicProviders lists both official and custom Anthropic providers
+        List<ProviderConfig> anthropicProviders = config.getAnthropicProviders();
+        assertTrue(anthropicProviders.stream().anyMatch(p -> p.getId().equals("ANTHROPIC")));
+        assertTrue(anthropicProviders.stream().anyMatch(p -> p.getId().equals("CUSTOM_ANTHROPIC")));
+        assertTrue(anthropicProviders.stream().anyMatch(p -> p.getId().equals("BEDROCK_CLAUDE")));
+
+        // 4. Verify UniversalChatModelFactory builds AnthropicChatModel for custom ANTHROPIC provider
+        ChatLanguageModel model = UniversalChatModelFactory.createChatModel(
+                customBedrock, "anthropic.claude-3-sonnet-20240229-v1:0", 0.5);
+        assertNotNull(model);
+        assertTrue(model instanceof AnthropicChatModel, "Custom provider with ANTHROPIC api type must instantiate AnthropicChatModel");
+    }
 }
 

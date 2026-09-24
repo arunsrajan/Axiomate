@@ -323,7 +323,7 @@ public class AIAgentPanel extends JPanel {
 
         // Register session and configuration change listeners
         SessionManager.getInstance().addSessionChangeListener(this::refreshSessionUi);
-        ConfigManager.getInstance().addListener(cfg -> refreshSessionUi());
+        ConfigManager.getInstance().addListener(updatedCfg -> refreshSessionUi());
 
         // Initial UI population
         refreshSessionUi();

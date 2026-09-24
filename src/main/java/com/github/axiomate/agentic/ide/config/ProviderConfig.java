@@ -42,11 +42,17 @@ public class ProviderConfig {
     public static String inferProviderType(String id) {
         if (id == null) return "CUSTOM";
         String upper = id.toUpperCase();
-        if (upper.contains("ANTHROPIC")) return "ANTHROPIC";
+        if (upper.contains("ANTHROPIC") || upper.contains("CLAUDE")) return "ANTHROPIC";
         if (upper.contains("GEMINI")) return "GEMINI";
-        if (upper.contains("OPENAI")) return "OPENAI";
+        if (upper.contains("OPENAI") || upper.contains("GPT")) return "OPENAI";
         if (upper.contains("MOCK")) return "MOCK";
         return "CUSTOM";
+    }
+
+    public boolean isAnthropicType() {
+        String type = getProviderType();
+        return "ANTHROPIC".equalsIgnoreCase(type) || "CUSTOM_ANTHROPIC".equalsIgnoreCase(type)
+                || type.contains("ANTHROPIC") || type.contains("CLAUDE");
     }
 
     public String getId() {
