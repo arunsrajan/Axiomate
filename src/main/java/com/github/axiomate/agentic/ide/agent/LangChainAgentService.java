@@ -77,6 +77,9 @@ public class LangChainAgentService implements AIAgentService {
     public void sendMessage(String prompt, String contextCode, String activeFilePath, AgentListener listener) {
         cancelled = false;
         activeTask = executor.submit(() -> {
+            String activeProviderName = "Unknown";
+            String activeTargetModel = "default";
+            String activeEndpointUrl = "default";
             try {
                 IdeConfig config = ConfigManager.getInstance().getConfig();
                 AgentSession session = SessionManager.getInstance().getActiveSession();
@@ -106,8 +109,12 @@ public class LangChainAgentService implements AIAgentService {
                     providerConfig = config.getProvider(providerId);
                 }
 
-                listener.onThinking(String.format("Connecting to %s [%s]...",
-                        providerConfig != null ? providerConfig.getName() : providerId, targetModel));
+                activeProviderName = providerConfig != null ? providerConfig.getName() : providerId;
+                activeTargetModel = targetModel;
+                activeEndpointUrl = providerConfig != null && providerConfig.getBaseUrl() != null ? providerConfig.getBaseUrl() : "default";
+
+                listener.onThinking(String.format("Connecting to %s [%s] at URL: %s",
+                        activeProviderName, activeTargetModel, activeEndpointUrl));
 
                 // 3. Retrieve Agentic Memory context
                 String memoryContext = MemoryManager.getInstance().getMemoryStore().getRelevantContext(prompt);
@@ -234,7 +241,9 @@ public class LangChainAgentService implements AIAgentService {
 
             } catch (Exception e) {
                 log.error("Failed to execute LangChainAgent task", e);
-                listener.onError(e);
+                listener.onError(new RuntimeException(
+                        String.format("Error calling provider %s [%s] at URL [%s]: %s",
+                                activeProviderName, activeTargetModel, activeEndpointUrl, e.getMessage()), e));
             }
         });
     }

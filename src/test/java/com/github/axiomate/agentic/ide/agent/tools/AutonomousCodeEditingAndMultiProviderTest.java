@@ -1,6 +1,12 @@
 package com.github.axiomate.agentic.ide.agent.tools;
 
+import com.github.axiomate.agentic.ide.agent.AIAgentService;
+import com.github.axiomate.agentic.ide.agent.AgentManager;
+import com.github.axiomate.agentic.ide.agent.LangChainAgentService;
 import com.github.axiomate.agentic.ide.agent.UniversalChatModelFactory;
+import com.github.axiomate.agentic.ide.agent.router.AutonomousTaskRouter;
+import com.github.axiomate.agentic.ide.agent.session.AgentSession;
+import com.github.axiomate.agentic.ide.agent.session.SessionManager;
 import com.github.axiomate.agentic.ide.config.ConfigManager;
 import com.github.axiomate.agentic.ide.config.IdeConfig;
 import com.github.axiomate.agentic.ide.config.ModelDefinition;
@@ -251,6 +257,42 @@ class AutonomousCodeEditingAndMultiProviderTest {
                 customBedrock, "anthropic.claude-3-sonnet-20240229-v1:0", 0.5);
         assertNotNull(model);
         assertTrue(model instanceof AnthropicChatModel, "Custom provider with ANTHROPIC api type must instantiate AnthropicChatModel");
+    }
+
+    @Test
+    @DisplayName("Verify CUSTOM_ANTHROPIC provider routes to LangChainAgentService and not Mock simulator for file analysis")
+    void testCustomAnthropicFileAnalysisRouting() {
+        IdeConfig config = ConfigManager.getInstance().getConfig();
+        SessionManager sessionManager = SessionManager.getInstance();
+
+        // 1. Create a session configured with CUSTOM_ANTHROPIC
+        ProviderConfig customAnthropic = config.getProvider("CUSTOM_ANTHROPIC");
+        assertNotNull(customAnthropic);
+        customAnthropic.setBaseUrl("https://anthropic.enterprise.proxy/v1");
+        customAnthropic.setApiKey("sk-ant-corp-key-12345");
+
+        AgentSession session = sessionManager.createSession("Claude File Analyst", "CUSTOM_ANTHROPIC", "claude-3-7-sonnet");
+        sessionManager.switchSession(session.getId());
+
+        // 2. Verify AgentManager returns LangChainAgentService, NOT MockAgentService
+        AIAgentService service = AgentManager.getInstance().getActiveService();
+        assertTrue(service instanceof LangChainAgentService,
+                "AgentManager must return LangChainAgentService for CUSTOM_ANTHROPIC session, NOT MockAgentService");
+
+        // 3. Verify AutonomousTaskRouter does NOT hijack CUSTOM_ANTHROPIC for file analysis prompts
+        AutonomousTaskRouter.RoutedModel routed = AutonomousTaskRouter.route(
+                "Explain the file Calculator.java and analyze its architecture",
+                session.getProviderId(),
+                session.getModelId());
+
+        assertEquals("CUSTOM_ANTHROPIC", routed.providerId(),
+                "File analysis must be routed to CUSTOM_ANTHROPIC and not hijacked to Gemini or Mock");
+        assertEquals("claude-3-7-sonnet", routed.modelId());
+
+        // 4. Verify model is created with custom URL and API key
+        ChatLanguageModel chatModel = UniversalChatModelFactory.createChatModel(
+                customAnthropic, routed.modelId(), 0.2);
+        assertTrue(chatModel instanceof AnthropicChatModel);
     }
 }
 

@@ -48,6 +48,20 @@ public class AutonomousTaskRouter {
         if (!config.isAutoRoutingEnabled()) {
             return new RoutedModel(taskType, defaultProviderId, defaultModelId, "Manual / Session Model Selected");
         }
+
+        // If the active session is explicitly configured with a custom provider (e.g. CUSTOM_ANTHROPIC),
+        // honor that custom provider instead of overriding it with external default routes
+        if (defaultProviderId != null && !defaultProviderId.isBlank()) {
+            ProviderConfig currentProv = config.getProvider(defaultProviderId);
+            if (currentProv != null && currentProv.isEnabled()) {
+                if (defaultProviderId.startsWith("CUSTOM_") || defaultProviderId.contains("CUSTOM")) {
+                    return new RoutedModel(taskType, defaultProviderId, defaultModelId,
+                            String.format("Using active custom provider %s [%s] for %s",
+                                    currentProv.getName(), defaultModelId, taskType.name()));
+                }
+            }
+        }
+
         String targetRoute = config.getTaskRouting().get(taskType);
 
         if (targetRoute != null && targetRoute.contains(":")) {

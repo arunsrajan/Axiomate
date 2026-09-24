@@ -349,6 +349,19 @@ public class AIAgentPanel extends JPanel {
         if (session != null && provider != null) {
             session.setProviderId(provider);
             populateModelsForProvider(provider);
+
+            // Synchronize with global config & AgentManager
+            IdeConfig config = ConfigManager.getInstance().getConfig();
+            config.setActiveProviderId(provider);
+            if (session.getModelId() != null) {
+                config.setActiveModelId(session.getModelId());
+            }
+            // Explicit provider selection pauses auto-routing so user's chosen provider is used
+            autoRouteCheck.setSelected(false);
+            config.setAutoRoutingEnabled(false);
+
+            ConfigManager.getInstance().saveConfig(config);
+            AgentManager.getInstance().updateActiveService(config);
         }
     }
 
@@ -361,6 +374,9 @@ public class AIAgentPanel extends JPanel {
 
             // Update max context limit
             IdeConfig config = ConfigManager.getInstance().getConfig();
+            config.setActiveModelId(model);
+            ConfigManager.getInstance().saveConfig(config);
+
             ProviderConfig prov = config.getProvider(session.getProviderId());
             if (prov != null) {
                 ModelDefinition md = prov.findModel(model);
@@ -508,6 +524,12 @@ public class AIAgentPanel extends JPanel {
             modelCombo.setSelectedItem(session.getModelId());
         }
         autoRouteCheck.setSelected(config.isAutoRoutingEnabled());
+
+        config.setActiveProviderId(session.getProviderId());
+        if (session.getModelId() != null) {
+            config.setActiveModelId(session.getModelId());
+        }
+        AgentManager.getInstance().updateActiveService(config);
     }
 
     private void updateTokenDisplay() {

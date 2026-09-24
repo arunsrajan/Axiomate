@@ -21,21 +21,38 @@ public class UniversalChatModelFactory {
     public static ChatLanguageModel createChatModel(ProviderConfig config, String modelName, double temperature) {
         String providerId = config != null ? config.getId() : "OPENAI";
         String providerType = config != null ? config.getProviderType() : "OPENAI";
-        String apiKey = config != null && config.getApiKey() != null && !config.getApiKey().isBlank()
-                ? config.getApiKey().trim() : "demo";
-        String baseUrl = config != null ? config.getBaseUrl() : "https://api.openai.com/v1";
-        String targetModel = (modelName != null && !modelName.isBlank())
-                ? modelName : (config != null ? config.getDefaultModel() : "gpt-4o");
-
-        log.info("Instantiating ChatLanguageModel for Provider [{}] (Type: {}) with Model [{}] at BaseURL [{}]",
-                providerId, providerType, targetModel, baseUrl);
-
         String normalizedType = providerType != null ? providerType.trim().toUpperCase() : "OPENAI";
         if (normalizedType.contains("ANTHROPIC") || normalizedType.contains("CLAUDE")) {
             normalizedType = "ANTHROPIC";
         } else if (normalizedType.contains("GEMINI")) {
             normalizedType = "GEMINI";
         }
+
+        String apiKey = (config != null && config.getApiKey() != null && !config.getApiKey().isBlank())
+                ? config.getApiKey().trim() : "";
+        if (apiKey.isBlank()) {
+            if ("ANTHROPIC".equals(normalizedType)) {
+                String env = System.getenv("ANTHROPIC_API_KEY");
+                if (env != null && !env.isBlank()) apiKey = env.trim();
+            } else if ("GEMINI".equals(normalizedType)) {
+                String env = System.getenv("GEMINI_API_KEY");
+                if (env != null && !env.isBlank()) apiKey = env.trim();
+            } else {
+                String env = System.getenv("OPENAI_API_KEY");
+                if (env != null && !env.isBlank()) apiKey = env.trim();
+            }
+        }
+        if (apiKey.isBlank()) {
+            apiKey = "demo";
+        }
+
+        String baseUrl = config != null ? config.getBaseUrl() : "https://api.openai.com/v1";
+        String targetModel = (modelName != null && !modelName.isBlank())
+                ? modelName : (config != null ? config.getDefaultModel() : "gpt-4o");
+
+        log.info("Instantiating ChatLanguageModel for Provider [{}] (Type: {}) with Model [{}] at BaseURL [{}] (API Key: {})",
+                providerId, providerType, targetModel, baseUrl,
+                "demo".equals(apiKey) ? "NOT_SET (demo fallback)" : "configured (length=" + apiKey.length() + ")");
 
         return switch (normalizedType) {
             case "ANTHROPIC" -> {

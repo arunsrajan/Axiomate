@@ -59,7 +59,7 @@ public class AgentManager {
         log.info("Registered tool: {}", tool.getName());
     }
 
-    private void updateActiveService(IdeConfig config) {
+    public void updateActiveService(IdeConfig config) {
         String provider = config.getAiProvider();
         if (!"MOCK".equalsIgnoreCase(provider)) {
             this.activeService = langChainService;
@@ -70,8 +70,24 @@ public class AgentManager {
         }
     }
 
+    public AIAgentService getServiceForProvider(String providerId) {
+        if (providerId == null || "MOCK".equalsIgnoreCase(providerId.trim())) {
+            return mockService;
+        }
+        return langChainService;
+    }
+
     public AIAgentService getActiveService() {
-        return activeService;
+        com.github.axiomate.agentic.ide.agent.session.AgentSession session =
+                com.github.axiomate.agentic.ide.agent.session.SessionManager.getInstance().getActiveSession();
+        if (session != null && session.getProviderId() != null) {
+            String provId = session.getProviderId().trim();
+            if (!"MOCK".equalsIgnoreCase(provId)) {
+                return langChainService;
+            }
+        }
+        String provider = ConfigManager.getInstance().getConfig().getAiProvider();
+        return getServiceForProvider(provider);
     }
 }
 
