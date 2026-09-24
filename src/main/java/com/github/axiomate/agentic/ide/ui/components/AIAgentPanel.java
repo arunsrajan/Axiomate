@@ -321,8 +321,9 @@ public class AIAgentPanel extends JPanel {
 
         add(inputPanel, BorderLayout.SOUTH);
 
-        // Register session change listener
+        // Register session and configuration change listeners
         SessionManager.getInstance().addSessionChangeListener(this::refreshSessionUi);
+        ConfigManager.getInstance().addListener(cfg -> refreshSessionUi());
 
         // Initial UI population
         refreshSessionUi();
