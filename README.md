@@ -1,6 +1,6 @@
-# AgentForge AI Agent IDE
+# Axiomate AI Agent IDE
 
-A modern, high-performance Java desktop IDE built under the package **`com.github.agentforge.agentic.ide`**, featuring **Multi-Provider AI Models (Anthropic, OpenAI, Google Gemini, Custom/Local)**, **Autonomous Task-Based Routing**, **Multi-Agent Sessions**, **Token Usage & Limit Meter**, **95% Context Compression Utility**, **Model Context Protocol (MCP) Server Integration**, **Agentic AI Memory**, and a rich RSyntaxTextArea code editor.
+A modern, high-performance Java desktop IDE built under the package **`com.github.axiomate.agentic.ide`**, featuring **Multi-Provider AI Models (Anthropic, OpenAI, Google Gemini, Custom/Local)**, **Autonomous Task-Based Routing**, **Multi-Agent Sessions**, **Token Usage & Limit Meter**, **95% Context Compression Utility**, **Model Context Protocol (MCP) Server Integration**, **Agentic AI Memory**, and a rich RSyntaxTextArea code editor.
 
 ---
 
@@ -55,7 +55,7 @@ A modern, high-performance Java desktop IDE built under the package **`com.githu
 - Connects to any standard MCP server via **Stdio** (`ProcessBuilder`) or **SSE** (`HttpClient`) transports.
 - Dynamic tool discovery via JSON-RPC 2.0 handshake (`initialize`, `notifications/initialized`, `tools/list`).
 - Integrated **MCP Settings (`Ctrl+Shift+P`)** to test connections, ping servers, and preview tool schemas.
-- Configuration persisted in `~/.agentforge-ide/mcp_servers.json`.
+- Configuration persisted in `~/.axiomate-ide/mcp_servers.json`.
 
 ### 7. ⚡ Autonomous Multi-Turn Tool Calling Loop
 - Seamless integration of all tools into LangChain4j `ToolSpecification` format:
@@ -80,10 +80,10 @@ A modern, high-performance Java desktop IDE built under the package **`com.githu
 - Workspace file tree with context actions: *New File...*, *New Folder...*, *Delete*, *Open in Editor*, *Ask AI Agent*.
 - Integrated terminal, build runner, memory inspector (`Alt+4`), and real-time status bar.
 
-### 10. 💾 Project State Persistence (`~/.agentforge-ide/project_state.json`)
+### 10. 💾 Project State Persistence (`~/.axiomate-ide/project_state.json`)
 - Remembers and restores open editor tabs, active files, and timestamps across project folder open/close events and IDE restarts.
 - Multi-project workspace state tracking keyed by canonical path.
-- Centralized configuration directory in `~/.agentforge-ide/` with automated migration of legacy configuration files from `~/.agentic-ide/`.
+- Centralized configuration directory in `~/.axiomate-ide/` with automated migration of legacy configuration files from `~/.agentforge-ide/` and `~/.agentic-ide/`.
 
 ### 11. 📎 Workspace File Mentions (`@` Symbol) & Auto-Context Injection
 - Type `@` in the AI Agent chat window to display a searchable, keyboard-navigable (`↑`/`↓`/`Enter`/`Tab`/`Esc`) popup list of workspace files.
@@ -123,12 +123,12 @@ mvn test
 ## 📁 Package & Directory Structure
 
 ```
-src/main/java/com/github/agentforge/agentic/ide/
+src/main/java/com/github/axiomate/agentic/ide/
 ├── Main.java                          # Launcher: DPI scaling, theme setup, EDT lifecycle
 ├── config/
 │   ├── IdeConfig.java                 # Configuration model: providers, models, routing, compression, @ mentions
-│   ├── ConfigManager.java             # JSON persistence (~/.agentforge-ide/config.json)
-│   ├── ProjectStateManager.java       # Project state persistence (~/.agentforge-ide/project_state.json)
+│   ├── ConfigManager.java             # JSON persistence (~/.axiomate-ide/config.json)
+│   ├── ProjectStateManager.java       # Project state persistence (~/.axiomate-ide/project_state.json)
 │   ├── ProviderConfig.java            # Provider endpoint URLs, API keys, models list
 │   ├── ModelDefinition.java           # Model metadata: context limits, tags, output limits
 │   └── TaskType.java                  # GENERAL, EXPLAIN, REFACTOR, GENERATE_TESTS, DEBUG_FIX, TERMINAL_TOOL
@@ -186,3 +186,4 @@ src/main/java/com/github/agentforge/agentic/ide/
 └── util/
     └── ProjectManager.java            # Workspace directory & active file manager
 ```
+
