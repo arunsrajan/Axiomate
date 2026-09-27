@@ -286,9 +286,48 @@ public class AppMenuBar extends JMenuBar {
         agentMenu.addSeparator();
         agentMenu.add(stopAgentItem);
         agentMenu.add(clearAgentItem);
-        agentMenu.addSeparator();
         agentMenu.add(settingsItem);
         add(agentMenu);
+
+        // 3.5. AGENT FEATURES MENU
+        JMenu featuresMenu = new JMenu("Agent Features");
+        featuresMenu.setMnemonic(KeyEvent.VK_A);
+
+        JMenuItem planCanvasItem = new JMenuItem("📋 Living Plan Canvas & Architecture Preview...");
+        planCanvasItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.LivingPlanDialog(mainFrame).setVisible(true));
+
+        JMenuItem autonomyItem = new JMenuItem("🎛 Autonomy Dial & Execution Controls...");
+        autonomyItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.ExecutionAndAutonomyDialog(mainFrame).setVisible(true));
+
+        JMenuItem graphItem = new JMenuItem("🕸 Codebase Knowledge Graph & Drift...");
+        graphItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.KnowledgeGraphDialog(mainFrame).setVisible(true));
+
+        JMenuItem testDebugItem = new JMenuItem("🧪 Testing, Verification & Debugger...");
+        testDebugItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.TestingAndDebuggingDialog(mainFrame).setVisible(true));
+
+        JMenuItem auditItem = new JMenuItem("🔒 Enterprise Audit Trail & Security...");
+        auditItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.AuditTrailDialog(mainFrame).setVisible(true));
+
+        JMenuItem collabItem = new JMenuItem("👥 Multiplayer & Developer Experience...");
+        collabItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.CollaborativeAndDevExDialog(mainFrame).setVisible(true));
+
+        JMenuItem rolesItem = new JMenuItem("🔌 Specialized Roles & Marketplace...");
+        rolesItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.MarketplaceAndRolesDialog(mainFrame).setVisible(true));
+
+        JMenuItem analyticsItem = new JMenuItem("📊 Agent Analytics Dashboard...");
+        analyticsItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.AnalyticsDashboardDialog(mainFrame).setVisible(true));
+
+        featuresMenu.add(planCanvasItem);
+        featuresMenu.add(autonomyItem);
+        featuresMenu.add(graphItem);
+        featuresMenu.add(testDebugItem);
+        featuresMenu.addSeparator();
+        featuresMenu.add(auditItem);
+        featuresMenu.add(collabItem);
+        featuresMenu.add(rolesItem);
+        featuresMenu.addSeparator();
+        featuresMenu.add(analyticsItem);
+        add(featuresMenu);
 
         // 4. VIEW MENU
         JMenu viewMenu = new JMenu("View");

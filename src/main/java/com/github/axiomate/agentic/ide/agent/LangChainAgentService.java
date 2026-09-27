@@ -84,6 +84,29 @@ public class LangChainAgentService implements AIAgentService {
                 IdeConfig config = ConfigManager.getInstance().getConfig();
                 AgentSession session = SessionManager.getInstance().getActiveSession();
 
+                // Feature 33: Prompt-injection shield validation
+                var shieldResult = com.github.axiomate.agentic.ide.features.security.PromptInjectionShield.getInstance()
+                        .inspectAndShield("UserPrompt", prompt);
+                if (shieldResult.injectionAttemptDetected()) {
+                    listener.onThinking("🛡 " + shieldResult.shieldExplanation());
+                }
+
+                // Feature 32: Secret-leak guard check
+                var leakScan = com.github.axiomate.agentic.ide.features.security.SecretLeakGuard.getInstance()
+                        .scanAndSanitize(prompt);
+                String safePrompt = leakScan.sanitizedText();
+                if (leakScan.leakDetected()) {
+                    listener.onThinking("🔒 Blocked credential exposure in prompt (" + leakScan.secretCount() + " secret masked).");
+                }
+
+                // Feature 36: Audit trail record
+                com.github.axiomate.agentic.ide.features.security.AuditTrailService.getInstance()
+                        .recordEvent("USER", "PROMPT", activeFilePath != null ? activeFilePath : "workspace", safePrompt);
+
+                // Feature 2: Living Plan Canvas initialization
+                com.github.axiomate.agentic.ide.features.planning.LivingPlanCanvas.getInstance()
+                        .generatePlanFromPrompt(safePrompt, activeFilePath);
+
                 // 1. Check and trigger 95% Context Compression if needed
                 ContextCompressor.CompressionResult preComp = ContextCompressor.compressIfExceeded(
                         session, config.getAutoCompressionThreshold());
@@ -93,7 +116,7 @@ public class LangChainAgentService implements AIAgentService {
 
                 // 2. Intelligent Task-Based Model & Provider Routing
                 AutonomousTaskRouter.RoutedModel routed = AutonomousTaskRouter.route(
-                        prompt, session.getProviderId(), session.getModelId(), session.isAutoRoutingEnabled());
+                        safePrompt, session.getProviderId(), session.getModelId(), session.isAutoRoutingEnabled());
 
                 String providerId = routed.providerId();
                 String targetModel = routed.modelId();
@@ -164,12 +187,12 @@ public class LangChainAgentService implements AIAgentService {
                 if (contextCode != null && !contextCode.isBlank()) {
                     userContent.append("Context Code:\n```\n").append(contextCode).append("\n```\n\n");
                 }
-                userContent.append("User Request: ").append(prompt);
+                userContent.append("User Request: ").append(safePrompt);
 
                 messages.add(new UserMessage(userContent.toString()));
 
                 // Add prompt message to active session
-                session.addMessage(new AgentMessage(AgentRole.USER, prompt));
+                session.addMessage(new AgentMessage(AgentRole.USER, safePrompt));
 
                 // 6. Convert registered tools (FileSystem, Terminal, CodeRefactor, Memory, and all MCP tools)
                 List<ToolSpecification> toolSpecs = buildToolSpecifications();
@@ -263,6 +286,11 @@ public class LangChainAgentService implements AIAgentService {
                         }
 
                         SessionManager.getInstance().autoSaveCurrentProjectSessions();
+
+                        // Feature 50: Record analytics outcome
+                        com.github.axiomate.agentic.ide.features.devexperience.AgentAnalyticsDashboard.getInstance()
+                                .recordTaskOutcome("GENERAL", true, 20.0, 0.005, null);
+
                         listener.onComplete(finalResponse);
                         return;
                     }

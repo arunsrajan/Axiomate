@@ -61,6 +61,22 @@ public class TerminalTool implements AgentTool {
         }
 
         File workingDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+
+        // Feature 31: Sandboxed Execution command validation
+        var sandboxCheck = com.github.axiomate.agentic.ide.features.security.ExecutionSandbox.getInstance().validateCommand(command);
+        if (!sandboxCheck.allowed()) {
+            return "ERROR: " + sandboxCheck.violationReason();
+        }
+
+        // Feature 35: Irreversible-action gate
+        if (!com.github.axiomate.agentic.ide.features.security.IrreversibleActionGate.getInstance().checkAndConfirm(command, workingDir.getPath())) {
+            return "BLOCKED: Irreversible command execution requires explicit confirmation.";
+        }
+
+        // Feature 36: Full audit trail logging
+        com.github.axiomate.agentic.ide.features.security.AuditTrailService.getInstance()
+                .recordEvent("AGENT", "TERMINAL_COMMAND", workingDir.getPath(), "Command: " + command);
+
         log.info("Agent executing terminal command [{}] in {}: '{}'", shell, workingDir, command);
 
         List<String> commandList = new ArrayList<>();

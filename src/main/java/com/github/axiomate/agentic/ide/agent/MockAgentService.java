@@ -67,6 +67,29 @@ public class MockAgentService implements AIAgentService {
                 AgentSession session = SessionManager.getInstance().getActiveSession();
                 IdeConfig config = ConfigManager.getInstance().getConfig();
 
+                // Feature 33: Prompt-injection shield validation
+                var shieldResult = com.github.axiomate.agentic.ide.features.security.PromptInjectionShield.getInstance()
+                        .inspectAndShield("UserPrompt", prompt);
+                if (shieldResult.injectionAttemptDetected()) {
+                    listener.onThinking("🛡 " + shieldResult.shieldExplanation());
+                }
+
+                // Feature 32: Secret-leak guard check
+                var leakScan = com.github.axiomate.agentic.ide.features.security.SecretLeakGuard.getInstance()
+                        .scanAndSanitize(prompt);
+                String safePrompt = leakScan.sanitizedText();
+                if (leakScan.leakDetected()) {
+                    listener.onThinking("🔒 Blocked credential exposure in prompt (" + leakScan.secretCount() + " secret masked).");
+                }
+
+                // Feature 36: Audit trail record
+                com.github.axiomate.agentic.ide.features.security.AuditTrailService.getInstance()
+                        .recordEvent("USER", "PROMPT", activeFilePath != null ? activeFilePath : "workspace", safePrompt);
+
+                // Feature 2: Living Plan Canvas initialization
+                com.github.axiomate.agentic.ide.features.planning.LivingPlanCanvas.getInstance()
+                        .generatePlanFromPrompt(safePrompt, activeFilePath);
+
                 // 1. Check and trigger 95% Context Compression if needed
                 ContextCompressor.CompressionResult preComp = ContextCompressor.compressIfExceeded(
                         session, config.getAutoCompressionThreshold());
@@ -76,13 +99,13 @@ public class MockAgentService implements AIAgentService {
 
                 // 2. Task-Based Model & Provider Routing display
                 AutonomousTaskRouter.RoutedModel routed = AutonomousTaskRouter.route(
-                        prompt, session.getProviderId(), session.getModelId(), session.isAutoRoutingEnabled());
+                        safePrompt, session.getProviderId(), session.getModelId(), session.isAutoRoutingEnabled());
                 if (!routed.rationale().startsWith("Default")) {
                     listener.onThinking("🎯 " + routed.rationale());
                 }
 
                 // Record user prompt in active session
-                session.addMessage(new AgentMessage(AgentRole.USER, prompt));
+                session.addMessage(new AgentMessage(AgentRole.USER, safePrompt));
                 SessionManager.getInstance().notifyListeners();
 
                 listener.onThinking("Consulting Agentic Memory store for relevant context...");
@@ -506,6 +529,10 @@ public class MockAgentService implements AIAgentService {
             SessionManager.getInstance().notifyListeners();
             SessionManager.getInstance().autoSaveCurrentProjectSessions();
         }
+
+        // Feature 50: Record analytics outcome
+        com.github.axiomate.agentic.ide.features.devexperience.AgentAnalyticsDashboard.getInstance()
+                .recordTaskOutcome("GENERAL", true, 15.0, 0.002, null);
 
         listener.onComplete(current.toString());
     }

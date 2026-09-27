@@ -266,6 +266,9 @@ public class AIAgentPanel extends JPanel {
         chipsPanel.add(createChip("🧪 Add Tests", "Generate comprehensive JUnit 5 test cases for this code"));
         chipsPanel.add(createChip("🐛 Find Bugs", "Diagnose potential bugs, security issues, and edge cases"));
         chipsPanel.add(createChip("🧠 View Memory", "Show all project rules and stored agent memories"));
+        chipsPanel.add(createFeatureChip("📋 Plan Canvas", () -> new com.github.axiomate.agentic.ide.features.ui.LivingPlanDialog(null).setVisible(true)));
+        chipsPanel.add(createFeatureChip("📊 Analytics", () -> new com.github.axiomate.agentic.ide.features.ui.AnalyticsDashboardDialog(null).setVisible(true)));
+        chipsPanel.add(createFeatureChip("🎛 Autonomy", () -> new com.github.axiomate.agentic.ide.features.ui.ExecutionAndAutonomyDialog(null).setVisible(true)));
 
         // 5. Output Display Filtering & Visibility Bar
         JPanel outputDisplayBar = new JPanel(new BorderLayout(4, 0));
@@ -925,6 +928,15 @@ public class AIAgentPanel extends JPanel {
                 submitPrompt();
             }
         });
+        return btn;
+    }
+
+    private JButton createFeatureChip(String text, Runnable action) {
+        JButton btn = new JButton(text);
+        btn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.setFocusPainted(false);
+        btn.addActionListener(e -> action.run());
         return btn;
     }
 

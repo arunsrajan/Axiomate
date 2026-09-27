@@ -66,6 +66,32 @@ public class AutonomousCodeEditorTool implements AgentTool {
             return "ERROR: Could not resolve target file. Provide a valid 'filePath' or open a file in the editor.";
         }
 
+        // Feature 31: Sandboxed Execution path validation
+        var sandboxCheck = com.github.axiomate.agentic.ide.features.security.ExecutionSandbox.getInstance().validatePathAccess(targetFile);
+        if (!sandboxCheck.allowed()) {
+            return "ERROR: " + sandboxCheck.violationReason();
+        }
+
+        // Feature 45: Policy-as-Code enforcement
+        var policyCheck = com.github.axiomate.agentic.ide.features.extensibility.PolicyAsCodeEngine.getInstance().evaluate(targetFile.getPath(), action);
+        if (!policyCheck.allowed()) {
+            return "ERROR: " + policyCheck.message();
+        }
+
+        // Feature 14: Human-in-the-loop breakpoints
+        if (com.github.axiomate.agentic.ide.features.execution.HumanInTheLoopGate.getInstance().shouldPauseForApproval(targetFile.getPath(), action)) {
+            return "BLOCKED: Human-in-the-loop breakpoint triggered for " + targetFile.getName() + " [" + action + "]. Approval required.";
+        }
+
+        // Feature 35: Irreversible-action gate
+        if (!com.github.axiomate.agentic.ide.features.security.IrreversibleActionGate.getInstance().checkAndConfirm(action, targetFile.getPath())) {
+            return "BLOCKED: Irreversible action " + action + " requires explicit confirmation.";
+        }
+
+        // Feature 36: Full audit trail logging
+        com.github.axiomate.agentic.ide.features.security.AuditTrailService.getInstance()
+                .recordEvent("AGENT", "CODE_EDITOR", targetFile.getPath(), "Action: " + action);
+
         return switch (action) {
             case "read_file" -> handleReadFile(targetFile, json);
             case "replace_lines" -> handleReplaceLines(targetFile, json);
@@ -227,9 +253,13 @@ public class AutonomousCodeEditorTool implements AgentTool {
     }
 
     private void saveAndNotify(File file, String content) throws IOException {
-        Files.writeString(file.toPath(), content, StandardCharsets.UTF_8);
-        log.info("Saved file {}: {} characters", file.getAbsolutePath(), content.length());
-        ProjectManager.getInstance().notifyFileModified(file, content);
+        // Feature 32: Secret-leak guard check and sanitize before saving to disk
+        var leakResult = com.github.axiomate.agentic.ide.features.security.SecretLeakGuard.getInstance().scanAndSanitize(content);
+        String safeContent = leakResult.sanitizedText();
+
+        Files.writeString(file.toPath(), safeContent, StandardCharsets.UTF_8);
+        log.info("Saved file {}: {} characters", file.getAbsolutePath(), safeContent.length());
+        ProjectManager.getInstance().notifyFileModified(file, safeContent);
     }
 }
 
