@@ -6,6 +6,13 @@ import dev.langchain4j.model.anthropic.internal.api.AnthropicContent;
 import dev.langchain4j.model.anthropic.internal.api.AnthropicContentBlockType;
 import dev.langchain4j.model.anthropic.internal.api.AnthropicCreateMessageResponse;
 import dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.anthropic.internal.api.AnthropicMessage;
+import dev.langchain4j.model.anthropic.internal.api.AnthropicRole;
+import dev.langchain4j.model.anthropic.internal.api.AnthropicTextContent;
+import dev.langchain4j.model.anthropic.internal.api.AnthropicToolResultContent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -139,5 +146,75 @@ class AnthropicThinkingModelDeserializationTest {
         assertEquals(AnthropicContentBlockType.REDACTED_THINKING, AnthropicContentBlockType.fromString("redacted_thinking"));
         assertEquals(AnthropicContentBlockType.UNKNOWN, AnthropicContentBlockType.fromString("something_new"));
         assertEquals(AnthropicContentBlockType.UNKNOWN, AnthropicContentBlockType.fromString(null));
+    }
+
+    @Test
+    @DisplayName("Should never produce messages with empty content when AiMessage has empty text")
+    void shouldNotProduceEmptyContentWhenAiMessageHasEmptyText() {
+        List<ChatMessage> chatMessages = List.of(
+                new UserMessage("What is 2+2?"),
+                AiMessage.from(""),
+                new UserMessage("Please answer")
+        );
+
+        List<AnthropicMessage> anthropicMessages = AnthropicMapper.toAnthropicMessages(chatMessages);
+        assertNotNull(anthropicMessages);
+        assertFalse(anthropicMessages.isEmpty());
+
+        for (int i = 0; i < anthropicMessages.size(); i++) {
+            AnthropicMessage msg = anthropicMessages.get(i);
+            assertNotNull(msg.content, "Message " + i + " content must not be null");
+            assertFalse(msg.content.isEmpty(), "Message " + i + " content must not be empty (violates Anthropic API)");
+            if (msg.content.get(0) instanceof AnthropicTextContent textBlock) {
+                assertNotNull(textBlock.text);
+                assertFalse(textBlock.text.trim().isEmpty(), "Message " + i + " text must not be empty or whitespace");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Should merge consecutive same-role messages and guarantee alternating roles starting with USER")
+    void shouldMergeConsecutiveSameRoleMessagesAndGuaranteeAlternation() {
+        List<ChatMessage> chatMessages = List.of(
+                new UserMessage("Prompt part 1"),
+                new UserMessage("Prompt part 2"),
+                AiMessage.from("Answer part 1"),
+                AiMessage.from("Answer part 2")
+        );
+
+        List<AnthropicMessage> anthropicMessages = AnthropicMapper.toAnthropicMessages(chatMessages);
+        assertEquals(2, anthropicMessages.size(), "Consecutive same-role messages must be merged");
+        assertEquals(AnthropicRole.USER, anthropicMessages.get(0).role);
+        assertEquals(AnthropicRole.ASSISTANT, anthropicMessages.get(1).role);
+
+        // Verify contents of merged user message
+        assertEquals(2, anthropicMessages.get(0).content.size());
+        assertEquals(2, anthropicMessages.get(1).content.size());
+    }
+
+    @Test
+    @DisplayName("Should safely handle tool result messages with empty or null content")
+    void shouldSafelyHandleToolResultMessageWithNullOrEmptyContent() {
+        dev.langchain4j.agent.tool.ToolExecutionRequest req = dev.langchain4j.agent.tool.ToolExecutionRequest.builder()
+                .id("call_1")
+                .name("testTool")
+                .arguments("{}")
+                .build();
+        List<ChatMessage> chatMessages = List.of(
+                new UserMessage("Execute command"),
+                ToolExecutionResultMessage.from(req, "(command executed with no output)")
+        );
+
+        List<AnthropicMessage> anthropicMessages = AnthropicMapper.toAnthropicMessages(chatMessages);
+        assertFalse(anthropicMessages.isEmpty());
+        for (AnthropicMessage msg : anthropicMessages) {
+            assertFalse(msg.content.isEmpty());
+            for (var block : msg.content) {
+                if (block instanceof AnthropicToolResultContent trc) {
+                    assertNotNull(trc.content);
+                    assertFalse(trc.content.trim().isEmpty(), "Tool result content must not be empty string");
+                }
+            }
+        }
     }
 }

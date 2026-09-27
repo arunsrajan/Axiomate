@@ -56,46 +56,132 @@ public class AnthropicMapper {
     }
 
     public static List<AnthropicMessage> toAnthropicMessages(List<ChatMessage> messages) {
-        List<AnthropicMessage> anthropicMessages = new ArrayList<>();
+        List<AnthropicMessage> rawMessages = new ArrayList<>();
         List<AnthropicMessageContent> toolResultContents = new ArrayList<>();
 
         for (ChatMessage message : messages) {
             if (message instanceof ToolExecutionResultMessage toolExecutionResultMessage) {
-                toolResultContents.add(toAnthropicToolResultContent(toolExecutionResultMessage));
+                AnthropicToolResultContent trc = toAnthropicToolResultContent(toolExecutionResultMessage);
+                if (trc != null) {
+                    toolResultContents.add(trc);
+                }
             } else {
                 if (!toolResultContents.isEmpty()) {
-                    anthropicMessages.add(new AnthropicMessage(AnthropicRole.USER, toolResultContents));
-                    toolResultContents = new ArrayList<>();
+                    rawMessages.add(new AnthropicMessage(AnthropicRole.USER, new ArrayList<>(toolResultContents)));
+                    toolResultContents.clear();
                 }
 
                 if (message instanceof UserMessage userMessage) {
-                    anthropicMessages.add(new AnthropicMessage(AnthropicRole.USER, toAnthropicMessageContents(userMessage)));
+                    List<AnthropicMessageContent> contents = toAnthropicMessageContents(userMessage);
+                    if (!contents.isEmpty()) {
+                        rawMessages.add(new AnthropicMessage(AnthropicRole.USER, contents));
+                    }
                 } else if (message instanceof AiMessage aiMessage) {
-                    anthropicMessages.add(new AnthropicMessage(AnthropicRole.ASSISTANT, toAnthropicMessageContents(aiMessage)));
+                    List<AnthropicMessageContent> contents = toAnthropicMessageContents(aiMessage);
+                    if (!contents.isEmpty()) {
+                        rawMessages.add(new AnthropicMessage(AnthropicRole.ASSISTANT, contents));
+                    }
                 }
             }
         }
 
         if (!toolResultContents.isEmpty()) {
-            anthropicMessages.add(new AnthropicMessage(AnthropicRole.USER, toolResultContents));
+            rawMessages.add(new AnthropicMessage(AnthropicRole.USER, new ArrayList<>(toolResultContents)));
+            toolResultContents.clear();
         }
 
-        return anthropicMessages;
+        if (rawMessages.isEmpty()) {
+            return List.of(new AnthropicMessage(AnthropicRole.USER, List.of(new AnthropicTextContent("Hello"))));
+        }
+
+        // Merge consecutive messages with the same role (Anthropic API requires strict alternation between USER and ASSISTANT)
+        List<AnthropicMessage> mergedMessages = new ArrayList<>();
+        for (AnthropicMessage msg : rawMessages) {
+            if (msg.content == null || msg.content.isEmpty()) {
+                continue;
+            }
+            if (!mergedMessages.isEmpty() && mergedMessages.get(mergedMessages.size() - 1).role == msg.role) {
+                List<AnthropicMessageContent> combined = new ArrayList<>(mergedMessages.get(mergedMessages.size() - 1).content);
+                combined.addAll(msg.content);
+                mergedMessages.set(mergedMessages.size() - 1, new AnthropicMessage(msg.role, combined));
+            } else {
+                mergedMessages.add(msg);
+            }
+        }
+
+        // Ensure the conversation starts with a USER message
+        if (!mergedMessages.isEmpty() && mergedMessages.get(0).role != AnthropicRole.USER) {
+            mergedMessages.add(0, new AnthropicMessage(AnthropicRole.USER, List.of(new AnthropicTextContent("Proceed with the task."))));
+        }
+
+        // Final safety guarantee: ensure every message has at least one valid, non-empty content block
+        List<AnthropicMessage> validatedMessages = new ArrayList<>();
+        for (AnthropicMessage msg : mergedMessages) {
+            List<AnthropicMessageContent> validBlocks = new ArrayList<>();
+            for (AnthropicMessageContent block : msg.content) {
+                if (block instanceof AnthropicTextContent textBlock) {
+                    if (textBlock.text != null && !textBlock.text.trim().isEmpty()) {
+                        validBlocks.add(textBlock);
+                    }
+                } else if (block instanceof AnthropicToolResultContent toolResultBlock) {
+                    String text = toolResultBlock.content;
+                    if (text == null || text.trim().isEmpty()) {
+                        text = "(success)";
+                    }
+                    validBlocks.add(new AnthropicToolResultContent(toolResultBlock.toolUseId, text, toolResultBlock.isError));
+                } else if (block != null) {
+                    validBlocks.add(block);
+                }
+            }
+            if (validBlocks.isEmpty()) {
+                validBlocks.add(new AnthropicTextContent(msg.role == AnthropicRole.USER ? "(user input)" : "(response)"));
+            }
+            validatedMessages.add(new AnthropicMessage(msg.role, validBlocks));
+        }
+
+        return validatedMessages.isEmpty()
+                ? List.of(new AnthropicMessage(AnthropicRole.USER, List.of(new AnthropicTextContent("Hello"))))
+                : validatedMessages;
     }
 
     private static AnthropicToolResultContent toAnthropicToolResultContent(ToolExecutionResultMessage resultMessage) {
-        return new AnthropicToolResultContent(resultMessage.id(), resultMessage.text(), null);
+        String text = resultMessage.text();
+        if (text == null || text.trim().isEmpty()) {
+            text = "(success)";
+        }
+        String id = resultMessage.id();
+        if (id == null || id.trim().isEmpty()) {
+            id = "call_default";
+        }
+        return new AnthropicToolResultContent(id, text, null);
     }
 
     private static List<AnthropicMessageContent> toAnthropicMessageContents(UserMessage userMessage) {
-        return userMessage.contents().stream()
-                .map(AnthropicMapper::toAnthropicMessageContent)
-                .collect(Collectors.toList());
+        List<AnthropicMessageContent> contents = new ArrayList<>();
+        if (userMessage.contents() != null) {
+            for (Content content : userMessage.contents()) {
+                if (content instanceof TextContent textContent) {
+                    if (textContent.text() != null && !textContent.text().trim().isEmpty()) {
+                        contents.add(new AnthropicTextContent(textContent.text()));
+                    }
+                } else if (content != null) {
+                    contents.add(toAnthropicMessageContent(content));
+                }
+            }
+        }
+        if (contents.isEmpty() && Utils.isNotNullOrBlank(userMessage.singleText())) {
+            contents.add(new AnthropicTextContent(userMessage.singleText()));
+        }
+        if (contents.isEmpty()) {
+            contents.add(new AnthropicTextContent("(user prompt)"));
+        }
+        return contents;
     }
 
     private static AnthropicMessageContent toAnthropicMessageContent(Content content) {
         if (content instanceof TextContent textContent) {
-            return new AnthropicTextContent(textContent.text());
+            String text = textContent.text();
+            return new AnthropicTextContent((text != null && !text.trim().isEmpty()) ? text : "(empty)");
         } else if (content instanceof ImageContent imageContent) {
             Image image = imageContent.image();
             if (image.url() != null) {
@@ -118,19 +204,42 @@ public class AnthropicMapper {
         if (aiMessage.hasToolExecutionRequests()) {
             contents.addAll(aiMessage.toolExecutionRequests().stream()
                     .map(AnthropicMapper::toAnthropicToolUseContent)
+                    .filter(Objects::nonNull)
                     .collect(Collectors.toList()));
+        }
+        if (contents.isEmpty()) {
+            contents.add(new AnthropicTextContent("(response)"));
         }
         return contents;
     }
 
     private static AnthropicToolUseContent toAnthropicToolUseContent(ToolExecutionRequest req) {
         try {
+            Map<?, ?> inputMap = null;
+            if (req.arguments() != null && !req.arguments().trim().isEmpty()) {
+                try {
+                    inputMap = OBJECT_MAPPER.readValue(req.arguments(), java.util.Map.class);
+                } catch (Exception ignored) {
+                    Map<String, Object> fallback = new HashMap<>();
+                    fallback.put("input", req.arguments());
+                    inputMap = fallback;
+                }
+            }
+            if (inputMap == null) {
+                inputMap = Collections.emptyMap();
+            }
+            String id = (req.id() != null && !req.id().trim().isEmpty())
+                    ? req.id()
+                    : ("call_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8));
+            String name = (req.name() != null && !req.name().trim().isEmpty())
+                    ? req.name()
+                    : "tool";
             return AnthropicToolUseContent.builder()
-                    .id(req.id())
-                    .name(req.name())
-                    .input(OBJECT_MAPPER.readValue(req.arguments(), java.util.Map.class))
+                    .id(id)
+                    .name(name)
+                    .input(inputMap)
                     .build();
-        } catch (JsonProcessingException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }

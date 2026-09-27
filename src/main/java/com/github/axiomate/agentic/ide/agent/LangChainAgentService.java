@@ -173,10 +173,14 @@ public class LangChainAgentService implements AIAgentService {
 
                 // Replay previous turns from session if applicable
                 for (AgentMessage priorMsg : session.getMessages()) {
+                    String content = priorMsg.getContent();
+                    if (content == null || content.trim().isEmpty()) {
+                        continue;
+                    }
                     if (priorMsg.isUser()) {
-                        messages.add(new UserMessage(priorMsg.getContent()));
+                        messages.add(new UserMessage(content.trim()));
                     } else if (priorMsg.isAssistant()) {
-                        messages.add(new AiMessage(priorMsg.getContent()));
+                        messages.add(new AiMessage(content.trim()));
                     }
                 }
 
@@ -187,9 +191,13 @@ public class LangChainAgentService implements AIAgentService {
                 if (contextCode != null && !contextCode.isBlank()) {
                     userContent.append("Context Code:\n```\n").append(contextCode).append("\n```\n\n");
                 }
-                userContent.append("User Request: ").append(safePrompt);
+                userContent.append("User Request: ").append(safePrompt != null && !safePrompt.isBlank() ? safePrompt : "Process task");
 
-                messages.add(new UserMessage(userContent.toString()));
+                String userText = userContent.toString().trim();
+                if (userText.isEmpty()) {
+                    userText = "Process task";
+                }
+                messages.add(new UserMessage(userText));
 
                 // Add prompt message to active session
                 session.addMessage(new AgentMessage(AgentRole.USER, safePrompt));
@@ -244,6 +252,10 @@ public class LangChainAgentService implements AIAgentService {
                                 toolResult = "ERROR: Tool '" + toolName + "' is not registered.";
                             }
 
+                            if (toolResult == null || toolResult.trim().isEmpty()) {
+                                toolResult = "(command executed with no output)";
+                            }
+
                             listener.onToolResult(toolName, toolResult);
                             messages.add(ToolExecutionResultMessage.from(req, toolResult));
 
@@ -251,13 +263,11 @@ public class LangChainAgentService implements AIAgentService {
                             session.addMessage(new AgentMessage(AgentRole.TOOL, toolResult, toolName));
                         }
                     } else {
-                        // Final resolution reached
-                        String finalResponse = (aiMessage.text() != null) ? aiMessage.text() : "";
-
                         // Surface any thinking/reasoning from the model (DeepSeek, Claude 3.7, etc.)
                         // AnthropicMapper stores thinking via LAST_THINKING thread-local after generate()
+                        String thinkingContent = null;
                         try {
-                            String thinkingContent = dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.get();
+                            thinkingContent = dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.get();
                             if (thinkingContent != null && !thinkingContent.isBlank()) {
                                 log.debug("Surfacing {} chars of model thinking to UI", thinkingContent.length());
                                 session.addMessage(new AgentMessage(AgentRole.THINKING, thinkingContent, null));
@@ -265,6 +275,16 @@ public class LangChainAgentService implements AIAgentService {
                             }
                         } finally {
                             dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.remove();
+                        }
+
+                        // Final resolution reached - ensure content is never blank
+                        String finalResponse = (aiMessage.text() != null && !aiMessage.text().isBlank()) ? aiMessage.text() : "";
+                        if (finalResponse.isBlank()) {
+                            if (thinkingContent != null && !thinkingContent.isBlank()) {
+                                finalResponse = thinkingContent;
+                            } else {
+                                finalResponse = "Task completed successfully.";
+                            }
                         }
 
                         // Store in session (actual response only, without thinking)
@@ -306,6 +326,14 @@ public class LangChainAgentService implements AIAgentService {
 
             } catch (Exception e) {
                 log.error("Failed to execute LangChainAgent task", e);
+                // Record assistant error message in session to avoid leaving an unanswered trailing USER message
+                try {
+                    AgentSession currentSession = SessionManager.getInstance().getActiveSession();
+                    if (currentSession != null) {
+                        currentSession.addMessage(new AgentMessage(AgentRole.ASSISTANT, "⚠️ Error: " + e.getMessage()));
+                    }
+                } catch (Exception ignored) {
+                }
                 listener.onError(new RuntimeException(
                         String.format("Error calling provider %s [%s] at URL [%s]: %s",
                                 activeProviderName, activeTargetModel, activeEndpointUrl, e.getMessage()), e));
