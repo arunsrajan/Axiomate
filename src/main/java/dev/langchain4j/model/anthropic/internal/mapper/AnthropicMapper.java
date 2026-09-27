@@ -34,7 +34,9 @@ import dev.langchain4j.model.output.TokenUsage;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -215,7 +217,7 @@ public class AnthropicMapper {
 
     private static AnthropicToolUseContent toAnthropicToolUseContent(ToolExecutionRequest req) {
         try {
-            Map<?, ?> inputMap = null;
+            Map<String, Object> inputMap = null;
             if (req.arguments() != null && !req.arguments().trim().isEmpty()) {
                 try {
                     inputMap = OBJECT_MAPPER.readValue(req.arguments(), java.util.Map.class);
