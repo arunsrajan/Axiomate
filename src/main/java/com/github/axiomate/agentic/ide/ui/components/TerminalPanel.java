@@ -111,12 +111,17 @@ public class TerminalPanel extends JPanel {
     private JTextArea createConsoleArea() {
         JTextArea area = new JTextArea();
         area.setEditable(false);
-        area.setFont(new Font("Consolas", Font.PLAIN, 12));
-        area.setBackground(new Color(24, 24, 24));
-        area.setForeground(new Color(220, 220, 220));
-        area.setCaretColor(Color.WHITE);
+        area.setFont(com.github.axiomate.agentic.ide.ui.util.UIUtils.getEditorFont(12));
         area.setMargin(new Insets(6, 8, 6, 8));
+        styleConsole(area);
+        com.github.axiomate.agentic.ide.ui.util.UIUtils.addThemeListener(() -> styleConsole(area));
         return area;
+    }
+
+    private static void styleConsole(JTextArea area) {
+        area.setBackground(com.github.axiomate.agentic.ide.ui.util.UIUtils.consoleBackground());
+        area.setForeground(com.github.axiomate.agentic.ide.ui.util.UIUtils.consoleForeground());
+        area.setCaretColor(com.github.axiomate.agentic.ide.ui.util.UIUtils.consoleForeground());
     }
 
     public MemoryPanel getMemoryPanel() {

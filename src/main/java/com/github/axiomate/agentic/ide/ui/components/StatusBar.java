@@ -12,73 +12,140 @@ import com.github.axiomate.agentic.ide.util.ProjectManager;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.File;
 
 /**
- * Bottom status bar displaying file path, cursor coordinates, active AI agent session,
- * real-time token consumption / context limit percentage, and memory count.
+ * Bottom status bar: project, active file, caret position, and clickable indicators for the active agent
+ * session, token usage, agent memory and plugins.
  */
 public class StatusBar extends JPanel {
 
+    private final JLabel projectLabel;
     private final JLabel fileLabel;
     private final JLabel caretLabel;
     private final JLabel memoryLabel;
+    private final JLabel pluginsLabel;
     private final JLabel tokenStatusLabel;
     private final JLabel modelLabel;
+    private double lastTokenPct;
 
     public StatusBar() {
         setLayout(new BorderLayout());
-        setBorder(new EmptyBorder(4, 12, 4, 12));
-        setBackground(new Color(28, 29, 34));
 
-        fileLabel = new JLabel("No file open");
-        fileLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        fileLabel.setForeground(Color.LIGHT_GRAY);
+        projectLabel = segment("", "Current project — click for the Session Manager");
+        projectLabel.setFont(UIUtils.uiFont(Font.BOLD, 11f));
+        fileLabel = segment("No file open", null);
+        caretLabel = segment("Ln 1, Col 1", null);
+        memoryLabel = segment("0 memories", "Agent memories visible to this project — click to browse");
+        pluginsLabel = segment("0 plugins", "Enabled plugins — click to manage");
+        tokenStatusLabel = segment("Tokens: 0 / 128k (0.0%)", "Context usage of the active session");
+        modelLabel = segment("AI: Mock Simulator", "Active agent session — click to switch sessions");
+        modelLabel.setIcon(UIUtils.createSparkleIcon(12, UIUtils.ACCENT_PURPLE));
 
-        caretLabel = new JLabel("Ln 1, Col 1");
-        caretLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        caretLabel.setForeground(Color.LIGHT_GRAY);
+        JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        leftPanel.setOpaque(false);
+        leftPanel.add(projectLabel);
+        leftPanel.add(fileLabel);
 
         JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 14, 0));
         rightPanel.setOpaque(false);
-
-        memoryLabel = new JLabel("🧠 Memory: 0");
-        memoryLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        memoryLabel.setForeground(UIUtils.ACCENT_PURPLE);
-
-        tokenStatusLabel = new JLabel("Tokens: 0 / 128k (0.0%)");
-        tokenStatusLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        tokenStatusLabel.setForeground(new Color(170, 210, 255));
-
-        modelLabel = new JLabel("AI: Mock Simulator", UIUtils.createSparkleIcon(12, UIUtils.ACCENT_PURPLE), JLabel.LEFT);
-        modelLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        modelLabel.setForeground(UIUtils.ACCENT_PURPLE);
-
         rightPanel.add(caretLabel);
+        rightPanel.add(pluginsLabel);
         rightPanel.add(memoryLabel);
         rightPanel.add(tokenStatusLabel);
         rightPanel.add(modelLabel);
 
-        add(fileLabel, BorderLayout.WEST);
+        add(leftPanel, BorderLayout.WEST);
         add(rightPanel, BorderLayout.EAST);
 
+        applyColors();
+        UIUtils.addThemeListener(this::applyColors);
+
         ProjectManager.getInstance().addActiveFileChangeListener(this::updateActiveFile);
+        ProjectManager.getInstance().addProjectChangeListener(dir -> SwingUtilities.invokeLater(this::updateProject));
         ConfigManager.getInstance().addListener(this::updateConfig);
 
-        // Update memory count
         MemoryManager.getInstance().addChangeListener(this::updateMemoryCount);
         updateMemoryCount();
 
-        // Update session and token tracking
         SessionManager.getInstance().addSessionChangeListener(this::updateSessionAndTokens);
         updateSessionAndTokens();
+        updateProject();
+    }
+
+    private JLabel segment(String text, String tooltip) {
+        JLabel l = new JLabel(text);
+        l.setFont(UIUtils.uiFont(Font.PLAIN, 11f));
+        l.setToolTipText(tooltip);
+        return l;
+    }
+
+    private void applyColors() {
+        setBackground(UIUtils.surface(2));
+        setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, UIUtils.borderColor()),
+                new EmptyBorder(3, 10, 3, 10)));
+        for (JLabel l : new JLabel[]{projectLabel, fileLabel, caretLabel, pluginsLabel}) {
+            l.setForeground(UIUtils.mutedForeground());
+        }
+        projectLabel.setIcon(UIUtils.createFolderIcon(12, null));
+        pluginsLabel.setIcon(UIUtils.glyph(UIUtils.Glyph.PLUGINS, 12, UIUtils.mutedForeground()));
+        memoryLabel.setIcon(UIUtils.glyph(UIUtils.Glyph.MEMORY, 12, UIUtils.accentText(UIUtils.ACCENT_PURPLE)));
+        projectLabel.setForeground(UIUtils.foreground());
+        memoryLabel.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
+        modelLabel.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
+        colorTokens();
+    }
+
+    private static void onClick(JLabel label, Runnable action) {
+        label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        label.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                action.run();
+            }
+        });
+    }
+
+    public void setOnProjectClick(Runnable action) {
+        onClick(projectLabel, action);
+    }
+
+    public void setOnMemoryClick(Runnable action) {
+        onClick(memoryLabel, action);
+    }
+
+    public void setOnPluginsClick(Runnable action) {
+        onClick(pluginsLabel, action);
+    }
+
+    public void setOnSessionClick(Runnable action) {
+        onClick(modelLabel, action);
+    }
+
+    public void setOnTokensClick(Runnable action) {
+        onClick(tokenStatusLabel, action);
+    }
+
+    public void setPluginCount(int enabled) {
+        SwingUtilities.invokeLater(() -> pluginsLabel.setText(enabled + (enabled == 1 ? " plugin" : " plugins")));
+    }
+
+    private void updateProject() {
+        File dir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        projectLabel.setText(dir != null ? dir.getName() : "No project");
+        projectLabel.setToolTipText(dir != null ? dir.getAbsolutePath() + " — click for the Session Manager" : null);
     }
 
     public void updateActiveFile(File file) {
         if (file != null) {
-            fileLabel.setText(file.getName() + " (" + file.getParent() + ")");
+            fileLabel.setText(file.getName());
+            fileLabel.setToolTipText(file.getAbsolutePath());
         } else {
             fileLabel.setText("No file open");
+            fileLabel.setToolTipText(null);
         }
     }
 
@@ -87,8 +154,12 @@ public class StatusBar extends JPanel {
     }
 
     public void updateMemoryCount() {
-        int count = MemoryManager.getInstance().getMemoryStore().getAllMemories().size();
-        memoryLabel.setText("🧠 Memories: " + count);
+        SwingUtilities.invokeLater(() -> {
+            String scope = MemoryManager.getInstance().getActiveProjectPath();
+            long count = MemoryManager.getInstance().getMemoryStore().getAllMemories().stream()
+                    .filter(m -> m.isVisibleInScope(scope)).count();
+            memoryLabel.setText(count + (count == 1 ? " memory" : " memories"));
+        });
     }
 
     public void updateSessionAndTokens() {
@@ -96,28 +167,28 @@ public class StatusBar extends JPanel {
             AgentSession session = SessionManager.getInstance().getActiveSession();
             if (session != null) {
                 TokenTracker tracker = session.getTokenTracker();
-                double pct = tracker.getUsagePercentage();
-
-                String tokenText = String.format("Tokens: %,d / %,d (%.1f%%)",
-                        tracker.getTotalTokens(), tracker.getMaxContextTokens(), pct);
-                tokenStatusLabel.setText(tokenText);
-
-                if (pct >= 95.0) {
-                    tokenStatusLabel.setForeground(UIUtils.ERROR_COLOR);
-                } else if (pct >= 85.0) {
-                    tokenStatusLabel.setForeground(new Color(240, 130, 40));
-                } else {
-                    tokenStatusLabel.setForeground(new Color(170, 210, 255));
-                }
-
-                modelLabel.setText(String.format("[%s] %s (%s)",
-                        session.getName(), session.getProviderId(), session.getModelId()));
+                lastTokenPct = tracker.getUsagePercentage();
+                tokenStatusLabel.setText(String.format("Tokens: %,d / %,d (%.1f%%)",
+                        tracker.getTotalTokens(), tracker.getMaxContextTokens(), lastTokenPct));
+                colorTokens();
+                int count = SessionManager.getInstance().getSessions().size();
+                modelLabel.setText(String.format("%s · %s/%s%s", session.getName(), session.getProviderId(),
+                        session.getModelId(), count > 1 ? "  (" + count + " sessions)" : ""));
             }
         });
+    }
+
+    private void colorTokens() {
+        if (lastTokenPct >= 95.0) {
+            tokenStatusLabel.setForeground(UIUtils.ERROR_COLOR);
+        } else if (lastTokenPct >= 85.0) {
+            tokenStatusLabel.setForeground(UIUtils.accentText(UIUtils.WARNING_COLOR));
+        } else {
+            tokenStatusLabel.setForeground(UIUtils.mutedForeground());
+        }
     }
 
     public void updateConfig(IdeConfig config) {
         updateSessionAndTokens();
     }
 }
-

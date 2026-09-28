@@ -5,8 +5,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Singleton manager coordinating Agentic AI Memory across the IDE.
@@ -17,7 +18,7 @@ public class MemoryManager {
     private static MemoryManager instance;
 
     private final AgentMemoryStore memoryStore;
-    private final List<Runnable> changeListeners = new ArrayList<>();
+    private final List<Runnable> changeListeners = new CopyOnWriteArrayList<>();
 
     private MemoryManager() {
         this.memoryStore = new JsonAgentMemoryStore();
@@ -56,6 +57,33 @@ public class MemoryManager {
     public void removeMemory(String id) {
         memoryStore.removeMemory(id);
         notifyChanged();
+    }
+
+    public void addMemories(Collection<MemoryItem> items) {
+        memoryStore.addMemories(items);
+        notifyChanged();
+    }
+
+    public int removeMemoriesBySource(String source) {
+        int removed = memoryStore.removeMemoriesBySource(source);
+        if (removed > 0) {
+            notifyChanged();
+        }
+        return removed;
+    }
+
+    /**
+     * Scopes agent context retrieval to global memories plus memories of the given project.
+     */
+    public void setActiveProject(File projectDir) {
+        memoryStore.setActiveProjectScope(projectDir != null
+                ? com.github.axiomate.agentic.ide.config.ProjectStateManager.normalizePath(projectDir)
+                : null);
+        notifyChanged();
+    }
+
+    public String getActiveProjectPath() {
+        return memoryStore.getActiveProjectScope();
     }
 
     public int importAllMemories(File source) throws IOException {

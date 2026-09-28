@@ -14,7 +14,14 @@ import com.github.axiomate.agentic.ide.config.ConfigManager;
 import com.github.axiomate.agentic.ide.config.IdeConfig;
 import com.github.axiomate.agentic.ide.config.ModelDefinition;
 import com.github.axiomate.agentic.ide.config.ProviderConfig;
+import com.github.axiomate.agentic.ide.plugins.SlashCommandRegistry;
+import com.github.axiomate.agentic.ide.plugins.SlashCommandRegistry.Dispatch;
+import com.github.axiomate.agentic.ide.plugins.SlashCommandRegistry.SlashCommand;
+import com.github.axiomate.agentic.ide.ui.IdeActions;
+import com.github.axiomate.agentic.ide.ui.util.ScrollablePanel;
+import com.github.axiomate.agentic.ide.ui.util.Toast;
 import com.github.axiomate.agentic.ide.ui.util.UIUtils;
+import com.github.axiomate.agentic.ide.ui.util.WrapLayout;
 import com.github.axiomate.agentic.ide.util.ProjectManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,13 +29,13 @@ import org.slf4j.LoggerFactory;
 import javax.swing.*;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
-import javax.swing.border.LineBorder;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -79,6 +86,11 @@ public class AIAgentPanel extends JPanel {
     private final TerminalPanel terminalPanel;
     private final FileMentionController fileMentionController;
 
+    private final SlashCommandCompletion slashCompletion;
+    private final List<Runnable> themeAppliers = new ArrayList<>();
+    private IdeActions ideActions = IdeActions.NONE;
+    private String displayedSessionId;
+
     private JPanel currentAssistantMessagePanel;
     private JTextArea currentAssistantTextArea;
     private StringBuilder currentStreamingBuffer;
@@ -88,19 +100,19 @@ public class AIAgentPanel extends JPanel {
         this.activeCodeSupplier = activeCodeSupplier;
         this.terminalPanel = terminalPanel;
         setLayout(new BorderLayout());
-        setBorder(new LineBorder(new Color(60, 60, 60), 1));
+        onTheme(() -> setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, UIUtils.borderColor())));
 
         // 1. Main Header Panel
         JPanel headerPanel = new JPanel(new BorderLayout(8, 0));
         headerPanel.setBorder(new EmptyBorder(8, 12, 6, 12));
-        headerPanel.setBackground(new Color(32, 34, 40));
+        onTheme(() -> headerPanel.setBackground(UIUtils.surface(2)));
 
         JPanel titleSubPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         titleSubPanel.setOpaque(false);
         JLabel iconLabel = new JLabel(UIUtils.createSparkleIcon(16, UIUtils.ACCENT_PURPLE));
         JLabel titleLabel = new JLabel("AXIOMATE AI");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
-        titleLabel.setForeground(Color.WHITE);
+        onTheme(() -> titleLabel.setForeground(UIUtils.foreground()));
 
         statusBadge = new JLabel("● Ready");
         statusBadge.setFont(new Font("SansSerif", Font.BOLD, 11));
@@ -114,26 +126,11 @@ public class AIAgentPanel extends JPanel {
         JPanel headerButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         headerButtons.setOpaque(false);
 
-        JButton importMemBtn = new JButton("📥 Import Memory");
-        importMemBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        importMemBtn.setContentAreaFilled(false);
-        importMemBtn.setBorderPainted(false);
-        importMemBtn.setFocusPainted(false);
-        importMemBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        importMemBtn.addActionListener(e -> {
-            terminalPanel.selectMemoryTab();
-            terminalPanel.getMemoryPanel().importMemories();
-        });
-
-        JButton clearBtn = new JButton("Clear");
-        clearBtn.setContentAreaFilled(false);
-        clearBtn.setBorderPainted(false);
-        clearBtn.setFocusPainted(false);
-        clearBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        clearBtn.addActionListener(e -> clearChat());
-
-        headerButtons.add(importMemBtn);
-        headerButtons.add(clearBtn);
+        JButton newChatBtn = UIUtils.iconButton(UIUtils.glyph(UIUtils.Glyph.PLUS, 16, null), "New agent session", e -> promptNewSession());
+        JButton moreBtn = UIUtils.iconButton(UIUtils.glyph(UIUtils.Glyph.MORE, 16, null), "More actions", null);
+        moreBtn.addActionListener(e -> buildOverflowMenu().show(moreBtn, 0, moreBtn.getHeight()));
+        headerButtons.add(newChatBtn);
+        headerButtons.add(moreBtn);
 
         headerPanel.add(titleSubPanel, BorderLayout.WEST);
         headerPanel.add(headerButtons, BorderLayout.EAST);
@@ -141,13 +138,13 @@ public class AIAgentPanel extends JPanel {
         // 2. Session Management Bar
         JPanel sessionBar = new JPanel(new BorderLayout(6, 0));
         sessionBar.setBorder(new EmptyBorder(4, 10, 4, 10));
-        sessionBar.setBackground(new Color(28, 30, 36));
+        onTheme(() -> sessionBar.setBackground(UIUtils.surface(1)));
 
-        JPanel sessionLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        JPanel sessionLeft = new JPanel(new WrapLayout(FlowLayout.LEFT, 6, 2));
         sessionLeft.setOpaque(false);
         JLabel sessLabel = new JLabel("Session:");
         sessLabel.setFont(new Font("SansSerif", Font.BOLD, 11));
-        sessLabel.setForeground(Color.LIGHT_GRAY);
+        onTheme(() -> sessLabel.setForeground(UIUtils.mutedForeground()));
         sessionLeft.add(sessLabel);
 
         sessionSelectorCombo = new JComboBox<>();
@@ -157,23 +154,27 @@ public class AIAgentPanel extends JPanel {
         sessionLeft.add(sessionSelectorCombo);
 
         newSessionBtn = new JButton("+ New");
+        newSessionBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         newSessionBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
         newSessionBtn.setToolTipText("Launch a new autonomous Agent Session");
         newSessionBtn.addActionListener(e -> promptNewSession());
         sessionLeft.add(newSessionBtn);
 
         renameSessionBtn = new JButton("Rename");
+        renameSessionBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         renameSessionBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
         renameSessionBtn.addActionListener(e -> promptRenameSession());
         sessionLeft.add(renameSessionBtn);
 
         closeSessionBtn = new JButton("✕");
+        closeSessionBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         closeSessionBtn.setFont(new Font("SansSerif", Font.BOLD, 11));
         closeSessionBtn.setToolTipText("Close current session");
         closeSessionBtn.addActionListener(e -> closeActiveSession());
         sessionLeft.add(closeSessionBtn);
 
-        loadSessionBtn = new JButton("📂 Sessions ▾");
+        loadSessionBtn = new JButton("Sessions ▾");
+        loadSessionBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         loadSessionBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
         loadSessionBtn.setToolTipText("Load, reload, or export/import project agent sessions");
         loadSessionBtn.addActionListener(e -> promptLoadOrImportSessions());
@@ -184,16 +185,16 @@ public class AIAgentPanel extends JPanel {
         // 3. Provider, Model & Token Tracking Bar
         JPanel controlBar = new JPanel();
         controlBar.setLayout(new BoxLayout(controlBar, BoxLayout.Y_AXIS));
-        controlBar.setBackground(new Color(24, 25, 30));
-        controlBar.setBorder(new CompoundBorder(new LineBorder(new Color(45, 45, 52), 1), new EmptyBorder(4, 10, 6, 10)));
+        controlBar.setOpaque(false);
+        controlBar.setBorder(new EmptyBorder(2, 2, 2, 2));
 
         // Line A: Provider & Model Selector + Auto Route
-        JPanel modelLine = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        JPanel modelLine = new JPanel(new WrapLayout(FlowLayout.LEFT, 6, 2));
         modelLine.setOpaque(false);
 
         JLabel provLabel = new JLabel("Provider:");
         provLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        provLabel.setForeground(Color.LIGHT_GRAY);
+        onTheme(() -> provLabel.setForeground(UIUtils.mutedForeground()));
         modelLine.add(provLabel);
 
         providerCombo = new JComboBox<>();
@@ -204,7 +205,7 @@ public class AIAgentPanel extends JPanel {
 
         JLabel modLabel = new JLabel("Model:");
         modLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        modLabel.setForeground(Color.LIGHT_GRAY);
+        onTheme(() -> modLabel.setForeground(UIUtils.mutedForeground()));
         modelLine.add(modLabel);
 
         modelCombo = new JComboBox<>();
@@ -236,7 +237,7 @@ public class AIAgentPanel extends JPanel {
 
         tokenUsageLabel = new JLabel("Tokens: 0 / 128,000 (0.0%)");
         tokenUsageLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        tokenUsageLabel.setForeground(new Color(180, 210, 240));
+        onTheme(() -> tokenUsageLabel.setForeground(UIUtils.mutedForeground()));
         tokenLeft.add(tokenUsageLabel);
 
         tokenProgressBar = new JProgressBar(0, 100);
@@ -246,7 +247,8 @@ public class AIAgentPanel extends JPanel {
         tokenProgressBar.setForeground(new Color(60, 180, 75));
         tokenLeft.add(tokenProgressBar);
 
-        compressBtn = new JButton("⚡ Compress (95%)");
+        compressBtn = new JButton("⚡ Compress");
+        compressBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         compressBtn.setFont(new Font("SansSerif", Font.PLAIN, 10));
         compressBtn.setToolTipText("Manually trigger 95% context compression utility to preserve context window");
         compressBtn.addActionListener(e -> triggerManualCompression());
@@ -258,7 +260,7 @@ public class AIAgentPanel extends JPanel {
         controlBar.add(tokenLine);
 
         // 4. Quick Action Chips Panel
-        JPanel chipsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 3));
+        JPanel chipsPanel = new JPanel(new WrapLayout(FlowLayout.LEFT, 4, 3));
         chipsPanel.setBorder(new EmptyBorder(2, 8, 4, 8));
 
         chipsPanel.add(createChip("⚡ Explain", "Explain this code in detail and highlight key logic"));
@@ -272,41 +274,44 @@ public class AIAgentPanel extends JPanel {
 
         // 5. Output Display Filtering & Visibility Bar
         JPanel outputDisplayBar = new JPanel(new BorderLayout(4, 0));
-        outputDisplayBar.setBorder(new CompoundBorder(new LineBorder(new Color(45, 48, 56), 1), new EmptyBorder(2, 6, 2, 6)));
-        outputDisplayBar.setBackground(new Color(24, 26, 32));
+        onTheme(() -> {
+            outputDisplayBar.setBorder(new CompoundBorder(BorderFactory.createMatteBorder(1, 0, 1, 0, UIUtils.borderColor()),
+                    new EmptyBorder(2, 6, 2, 6)));
+            outputDisplayBar.setBackground(UIUtils.surface(1));
+        });
 
-        JPanel filtersLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 1));
+        JPanel filtersLeft = new JPanel(new WrapLayout(FlowLayout.LEFT, 6, 1));
         filtersLeft.setOpaque(false);
 
         JLabel filterLabel = new JLabel("Output:");
         filterLabel.setFont(new Font("SansSerif", Font.BOLD, 10));
-        filterLabel.setForeground(new Color(160, 165, 180));
+        onTheme(() -> filterLabel.setForeground(UIUtils.mutedForeground()));
         filtersLeft.add(filterLabel);
 
         showToolCallsCheck = new JCheckBox("🔧 Requests", true);
         showToolCallsCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        showToolCallsCheck.setForeground(new Color(88, 166, 255));
+        onTheme(() -> showToolCallsCheck.setForeground(UIUtils.accentText(UIUtils.ACCENT_COLOR)));
         showToolCallsCheck.setToolTipText("Show or hide tool calling requests and input arguments");
         showToolCallsCheck.addActionListener(e -> applyDisplayFilters());
         filtersLeft.add(showToolCallsCheck);
 
         showToolResultsCheck = new JCheckBox("📥 Responses", true);
         showToolResultsCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        showToolResultsCheck.setForeground(new Color(126, 231, 135));
+        onTheme(() -> showToolResultsCheck.setForeground(UIUtils.accentText(UIUtils.SUCCESS_COLOR)));
         showToolResultsCheck.setToolTipText("Show or hide tool execution results and stdout");
         showToolResultsCheck.addActionListener(e -> applyDisplayFilters());
         filtersLeft.add(showToolResultsCheck);
 
         showThinkingCheck = new JCheckBox("🧠 Reasoning", true);
         showThinkingCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        showThinkingCheck.setForeground(new Color(210, 168, 255));
+        onTheme(() -> showThinkingCheck.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE)));
         showThinkingCheck.setToolTipText("Show or hide model thinking and reasoning blocks");
         showThinkingCheck.addActionListener(e -> applyDisplayFilters());
         filtersLeft.add(showThinkingCheck);
 
         showWalkthroughCheck = new JCheckBox("📝 Walkthrough", true);
         showWalkthroughCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        showWalkthroughCheck.setForeground(new Color(240, 136, 62));
+        onTheme(() -> showWalkthroughCheck.setForeground(UIUtils.accentText(UIUtils.WARNING_COLOR)));
         showWalkthroughCheck.setToolTipText("Show or hide assistant final walkthrough and answers");
         showWalkthroughCheck.addActionListener(e -> applyDisplayFilters());
         filtersLeft.add(showWalkthroughCheck);
@@ -321,18 +326,21 @@ public class AIAgentPanel extends JPanel {
 
         collapseAllBtn = new JButton("▴ Collapse All");
         collapseAllBtn.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        collapseAllBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         collapseAllBtn.setToolTipText("Collapse all collapsible bubbles");
         collapseAllBtn.addActionListener(e -> collapseAllCards());
         actionsRight.add(collapseAllBtn);
 
         expandAllBtn = new JButton("▾ Expand All");
         expandAllBtn.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        expandAllBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         expandAllBtn.setToolTipText("Expand all collapsible bubbles");
         expandAllBtn.addActionListener(e -> expandAllCards());
         actionsRight.add(expandAllBtn);
 
         toggleCategoriesBtn = new JButton("▾ Categories");
         toggleCategoriesBtn.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        toggleCategoriesBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         toggleCategoriesBtn.setToolTipText("Expand or collapse specific output categories");
         toggleCategoriesBtn.addActionListener(e -> showCategoriesToggleMenu(toggleCategoriesBtn));
         actionsRight.add(toggleCategoriesBtn);
@@ -349,7 +357,7 @@ public class AIAgentPanel extends JPanel {
         add(topContainer, BorderLayout.NORTH);
 
         // 5. Chat Messages Container
-        chatBox = new JPanel();
+        chatBox = new ScrollablePanel(null); // tracks the viewport width so bubbles wrap instead of overflowing
         chatBox.setLayout(new BoxLayout(chatBox, BoxLayout.Y_AXIS));
         chatBox.setBorder(new EmptyBorder(8, 8, 8, 8));
 
@@ -363,7 +371,7 @@ public class AIAgentPanel extends JPanel {
         JPanel inputPanel = new JPanel();
         inputPanel.setLayout(new BoxLayout(inputPanel, BoxLayout.Y_AXIS));
         inputPanel.setBorder(new EmptyBorder(6, 8, 8, 8));
-        inputPanel.setBackground(new Color(24, 25, 30));
+        onTheme(() -> inputPanel.setBackground(UIUtils.surface(1)));
 
         includeContextCheck = new JCheckBox("Active File Context", true);
         includeContextCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
@@ -378,9 +386,11 @@ public class AIAgentPanel extends JPanel {
         inputArea.setWrapStyleWord(true);
         inputArea.setFont(new Font("SansSerif", Font.PLAIN, 13));
         inputArea.setBorder(new EmptyBorder(6, 6, 6, 6));
-        inputArea.setToolTipText("Type your prompt... Type '@' to mention and inject files from the workspace");
+        inputArea.setToolTipText("Type your prompt... Type '@' to mention files, '/' for slash commands");
+        inputArea.putClientProperty("JTextField.placeholderText", "Ask Axiomate…  @ mention files · / commands · Ctrl+Enter to send");
 
         fileMentionController = new FileMentionController(inputArea);
+        slashCompletion = new SlashCommandCompletion(inputArea);
 
         inputArea.addKeyListener(new KeyAdapter() {
             @Override
@@ -434,8 +444,19 @@ public class AIAgentPanel extends JPanel {
         add(inputPanel, BorderLayout.SOUTH);
 
         // Register session and configuration change listeners
-        SessionManager.getInstance().addSessionChangeListener(this::refreshSessionUi);
+        SessionManager.getInstance().addSessionChangeListener(() -> {
+            refreshSessionUi();
+            AgentSession active = SessionManager.getInstance().getActiveSession();
+            if (active != null && !active.getId().equals(displayedSessionId)) {
+                reloadChatFromSession();
+            }
+        });
         ConfigManager.getInstance().addListener(updatedCfg -> refreshSessionUi());
+        UIUtils.addThemeListener(() -> {
+            themeAppliers.forEach(Runnable::run);
+            reloadChatFromSession();
+        });
+        registerBuiltinCommands();
 
         // Initial UI population
         refreshSessionUi();
@@ -682,7 +703,10 @@ public class AIAgentPanel extends JPanel {
 
     public void reloadChatFromSession() {
         chatBox.removeAll();
+        currentAssistantMessagePanel = null;
+        currentAssistantTextArea = null;
         AgentSession session = SessionManager.getInstance().getActiveSession();
+        displayedSessionId = session != null ? session.getId() : null;
         if (session == null || session.getMessages().isEmpty()) {
             addWelcomeMessage();
         } else {
@@ -891,10 +915,30 @@ public class AIAgentPanel extends JPanel {
             }
         });
 
+        JMenuItem duplicateItem = new JMenuItem("⧉ Duplicate Active Session");
+        duplicateItem.addActionListener(e -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null) SessionManager.getInstance().duplicateSession(s.getId());
+        });
+        JMenuItem markdownItem = new JMenuItem("📝 Export Active Session as Markdown…");
+        markdownItem.addActionListener(e -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null) SessionsPanel.exportMarkdown(this, s);
+        });
+        JMenuItem externalItem = new JMenuItem("⤓ Import from Claude Code / Codex…");
+        externalItem.addActionListener(e -> ideActions.openExternalSessionImport());
+        JMenuItem managerItem = new JMenuItem("🗂 Session Manager (All Projects)…");
+        managerItem.addActionListener(e -> ideActions.openSessionManager());
+
+        menu.add(duplicateItem);
+        menu.add(markdownItem);
+        menu.addSeparator();
         menu.add(reloadItem);
+        menu.add(managerItem);
         menu.addSeparator();
         menu.add(exportItem);
         menu.add(importItem);
+        menu.add(externalItem);
         menu.show(loadSessionBtn, 0, loadSessionBtn.getHeight());
     }
 
@@ -968,6 +1012,15 @@ public class AIAgentPanel extends JPanel {
         updateTokenDisplay();
     }
 
+    /**
+     * Puts text into the prompt box without sending it (e.g. "/review " from the command palette).
+     */
+    public void prefillPrompt(String text) {
+        inputArea.setText(text);
+        inputArea.setCaretPosition(inputArea.getDocument().getLength());
+        inputArea.requestFocusInWindow();
+    }
+
     public void sendPromptDirectly(String prompt) {
         inputArea.setText(prompt);
         submitPrompt();
@@ -976,6 +1029,24 @@ public class AIAgentPanel extends JPanel {
     private void submitPrompt() {
         String prompt = inputArea.getText().trim();
         if (prompt.isEmpty()) return;
+
+        Dispatch dispatch = SlashCommandRegistry.getInstance().dispatch(prompt);
+        switch (dispatch.outcome()) {
+            case EXECUTED -> {
+                inputArea.setText("");
+                return;
+            }
+            case UNKNOWN -> {
+                appendSystemBubble("Unknown command: " + prompt.split("\\s+")[0] + "\nType /help to list available slash commands.");
+                return;
+            }
+            case EXPANDED -> {
+                appendSystemBubble("↳ /" + dispatch.command().name() + " expanded (" + dispatch.command().source() + ")");
+                prompt = dispatch.prompt();
+            }
+            default -> {
+            }
+        }
 
         AIAgentService agentService = AgentManager.getInstance().getActiveService();
         if (agentService.isBusy()) {
@@ -1093,7 +1164,7 @@ public class AIAgentPanel extends JPanel {
     private JButton createCollapseToggleButton(boolean startCollapsed) {
         JButton btn = new JButton(startCollapsed ? "▾ Expand" : "▴ Collapse");
         btn.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        btn.setForeground(new Color(160, 165, 180));
+        btn.setForeground(UIUtils.mutedForeground());
         btn.setContentAreaFilled(false);
         btn.setBorderPainted(false);
         btn.setFocusPainted(false);
@@ -1103,20 +1174,19 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void appendUserBubble(String text) {
-        JPanel inner = new JPanel(new BorderLayout());
-        inner.setBackground(new Color(37, 50, 75));
+        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.ACCENT_COLOR, 0.16f), null);
         inner.setBorder(new EmptyBorder(8, 12, 8, 12));
 
         JLabel header = new JLabel("You");
         header.setFont(new Font("SansSerif", Font.BOLD, 11));
-        header.setForeground(UIUtils.ACCENT_COLOR);
+        header.setForeground(UIUtils.accentText(UIUtils.ACCENT_COLOR));
 
         JTextArea area = createBubbleTextArea(text);
         inner.add(header, BorderLayout.NORTH);
         inner.add(area, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.USER, inner, null);
-        card.setBorder(new EmptyBorder(6, 6, 6, 6));
+        card.setBorder(new EmptyBorder(6, 36, 6, 6));
         card.add(inner, BorderLayout.CENTER);
 
         chatBox.add(card);
@@ -1126,8 +1196,7 @@ public class AIAgentPanel extends JPanel {
 
     private void ensureAssistantBubble() {
         if (currentAssistantMessagePanel == null) {
-            JPanel inner = new JPanel(new BorderLayout());
-            inner.setBackground(new Color(36, 38, 44));
+            JPanel inner = roundedPanel(UIUtils.surface(2), UIUtils.borderColor());
             inner.setBorder(new EmptyBorder(8, 12, 8, 12));
 
             AgentSession session = SessionManager.getInstance().getActiveSession();
@@ -1141,11 +1210,11 @@ public class AIAgentPanel extends JPanel {
 
             JLabel header = new JLabel(title + " — Walkthrough / Response", UIUtils.createSparkleIcon(14, UIUtils.ACCENT_PURPLE), JLabel.LEFT);
             header.setFont(new Font("SansSerif", Font.BOLD, 11));
-            header.setForeground(UIUtils.ACCENT_PURPLE);
+            header.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
 
             JButton toggle = createCollapseToggleButton(false);
 
-            headerBar.add(header, BorderLayout.WEST);
+            headerBar.add(header, BorderLayout.CENTER);
             headerBar.add(toggle, BorderLayout.EAST);
 
             currentAssistantTextArea = createBubbleTextArea("");
@@ -1182,9 +1251,7 @@ public class AIAgentPanel extends JPanel {
      * Renders the model's thinking/reasoning in a styled dark-purple bubble in the chat.
      */
     private void appendThinkingBubble(String thought) {
-        JPanel inner = new JPanel(new BorderLayout());
-        inner.setBackground(new Color(32, 26, 48));
-        inner.setBorder(new LineBorder(new Color(110, 80, 180), 1));
+        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.ACCENT_PURPLE, 0.10f), UIUtils.tint(UIUtils.ACCENT_PURPLE, 0.45f));
 
         JPanel headerBar = new JPanel(new BorderLayout());
         headerBar.setOpaque(false);
@@ -1192,11 +1259,11 @@ public class AIAgentPanel extends JPanel {
 
         JLabel header = new JLabel("🧠  Model Reasoning  (thinking block)");
         header.setFont(new Font("SansSerif", Font.BOLD, 10));
-        header.setForeground(new Color(210, 168, 255));
+        header.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
 
         JButton toggle = createCollapseToggleButton(true);
 
-        headerBar.add(header, BorderLayout.WEST);
+        headerBar.add(header, BorderLayout.CENTER);
         headerBar.add(toggle, BorderLayout.EAST);
 
         String display = thought;
@@ -1205,7 +1272,7 @@ public class AIAgentPanel extends JPanel {
         }
         JTextArea area = createBubbleTextArea(display);
         area.setFont(new Font("SansSerif", Font.ITALIC, 12));
-        area.setForeground(new Color(215, 195, 245));
+        area.setForeground(UIUtils.blend(UIUtils.foreground(), UIUtils.ACCENT_PURPLE, 0.25f));
         area.setBorder(new EmptyBorder(4, 8, 6, 8));
 
         JPanel contentPanel = new JPanel(new BorderLayout());
@@ -1242,17 +1309,15 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void appendSystemBubble(String text) {
-        JPanel inner = new JPanel(new BorderLayout());
-        inner.setBackground(new Color(45, 38, 55));
-        inner.setBorder(new LineBorder(UIUtils.ACCENT_PURPLE, 1));
+        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.ACCENT_PURPLE, 0.14f), UIUtils.tint(UIUtils.ACCENT_PURPLE, 0.6f));
 
-        JLabel header = new JLabel("⚡ System Notification / Context Compression");
+        JLabel header = new JLabel("⚡ System");
         header.setFont(new Font("SansSerif", Font.BOLD, 10));
-        header.setForeground(new Color(220, 180, 255));
+        header.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
         header.setBorder(new EmptyBorder(4, 8, 2, 8));
 
         JTextArea area = createBubbleTextArea(text);
-        area.setForeground(new Color(230, 220, 245));
+        area.setForeground(UIUtils.foreground());
         area.setBorder(new EmptyBorder(2, 8, 6, 8));
 
         inner.add(header, BorderLayout.NORTH);
@@ -1268,9 +1333,7 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void appendToolRequestBubble(String toolName, String input) {
-        JPanel inner = new JPanel(new BorderLayout());
-        inner.setBackground(new Color(24, 28, 38));
-        inner.setBorder(new LineBorder(new Color(56, 90, 140), 1));
+        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.ACCENT_COLOR, 0.07f), UIUtils.tint(UIUtils.ACCENT_COLOR, 0.4f));
 
         JPanel headerBar = new JPanel(new BorderLayout());
         headerBar.setOpaque(false);
@@ -1278,16 +1341,16 @@ public class AIAgentPanel extends JPanel {
 
         JLabel header = new JLabel("🔧  Tool Call: " + toolName);
         header.setFont(new Font("Monospaced", Font.BOLD, 11));
-        header.setForeground(new Color(88, 166, 255));
+        header.setForeground(UIUtils.accentText(UIUtils.ACCENT_COLOR));
 
         JButton toggle = createCollapseToggleButton(true);
 
-        headerBar.add(header, BorderLayout.WEST);
+        headerBar.add(header, BorderLayout.CENTER);
         headerBar.add(toggle, BorderLayout.EAST);
 
         JTextArea area = createBubbleTextArea(input != null ? input : "{}");
         area.setFont(new Font("Consolas", Font.PLAIN, 11));
-        area.setForeground(new Color(190, 220, 255));
+        area.setForeground(UIUtils.blend(UIUtils.foreground(), UIUtils.ACCENT_COLOR, 0.2f));
         area.setBorder(new EmptyBorder(4, 8, 6, 8));
 
         JPanel contentPanel = new JPanel(new BorderLayout());
@@ -1316,9 +1379,7 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void appendToolResultBubble(String toolName, String output) {
-        JPanel inner = new JPanel(new BorderLayout());
-        inner.setBackground(new Color(22, 32, 26));
-        inner.setBorder(new LineBorder(new Color(40, 100, 60), 1));
+        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.SUCCESS_COLOR, 0.07f), UIUtils.tint(UIUtils.SUCCESS_COLOR, 0.4f));
 
         JPanel headerBar = new JPanel(new BorderLayout());
         headerBar.setOpaque(false);
@@ -1327,16 +1388,16 @@ public class AIAgentPanel extends JPanel {
         int lines = (output != null) ? output.split("\r\n|\r|\n").length : 0;
         JLabel header = new JLabel("📥  Tool Result: " + toolName + " (" + lines + " lines)");
         header.setFont(new Font("Monospaced", Font.BOLD, 11));
-        header.setForeground(new Color(126, 231, 135));
+        header.setForeground(UIUtils.accentText(UIUtils.SUCCESS_COLOR));
 
         JButton toggle = createCollapseToggleButton(true);
 
-        headerBar.add(header, BorderLayout.WEST);
+        headerBar.add(header, BorderLayout.CENTER);
         headerBar.add(toggle, BorderLayout.EAST);
 
         JTextArea area = createBubbleTextArea(output != null ? output : "(empty)");
         area.setFont(new Font("Consolas", Font.PLAIN, 11));
-        area.setForeground(new Color(185, 235, 195));
+        area.setForeground(UIUtils.blend(UIUtils.foreground(), UIUtils.SUCCESS_COLOR, 0.2f));
         area.setBorder(new EmptyBorder(4, 8, 6, 8));
 
         JPanel contentPanel = new JPanel(new BorderLayout());
@@ -1380,8 +1441,120 @@ public class AIAgentPanel extends JPanel {
         area.setWrapStyleWord(true);
         area.setOpaque(false);
         area.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        area.setForeground(new Color(230, 230, 230));
+        area.setForeground(UIUtils.foreground());
         return area;
+    }
+
+    /**
+     * Registers a color assignment that is applied now and re-applied whenever the theme changes.
+     */
+    private void onTheme(Runnable applier) {
+        themeAppliers.add(applier);
+        applier.run();
+    }
+
+    /** A panel painted with rounded corners, used for chat bubbles. */
+    private static JPanel roundedPanel(Color background, Color border) {
+        JPanel p = new JPanel(new BorderLayout()) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(background);
+                g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
+                if (border != null) {
+                    g2.setColor(border);
+                    g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
+                }
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        p.setOpaque(false);
+        return p;
+    }
+
+    /**
+     * Connects the panel to frame-level actions (session manager, agent import/export, plugins).
+     */
+    public void setIdeActions(IdeActions actions) {
+        this.ideActions = actions != null ? actions : IdeActions.NONE;
+    }
+
+    private JPopupMenu buildOverflowMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        menu.add(menuItem("Import memory from coding agents…", () -> ideActions.openMemoryImport()));
+        menu.add(menuItem("Export memory to coding agents…", () -> ideActions.openMemoryExport()));
+        menu.add(menuItem("Import memory from file…", () -> {
+            terminalPanel.selectMemoryTab();
+            terminalPanel.getMemoryPanel().importMemories();
+        }));
+        menu.addSeparator();
+        menu.add(menuItem("Import sessions from Claude Code / Codex…", () -> ideActions.openExternalSessionImport()));
+        menu.add(menuItem("Export session as Markdown…", () -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null) SessionsPanel.exportMarkdown(this, s);
+        }));
+        menu.add(menuItem("Session Manager (all projects)…", () -> ideActions.openSessionManager()));
+        menu.addSeparator();
+        menu.add(menuItem("Plugins…", () -> ideActions.openPluginManager(1)));
+        menu.add(menuItem("Slash commands…", () -> ideActions.openPluginManager(3)));
+        menu.addSeparator();
+        menu.add(menuItem("Clear conversation", this::clearChat));
+        return menu;
+    }
+
+    private static JMenuItem menuItem(String text, Runnable action) {
+        JMenuItem item = new JMenuItem(text);
+        item.addActionListener(e -> action.run());
+        return item;
+    }
+
+    /**
+     * Built-in chat commands. Plugins and other agents' command folders add prompt commands on top.
+     */
+    private void registerBuiltinCommands() {
+        SlashCommandRegistry reg = SlashCommandRegistry.getInstance();
+        reg.register(new SlashCommand("help", "List available slash commands", null, "builtin", args -> {
+            StringBuilder sb = new StringBuilder("Available slash commands:\n");
+            for (SlashCommand c : reg.all()) {
+                sb.append("  /").append(c.name()).append(" — ").append(c.description())
+                        .append("builtin".equals(c.source()) ? "" : "  [" + c.source() + "]").append('\n');
+            }
+            appendSystemBubble(sb.toString().stripTrailing());
+        }));
+        reg.register(new SlashCommand("clear", "Clear the current conversation", null, "builtin", args -> clearChat()));
+        reg.register(new SlashCommand("compact", "Compress the conversation context now", null, "builtin",
+                args -> triggerManualCompression()));
+        reg.register(new SlashCommand("new", "Start a new agent session: /new [name]", null, "builtin", args -> {
+            IdeConfig cfg = ConfigManager.getInstance().getConfig();
+            String name = args.isBlank() ? "Agent Session " + (SessionManager.getInstance().getSessions().size() + 1) : args.trim();
+            SessionManager.getInstance().createSession(name, cfg.getActiveProviderId(), cfg.getActiveModelId(), cfg.isAutoRoutingEnabled());
+        }));
+        reg.register(new SlashCommand("rename", "Rename the current session: /rename <name>", null, "builtin", args -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null && !args.isBlank()) SessionManager.getInstance().renameSession(s.getId(), args.trim());
+        }));
+        reg.register(new SlashCommand("fork", "Duplicate the current session", null, "builtin", args -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null) SessionManager.getInstance().duplicateSession(s.getId());
+        }));
+        reg.register(new SlashCommand("export", "Export the current session as Markdown", null, "builtin", args -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null) SessionsPanel.exportMarkdown(this, s);
+        }));
+        reg.register(new SlashCommand("memory", "Show agent memory relevant to a topic: /memory [topic]", null, "builtin", args -> {
+            terminalPanel.selectMemoryTab();
+            String ctx = MemoryManager.getInstance().getMemoryStore().getRelevantContext(args);
+            appendSystemBubble(ctx.isBlank() ? "No memories found." : ctx.strip());
+        }));
+        reg.register(new SlashCommand("sessions", "Open the sessions sidebar", null, "builtin",
+                args -> ideActions.showSidebarView(IdeActions.VIEW_SESSIONS)));
+        reg.register(new SlashCommand("plugins", "Open the Plugin Manager", null, "builtin", args -> ideActions.openPluginManager(0)));
+        reg.register(new SlashCommand("import-memory", "Import memory from Claude Code, Codex, Cursor, Antigravity…", null,
+                "builtin", args -> ideActions.openMemoryImport()));
+        reg.register(new SlashCommand("export-memory", "Export memory to other coding agents", null, "builtin",
+                args -> ideActions.openMemoryExport()));
     }
 
     private void scrollToBottom() {

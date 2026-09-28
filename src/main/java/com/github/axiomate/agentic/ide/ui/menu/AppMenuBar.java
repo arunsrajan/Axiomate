@@ -8,7 +8,14 @@ import com.github.axiomate.agentic.ide.ui.components.TerminalPanel;
 import com.github.axiomate.agentic.ide.ui.util.UIUtils;
 import com.github.axiomate.agentic.ide.util.ProjectManager;
 
+import com.github.axiomate.agentic.ide.config.ProjectState;
+import com.github.axiomate.agentic.ide.config.ProjectStateManager;
+import com.github.axiomate.agentic.ide.ui.IdeActions;
+import com.github.axiomate.agentic.ide.ui.MainFrame;
+
 import javax.swing.*;
+import javax.swing.event.MenuEvent;
+import javax.swing.event.MenuListener;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.io.File;
@@ -69,6 +76,41 @@ public class AppMenuBar extends JMenuBar {
             }
         });
 
+        JMenu recentMenu = new JMenu("Open Recent Project");
+        recentMenu.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent e) {
+                recentMenu.removeAll();
+                File current = ProjectManager.getInstance().getCurrentProjectDirectory();
+                for (ProjectState p : ProjectStateManager.getInstance().getKnownProjects()) {
+                    File dir = new File(p.getProjectPath());
+                    if (!dir.isDirectory() || (current != null && ProjectStateManager.normalizePath(current).equals(p.getProjectPath()))) {
+                        continue;
+                    }
+                    int count = p.getSessions().size();
+                    JMenuItem item = new JMenuItem(p.getProjectName() + "   (" + count + " session" + (count == 1 ? "" : "s") + ")");
+                    item.setToolTipText(p.getProjectPath());
+                    item.addActionListener(ev -> {
+                        if (mainFrame instanceof MainFrame mf) mf.openProjectDirectory(dir);
+                    });
+                    recentMenu.add(item);
+                }
+                if (recentMenu.getItemCount() == 0) {
+                    JMenuItem none = new JMenuItem("No other recent projects");
+                    none.setEnabled(false);
+                    recentMenu.add(none);
+                }
+            }
+
+            @Override
+            public void menuDeselected(MenuEvent e) {
+            }
+
+            @Override
+            public void menuCanceled(MenuEvent e) {
+            }
+        });
+
         JMenuItem closeProjectItem = new JMenuItem("Close Project Folder");
         closeProjectItem.addActionListener(e -> {
             if (mainFrame instanceof com.github.axiomate.agentic.ide.ui.MainFrame mf) {
@@ -102,6 +144,7 @@ public class AppMenuBar extends JMenuBar {
         fileMenu.add(newFileItem);
         fileMenu.add(openFileItem);
         fileMenu.add(openProjectItem);
+        fileMenu.add(recentMenu);
         fileMenu.add(closeProjectItem);
         fileMenu.addSeparator();
         fileMenu.add(saveItem);
@@ -222,6 +265,14 @@ public class AppMenuBar extends JMenuBar {
             }
         });
 
+        JMenuItem importAgentsItem = new JMenuItem("Import from Coding Agents (Claude Code, Codex, Cursor, Antigravity…)...");
+        importAgentsItem.addActionListener(e -> actions(mainFrame).openMemoryImport());
+        JMenuItem exportAgentsItem = new JMenuItem("Export to Coding Agents (CLAUDE.md, AGENTS.md, .cursor/rules…)...");
+        exportAgentsItem.addActionListener(e -> actions(mainFrame).openMemoryExport());
+
+        memorySubMenu.add(importAgentsItem);
+        memorySubMenu.add(exportAgentsItem);
+        memorySubMenu.addSeparator();
         memorySubMenu.add(importMemItem);
         memorySubMenu.add(exportMemItem);
         memorySubMenu.addSeparator();
@@ -268,7 +319,31 @@ public class AppMenuBar extends JMenuBar {
             }
         });
 
+        JMenuItem sessionManagerItem = new JMenuItem("Session Manager (All Projects)...");
+        sessionManagerItem.addActionListener(e -> actions(mainFrame).openSessionManager());
+        JMenuItem showSessionsItem = new JMenuItem("Show Project Sessions");
+        showSessionsItem.addActionListener(e -> actions(mainFrame).showSidebarView(IdeActions.VIEW_SESSIONS));
+        JMenuItem importExternalItem = new JMenuItem("Import Sessions from Claude Code / Codex...");
+        importExternalItem.addActionListener(e -> actions(mainFrame).openExternalSessionImport());
+        JMenuItem duplicateItem = new JMenuItem("Duplicate Active Session");
+        duplicateItem.addActionListener(e -> {
+            var sm = com.github.axiomate.agentic.ide.agent.session.SessionManager.getInstance();
+            if (sm.getActiveSession() != null) sm.duplicateSession(sm.getActiveSession().getId());
+        });
+        JMenuItem exportMdItem = new JMenuItem("Export Active Session as Markdown...");
+        exportMdItem.addActionListener(e -> {
+            var active = com.github.axiomate.agentic.ide.agent.session.SessionManager.getInstance().getActiveSession();
+            if (active != null) com.github.axiomate.agentic.ide.ui.components.SessionsPanel.exportMarkdown(mainFrame, active);
+        });
+
         sessionsSubMenu.add(newSessionItem);
+        sessionsSubMenu.add(duplicateItem);
+        sessionsSubMenu.add(showSessionsItem);
+        sessionsSubMenu.add(sessionManagerItem);
+        sessionsSubMenu.addSeparator();
+        sessionsSubMenu.add(importExternalItem);
+        sessionsSubMenu.add(exportMdItem);
+        sessionsSubMenu.addSeparator();
         sessionsSubMenu.add(compressContextItem);
 
         JMenuItem settingsItem = new JMenuItem("Configure Providers, Models & Routing...", UIUtils.createGearIcon(14, null));
@@ -291,7 +366,7 @@ public class AppMenuBar extends JMenuBar {
 
         // 3.5. AGENT FEATURES MENU
         JMenu featuresMenu = new JMenu("Agent Features");
-        featuresMenu.setMnemonic(KeyEvent.VK_A);
+        featuresMenu.setMnemonic(KeyEvent.VK_G);
 
         JMenuItem planCanvasItem = new JMenuItem("📋 Living Plan Canvas & Architecture Preview...");
         planCanvasItem.addActionListener(e -> new com.github.axiomate.agentic.ide.features.ui.LivingPlanDialog(mainFrame).setVisible(true));
@@ -329,6 +404,36 @@ public class AppMenuBar extends JMenuBar {
         featuresMenu.add(analyticsItem);
         add(featuresMenu);
 
+        // 3.6. PLUGINS MENU
+        JMenu pluginsMenu = new JMenu("Plugins");
+        pluginsMenu.setMnemonic(KeyEvent.VK_L);
+
+        JMenuItem pluginManagerItem = new JMenuItem("Plugin Manager...", UIUtils.glyph(UIUtils.Glyph.PLUGINS, 14, UIUtils.ACCENT_COLOR));
+        pluginManagerItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_X, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        pluginManagerItem.addActionListener(e -> actions(mainFrame).openPluginManager(1));
+        JMenuItem marketplaceItem = new JMenuItem("Browse Marketplace...");
+        marketplaceItem.addActionListener(e -> actions(mainFrame).openPluginManager(0));
+        JMenuItem installFromItem = new JMenuItem("Install from Folder, ZIP or URL...");
+        installFromItem.addActionListener(e -> actions(mainFrame).openPluginManager(2));
+        JMenuItem commandsItem = new JMenuItem("Slash Commands...");
+        commandsItem.addActionListener(e -> actions(mainFrame).openPluginManager(3));
+        JMenuItem importMcpItem = new JMenuItem("Import MCP Servers from Coding Agents...");
+        importMcpItem.addActionListener(e -> actions(mainFrame).openMcpInterop(false));
+        JMenuItem exportMcpItem = new JMenuItem("Export MCP Servers to Coding Agents...");
+        exportMcpItem.addActionListener(e -> actions(mainFrame).openMcpInterop(true));
+        JMenuItem reloadCmdsItem = new JMenuItem("Reload Commands from Coding Agents");
+        reloadCmdsItem.addActionListener(e -> actions(mainFrame).reloadAgentCommands());
+
+        pluginsMenu.add(pluginManagerItem);
+        pluginsMenu.add(marketplaceItem);
+        pluginsMenu.add(installFromItem);
+        pluginsMenu.add(commandsItem);
+        pluginsMenu.addSeparator();
+        pluginsMenu.add(importMcpItem);
+        pluginsMenu.add(exportMcpItem);
+        pluginsMenu.add(reloadCmdsItem);
+        add(pluginsMenu);
+
         // 4. VIEW MENU
         JMenu viewMenu = new JMenu("View");
         viewMenu.setMnemonic(KeyEvent.VK_V);
@@ -349,9 +454,21 @@ public class AppMenuBar extends JMenuBar {
         viewMemoryTabItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_4, InputEvent.ALT_DOWN_MASK));
         viewMemoryTabItem.addActionListener(e -> terminalPanel.selectMemoryTab());
 
+        JMenuItem paletteItem = new JMenuItem("Command Palette...", UIUtils.glyph(UIUtils.Glyph.COMMAND, 14, null));
+        paletteItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_K, InputEvent.CTRL_DOWN_MASK));
+        paletteItem.addActionListener(e -> actions(mainFrame).openCommandPalette());
+        JMenuItem viewSessionsItem = new JMenuItem("Show Sessions Sidebar");
+        viewSessionsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_5, InputEvent.ALT_DOWN_MASK));
+        viewSessionsItem.addActionListener(e -> actions(mainFrame).showSidebarView(IdeActions.VIEW_SESSIONS));
+        JMenuItem viewSyncItem = new JMenuItem("Show Agent Sync Sidebar");
+        viewSyncItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_6, InputEvent.ALT_DOWN_MASK));
+        viewSyncItem.addActionListener(e -> actions(mainFrame).showSidebarView(IdeActions.VIEW_AGENT_SYNC));
+        JMenuItem viewPluginsItem = new JMenuItem("Show Plugins Sidebar");
+        viewPluginsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_7, InputEvent.ALT_DOWN_MASK));
+        viewPluginsItem.addActionListener(e -> actions(mainFrame).showSidebarView(IdeActions.VIEW_PLUGINS));
+
         JMenu themeSubMenu = new JMenu("Themes");
-        String[] themes = {"FlatLaf Darcula", "FlatLaf Dark", "FlatLaf Light", "IntelliJ Light", "One Dark"};
-        for (String th : themes) {
+        for (String th : UIUtils.THEMES) {
             JMenuItem ti = new JMenuItem(th);
             ti.addActionListener(e -> {
                 IdeConfig cfg = ConfigManager.getInstance().getConfig();
@@ -380,7 +497,12 @@ public class AppMenuBar extends JMenuBar {
             editorPanel.setEditorFontSize(cfg.getFontSize());
         });
 
+        viewMenu.add(paletteItem);
+        viewMenu.addSeparator();
         viewMenu.add(toggleExpItem);
+        viewMenu.add(viewSessionsItem);
+        viewMenu.add(viewSyncItem);
+        viewMenu.add(viewPluginsItem);
         viewMenu.add(toggleAgentItem);
         viewMenu.add(toggleTermItem);
         viewMenu.add(viewMemoryTabItem);
@@ -433,6 +555,10 @@ public class AppMenuBar extends JMenuBar {
         add(helpMenu);
     }
 
+    private static IdeActions actions(JFrame frame) {
+        return frame instanceof IdeActions a ? a : IdeActions.NONE;
+    }
+
     private void runCommandInTerminal(String cmd, TerminalPanel terminalPanel) {
         new Thread(() -> {
             try {
@@ -462,6 +588,10 @@ public class AppMenuBar extends JMenuBar {
         String msg = """
                 Axiomate AI Agent IDE - Keyboard Shortcuts:
                 
+                - Command Palette:         Ctrl + K  /  F1
+                - Plugin Manager:          Ctrl + Shift + X
+                - Sessions / Agent Sync / Plugins sidebar:  Alt + 5 / 6 / 7
+                - Slash commands in chat:  type /  (e.g. /help, /review, /new)
                 - Run Agent Prompt:        Ctrl + Enter
                 - Import All Memory:       Ctrl + Shift + M
                 - Explain Code:            Ctrl + Shift + E
@@ -491,6 +621,10 @@ public class AppMenuBar extends JMenuBar {
                 Features:
                 - Agentic AI Memory (Working, Long-Term, Episodic, Project Rules)
                 - Import & Export All Memory from JSON/Markdown/Directories
+                - Memory, MCP & session interop with Claude Code, Codex, Cursor,
+                  Antigravity, Gemini CLI, Windsurf, Copilot, Cline, Roo Code & Kiro
+                - Per-project session management across all your projects
+                - Plugins: marketplace, Claude Code plugins, folder/ZIP/URL install
                 - Autonomous Tool Calling (File System, Terminal, Code Refactor, Memory)
                 - RSyntaxTextArea Code Editor with Syntax Highlighting
                 - Modern FlatLaf IntelliJ & Dark UI Themes

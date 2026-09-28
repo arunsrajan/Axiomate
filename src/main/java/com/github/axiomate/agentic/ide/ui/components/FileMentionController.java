@@ -66,14 +66,12 @@ public class FileMentionController {
         this.inputArea = inputArea;
 
         this.popupMenu = new JPopupMenu();
-        this.popupMenu.setBorder(new LineBorder(new Color(75, 80, 95), 1));
+        this.popupMenu.setBorder(new LineBorder(UIUtils.borderColor(), 1));
         this.popupMenu.setFocusable(false);
 
         this.listModel = new DefaultListModel<>();
         this.fileList = new JList<>(listModel);
         this.fileList.setFont(new Font("Consolas", Font.PLAIN, 12));
-        this.fileList.setBackground(new Color(30, 32, 38));
-        this.fileList.setForeground(new Color(225, 230, 240));
         this.fileList.setSelectionBackground(UIUtils.ACCENT_COLOR);
         this.fileList.setSelectionForeground(Color.WHITE);
         this.fileList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);

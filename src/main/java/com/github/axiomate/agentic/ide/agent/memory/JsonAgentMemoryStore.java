@@ -26,6 +26,7 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
     private final ObjectMapper mapper;
     private final List<MemoryItem> memories = new CopyOnWriteArrayList<>();
     private final Path storagePath;
+    private volatile String activeProjectScope;
 
     public JsonAgentMemoryStore() {
         this.mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
@@ -89,6 +90,47 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
     }
 
     @Override
+    public synchronized void addMemories(Collection<MemoryItem> items) {
+        if (items == null || items.isEmpty()) return;
+        for (MemoryItem item : items) {
+            if (item == null) continue;
+            memories.removeIf(m -> m.getId().equals(item.getId()));
+            memories.add(item);
+        }
+        save();
+    }
+
+    @Override
+    public synchronized int removeMemoriesBySource(String source) {
+        if (source == null) return 0;
+        int before = memories.size();
+        memories.removeIf(m -> source.equals(m.getSource()));
+        int removed = before - memories.size();
+        if (removed > 0) {
+            save();
+        }
+        return removed;
+    }
+
+    @Override
+    public void setActiveProjectScope(String projectPath) {
+        this.activeProjectScope = (projectPath == null || projectPath.isBlank()) ? null : projectPath;
+    }
+
+    @Override
+    public String getActiveProjectScope() {
+        return activeProjectScope;
+    }
+
+    private List<MemoryItem> scopedMemories() {
+        String scope = activeProjectScope;
+        if (scope == null) {
+            return memories;
+        }
+        return memories.stream().filter(m -> m.isVisibleInScope(scope)).collect(Collectors.toList());
+    }
+
+    @Override
     public synchronized void removeMemory(String id) {
         if (id == null) return;
         memories.removeIf(m -> m.getId().equals(id));
@@ -109,8 +151,9 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
 
     @Override
     public List<MemoryItem> search(String query, int limit) {
+        List<MemoryItem> candidates = scopedMemories();
         if (query == null || query.isBlank()) {
-            return memories.stream().limit(limit).collect(Collectors.toList());
+            return candidates.stream().limit(limit).collect(Collectors.toList());
         }
 
         String[] queryTokens = query.toLowerCase().split("\\W+");
@@ -118,7 +161,7 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
         record ScoredMemory(MemoryItem item, double score) {}
 
         List<ScoredMemory> scored = new ArrayList<>();
-        for (MemoryItem m : memories) {
+        for (MemoryItem m : candidates) {
             double score = 0.0;
             String titleLower = m.getTitle() != null ? m.getTitle().toLowerCase() : "";
             String contentLower = m.getContent() != null ? m.getContent().toLowerCase() : "";
@@ -151,8 +194,10 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
     public String getRelevantContext(String prompt) {
         List<MemoryItem> relevant = search(prompt, 4);
         if (relevant.isEmpty()) {
-            // fallback to project rules
-            relevant = getMemoriesByType(MemoryType.PROJECT_RULE);
+            // fallback to project rules visible in the active project scope
+            relevant = scopedMemories().stream()
+                    .filter(m -> m.getType() == MemoryType.PROJECT_RULE)
+                    .collect(Collectors.toList());
         }
 
         if (relevant.isEmpty()) {
@@ -162,7 +207,7 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
         StringBuilder sb = new StringBuilder("### Agentic AI Memory & Knowledge Context:\n");
         for (MemoryItem item : relevant) {
             sb.append("- **[").append(item.getType()).append("] ").append(item.getTitle()).append("**: ")
-                    .append(item.getContent().replace("\n", " "))
+                    .append(item.getContent() != null ? item.getContent().replace("\n", " ") : "")
                     .append("\n");
         }
         sb.append("\n");

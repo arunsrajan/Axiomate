@@ -79,8 +79,8 @@ public class ProviderSettingsPanel extends JPanel {
 
         // Provider Header Selector & Management Toolbar
         JPanel selectorPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
-        selectorPanel.setBorder(new CompoundBorder(new LineBorder(new Color(60, 60, 65), 1), new EmptyBorder(6, 10, 6, 10)));
-        selectorPanel.setBackground(new Color(36, 38, 44));
+        selectorPanel.setBorder(new CompoundBorder(new LineBorder(UIUtils.borderColor(), 1), new EmptyBorder(6, 10, 6, 10)));
+        selectorPanel.setBackground(UIUtils.surface(2));
 
         JLabel selectLabel = new JLabel("Provider:");
         selectLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
@@ -133,7 +133,7 @@ public class ProviderSettingsPanel extends JPanel {
 
         setActiveCheck = new JCheckBox("Active Provider");
         setActiveCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
-        setActiveCheck.setForeground(new Color(255, 205, 85));
+        setActiveCheck.setForeground(UIUtils.accentText(UIUtils.WARNING_COLOR));
         setActiveCheck.setToolTipText("Set this provider as the active AI provider in the IDE");
         setActiveCheck.setSelected(currentSelectedProviderId.equals(targetActiveProviderId));
         setActiveCheck.addActionListener(e -> {
@@ -265,8 +265,8 @@ public class ProviderSettingsPanel extends JPanel {
         routingTab.setBorder(new EmptyBorder(12, 12, 12, 12));
 
         JPanel routingHeader = new JPanel(new BorderLayout(8, 4));
-        routingHeader.setBorder(new CompoundBorder(new LineBorder(new Color(60, 60, 65), 1), new EmptyBorder(8, 10, 8, 10)));
-        routingHeader.setBackground(new Color(36, 38, 44));
+        routingHeader.setBorder(new CompoundBorder(new LineBorder(UIUtils.borderColor(), 1), new EmptyBorder(8, 10, 8, 10)));
+        routingHeader.setBackground(UIUtils.surface(2));
 
         autoRoutingCheck = new JCheckBox("Enable Autonomous Task-Based Model Routing", config.isAutoRoutingEnabled());
         autoRoutingCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
@@ -553,7 +553,7 @@ public class ProviderSettingsPanel extends JPanel {
         panel.add(new JLabel("API Protocol Type:"));
         JLabel protocolLabel = new JLabel("ANTHROPIC (Claude API Protocol)");
         protocolLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
-        protocolLabel.setForeground(new Color(180, 100, 240));
+        protocolLabel.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
         panel.add(protocolLabel);
         panel.add(new JLabel("Display Name:"));
         panel.add(nameInputField);

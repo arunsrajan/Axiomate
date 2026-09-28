@@ -16,6 +16,10 @@ import java.awt.*;
  */
 public class SettingsDialog extends JDialog {
 
+    public static final int TAB_PROVIDERS = 0;
+    public static final int TAB_EDITOR = 1;
+    public static final int TAB_MCP = 2;
+
     private final ProviderSettingsPanel providerSettingsPanel;
     private final McpSettingsPanel mcpSettingsPanel;
     private final JTabbedPane tabbedPane;
@@ -83,7 +87,7 @@ public class SettingsDialog extends JDialog {
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.3;
         uiPanel.add(new JLabel("Color Theme:"), gbc);
         gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 0.7;
-        themeCombo = new JComboBox<>(new String[]{"FlatLaf Darcula", "FlatLaf Dark", "FlatLaf Light", "IntelliJ Light", "One Dark"});
+        themeCombo = new JComboBox<>(UIUtils.THEMES);
         themeCombo.setSelectedItem(config.getTheme());
         uiPanel.add(themeCombo, gbc);
 

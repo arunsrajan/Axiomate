@@ -26,10 +26,16 @@ public class AgentSession {
     private List<AgentMessage> messages = new CopyOnWriteArrayList<>();
     private TokenTracker tokenTracker;
     private String createdAt;
+    private String updatedAt;
+    private boolean pinned = false;
+    private String origin = "";
+
+    private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public AgentSession() {
         this.id = UUID.randomUUID().toString();
-        this.createdAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        this.createdAt = LocalDateTime.now().format(TIMESTAMP_FORMAT);
+        this.updatedAt = this.createdAt;
         this.tokenTracker = new TokenTracker(128_000);
     }
 
@@ -96,6 +102,7 @@ public class AgentSession {
 
     public void addMessage(AgentMessage message) {
         this.messages.add(message);
+        touch();
         long est = TokenTracker.estimateTokens(message.getContent());
         if (message.isUser()) {
             this.tokenTracker.recordUsage(est, 0);
@@ -109,6 +116,28 @@ public class AgentSession {
     public void clearMessages() {
         this.messages.clear();
         this.tokenTracker.reset();
+        touch();
+    }
+
+    /**
+     * Marks the session as recently active.
+     */
+    public void touch() {
+        this.updatedAt = LocalDateTime.now().format(TIMESTAMP_FORMAT);
+    }
+
+    /**
+     * Creates an independent copy of this session (new id, copied history and settings).
+     */
+    public AgentSession fork(String newName) {
+        AgentSession copy = new AgentSession(newName, providerId, modelId, autoRoutingEnabled,
+                tokenTracker != null ? tokenTracker.getMaxContextTokens() : 128_000);
+        copy.setSystemPrompt(systemPrompt);
+        copy.setOrigin("Forked from '" + name + "'");
+        for (AgentMessage m : messages) {
+            copy.addMessage(new AgentMessage(m.getRole(), m.getContent(), m.getToolName(), m.getTimestamp()));
+        }
+        return copy;
     }
 
     public TokenTracker getTokenTracker() {
@@ -125,6 +154,30 @@ public class AgentSession {
 
     public void setCreatedAt(String createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getUpdatedAt() {
+        return (updatedAt == null || updatedAt.isBlank()) ? createdAt : updatedAt;
+    }
+
+    public void setUpdatedAt(String updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public boolean isPinned() {
+        return pinned;
+    }
+
+    public void setPinned(boolean pinned) {
+        this.pinned = pinned;
+    }
+
+    public String getOrigin() {
+        return origin != null ? origin : "";
+    }
+
+    public void setOrigin(String origin) {
+        this.origin = origin;
     }
 
     public boolean isAutoRoutingEnabled() {

@@ -21,6 +21,8 @@ public class MemoryItem {
     private List<String> tags = new ArrayList<>();
     private String timestamp;
     private double importance = 0.5; // 0.0 to 1.0
+    private String source;      // provenance, e.g. "claude-code|/path/CLAUDE.md" or "plugin:java-rules"
+    private String projectPath; // null = global memory, otherwise scoped to a project directory
 
     public MemoryItem() {
         this.id = UUID.randomUUID().toString();
@@ -95,6 +97,30 @@ public class MemoryItem {
 
     public void setImportance(double importance) {
         this.importance = Math.max(0.0, Math.min(1.0, importance));
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
+    }
+
+    public String getProjectPath() {
+        return projectPath;
+    }
+
+    public void setProjectPath(String projectPath) {
+        this.projectPath = (projectPath == null || projectPath.isBlank()) ? null : projectPath;
+    }
+
+    /**
+     * Returns true when this memory is global or belongs to the given project path.
+     * A null scope matches every memory.
+     */
+    public boolean isVisibleInScope(String projectScope) {
+        return projectScope == null || projectPath == null || projectPath.equals(projectScope);
     }
 
     @Override

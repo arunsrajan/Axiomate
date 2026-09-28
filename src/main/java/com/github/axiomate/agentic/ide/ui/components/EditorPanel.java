@@ -54,6 +54,24 @@ public class EditorPanel extends JPanel {
 
         add(tabbedPane, BorderLayout.CENTER);
         ProjectManager.getInstance().addFileContentListener(this::reloadOrUpdateFile);
+        UIUtils.addThemeListener(() -> tabEditorMap.values().forEach(this::applyEditorTheme));
+    }
+
+    /**
+     * Applies the RSyntaxTextArea color scheme matching the current light/dark look-and-feel.
+     */
+    private void applyEditorTheme(RSyntaxTextArea textArea) {
+        String scheme = UIUtils.isDark() ? "dark.xml" : "idea.xml";
+        try (var in = getClass().getResourceAsStream("/org/fife/ui/rsyntaxtextarea/themes/" + scheme)) {
+            Theme.load(in).apply(textArea);
+        } catch (Exception e) {
+            textArea.setBackground(UIUtils.consoleBackground());
+            textArea.setForeground(UIUtils.consoleForeground());
+            textArea.setCaretColor(UIUtils.consoleForeground());
+        }
+        // Themes may reset the font; keep the user's configured editor font size
+        IdeConfig config = ConfigManager.getInstance().getConfig();
+        textArea.setFont(UIUtils.getEditorFont(config.getFontSize()));
     }
 
     public void reloadOrUpdateFile(File file, String newContent) {
@@ -113,21 +131,10 @@ public class EditorPanel extends JPanel {
         textArea.setBracketMatchingEnabled(true);
         textArea.setAnimateBracketMatching(true);
 
-        IdeConfig config = ConfigManager.getInstance().getConfig();
-        textArea.setFont(UIUtils.getEditorFont(config.getFontSize()));
-
         String syntaxStyle = getSyntaxStyleForFile(file != null ? file.getName() : title);
         textArea.setSyntaxEditingStyle(syntaxStyle);
 
-        try {
-            Theme theme = Theme.load(getClass().getResourceAsStream(
-                    "/org/fife/ui/rsyntaxtextarea/themes/dark.xml"));
-            theme.apply(textArea);
-        } catch (Exception e) {
-            textArea.setBackground(new Color(30, 30, 30));
-            textArea.setForeground(new Color(220, 220, 220));
-            textArea.setCaretColor(Color.WHITE);
-        }
+        applyEditorTheme(textArea);
 
         RTextScrollPane scrollPane = new RTextScrollPane(textArea);
         scrollPane.setFoldIndicatorEnabled(true);
