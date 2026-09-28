@@ -42,6 +42,7 @@ class ReasoningContinuationTest {
         if (server != null) server.stop(0);
         IdeConfig cfg = ConfigManager.getInstance().getConfig();
         cfg.getProviders().remove(PROVIDER);
+        cfg.setMaxAgentIterations(IdeConfig.DEFAULT_MAX_AGENT_ITERATIONS);
         ConfigManager.getInstance().saveConfig(cfg);
     }
 
@@ -135,5 +136,58 @@ class ReasoningContinuationTest {
         assertEquals(LangChainAgentService.ReasoningOutcome.TRUNCATED, LangChainAgentService.classifyStep(AiMessage.from(""), FinishReason.LENGTH, null));
         assertEquals(LangChainAgentService.ReasoningOutcome.REASONING_ONLY, LangChainAgentService.classifyStep(AiMessage.from(""), FinishReason.STOP, "x"));
         assertEquals(LangChainAgentService.ReasoningOutcome.COMPLETE, LangChainAgentService.classifyStep(AiMessage.from(""), FinishReason.STOP, null));
+    }
+
+    private static String toolUse(String id, String thinking) {
+        String think = thinking == null ? "" : "{\"type\":\"thinking\",\"thinking\":\"" + thinking + "\",\"signature\":\"sig-" + id + "\"},";
+        return message("[" + think + "{\"type\":\"tool_use\",\"id\":\"" + id + "\",\"name\":\"no_such_tool\",\"input\":{\"path\":\"a.txt\"}}]", "tool_use");
+    }
+
+    @Test
+    @DisplayName("Reasoning of a tool-calling turn is sent back with that turn (with its signature)")
+    void thinkingReplayedWithToolTurn() throws Exception {
+        List<String> requests = startFakeAnthropic(new ConcurrentLinkedDeque<>(List.of(
+                toolUse("t1", "I should read a.txt first"),
+                message("[{\"type\":\"text\",\"text\":\"Done.\"}]", "end_turn"))));
+        assertEquals("Done.", runAgent(new CopyOnWriteArrayList<>()));
+        String second = requests.get(1).replaceAll("\\s+", "");
+        int thinkingAt = second.indexOf("\"type\":\"thinking\"");
+        int toolUseAt = second.indexOf("\"type\":\"tool_use\"");
+        assertTrue(thinkingAt >= 0, "thinking block replayed");
+        assertTrue(second.contains("\"signature\":\"sig-t1\""), "signature preserved");
+        assertTrue(thinkingAt < toolUseAt, "thinking precedes tool_use in the assistant turn");
+    }
+
+    @Test
+    @DisplayName("A model repeating the same tool call is short-circuited and the task pauses with a summary at the step limit")
+    void loopGuardAndStepLimit() throws Exception {
+        IdeConfig cfg = ConfigManager.getInstance().getConfig();
+        cfg.setMaxAgentIterations(5);
+        ConfigManager.getInstance().saveConfig(cfg);
+        Deque<String> responses = new ConcurrentLinkedDeque<>();
+        for (int i = 0; i < 5; i++) responses.add(toolUse("t" + i, null));
+        responses.add(message("[{\"type\":\"text\",\"text\":\"Summary: read a.txt repeatedly.\"}]", "end_turn"));
+        List<String> requests = startFakeAnthropic(responses);
+        List<String> thoughts = new CopyOnWriteArrayList<>();
+
+        String answer = runAgent(thoughts);
+
+        assertEquals(6, requests.size(), "5 steps + 1 wrap-up request");
+        assertTrue(requests.get(3).contains("it was not run again"), "third identical call is not executed again");
+        assertTrue(requests.get(5).contains("You have used all 5 agent steps"));
+        assertTrue(answer.startsWith("Summary: read a.txt repeatedly."));
+        assertTrue(answer.contains("Paused after 5 agent steps"));
+        assertTrue(thoughts.stream().anyMatch(t -> t.contains("Skipped a repeated call")));
+    }
+
+    @Test
+    @DisplayName("Max agent steps setting is clamped and defaults to 50")
+    void stepSetting() {
+        IdeConfig c = new IdeConfig();
+        assertEquals(50, c.getMaxAgentIterations());
+        c.setMaxAgentIterations(0);
+        assertEquals(50, c.getMaxAgentIterations(), "0 from older configs means default");
+        c.setMaxAgentIterations(10_000);
+        assertEquals(IdeConfig.MAX_AGENT_ITERATIONS, c.getMaxAgentIterations());
     }
 }

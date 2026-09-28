@@ -22,6 +22,7 @@ public class IdeConfig {
     // Auto-Routing & Compression
     private boolean autoRoutingEnabled = true;
     private double autoCompressionThreshold = 0.95; // 95% limit triggers compression
+    private int maxAgentIterations = DEFAULT_MAX_AGENT_ITERATIONS; // model/tool steps per task
 
     // File Mentions (@)
     private boolean fileMentionsEnabled = true;
@@ -181,6 +182,23 @@ public class IdeConfig {
 
     public void setAutoRoutingEnabled(boolean autoRoutingEnabled) {
         this.autoRoutingEnabled = autoRoutingEnabled;
+    }
+
+    public static final int DEFAULT_MAX_AGENT_ITERATIONS = 50;
+    public static final int MIN_AGENT_ITERATIONS = 5;
+    public static final int MAX_AGENT_ITERATIONS = 500;
+
+    /**
+     * Maximum number of model steps (each usually a tool call) the agent may take for one request.
+     */
+    public int getMaxAgentIterations() {
+        return maxAgentIterations;
+    }
+
+    public void setMaxAgentIterations(int maxAgentIterations) {
+        // 0 means "not set" in configs saved by older versions
+        int v = maxAgentIterations <= 0 ? DEFAULT_MAX_AGENT_ITERATIONS : maxAgentIterations;
+        this.maxAgentIterations = Math.max(MIN_AGENT_ITERATIONS, Math.min(MAX_AGENT_ITERATIONS, v));
     }
 
     public double getAutoCompressionThreshold() {

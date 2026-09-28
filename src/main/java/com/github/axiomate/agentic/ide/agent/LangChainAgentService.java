@@ -39,7 +39,8 @@ import java.util.concurrent.Future;
 public class LangChainAgentService implements AIAgentService {
 
     private static final Logger log = LoggerFactory.getLogger(LangChainAgentService.class);
-    private static final int MAX_TOOL_ITERATIONS = 10;
+    /** A tool call with identical arguments is executed at most this many times per task. */
+    static final int MAX_IDENTICAL_TOOL_CALLS = 2;
     /** How many times a reasoning-only (or truncated) step is asked to continue before giving up. */
     static final int MAX_REASONING_CONTINUATIONS = 2;
     private static final int MAX_REASONING_ECHO_CHARS = 8_000;
@@ -210,9 +211,12 @@ public class LangChainAgentService implements AIAgentService {
                 List<ToolSpecification> toolSpecs = buildToolSpecifications();
 
                 // 7. Multi-Turn Autonomous Tool Calling Execution Loop
+                int maxIterations = config.getMaxAgentIterations();
+                ToolCallGuard toolGuard = new ToolCallGuard(MAX_IDENTICAL_TOOL_CALLS);
+                boolean finished = false;
                 int iteration = 0;
                 int continuations = 0;
-                while (iteration++ < MAX_TOOL_ITERATIONS && !cancelled) {
+                while (iteration++ < maxIterations && !cancelled) {
                     listener.onThinking("Reasoning with " + targetModel + " (Step " + iteration + ")...");
 
                     Response<AiMessage> response = chatModel.generate(messages, toolSpecs);
@@ -271,7 +275,12 @@ public class LangChainAgentService implements AIAgentService {
 
                             String toolResult;
                             AgentTool tool = findTool(toolName);
-                            if (tool != null) {
+                            String repeated = toolGuard.checkRepeat(toolName, arguments);
+                            if (repeated != null) {
+                                // The model is looping on the same call: don't run it again, point it at the result
+                                toolResult = repeated;
+                                listener.onThinking("🔁 Skipped a repeated call to " + toolName + " with identical arguments.");
+                            } else if (tool != null) {
                                 try {
                                     toolResult = tool.execute(arguments);
                                 } catch (Exception ex) {
@@ -283,6 +292,9 @@ public class LangChainAgentService implements AIAgentService {
 
                             if (toolResult == null || toolResult.trim().isEmpty()) {
                                 toolResult = "(command executed with no output)";
+                            }
+                            if (repeated == null) {
+                                toolGuard.record(toolName, arguments, toolResult);
                             }
 
                             listener.onToolResult(toolName, toolResult);
@@ -330,13 +342,29 @@ public class LangChainAgentService implements AIAgentService {
                         com.github.axiomate.agentic.ide.features.devexperience.AgentAnalyticsDashboard.getInstance()
                                 .recordTaskOutcome("GENERAL", true, 20.0, 0.005, null);
 
+                        finished = true;
                         listener.onComplete(finalResponse);
                         return;
                     }
                 }
 
-                if (iteration >= MAX_TOOL_ITERATIONS) {
-                    String msg = "Task reached maximum tool calling iterations (" + MAX_TOOL_ITERATIONS + "). Completed.";
+                if (!finished && !cancelled) {
+                    // Step limit reached: ask the model to wrap up instead of ending with a bare notice
+                    listener.onThinking("⏸ Reached the step limit (" + maxIterations + "). Asking the model for a summary...");
+                    String summary = null;
+                    try {
+                        messages.add(UserMessage.from(stepLimitPrompt(maxIterations)));
+                        Response<AiMessage> wrapUp = chatModel.generate(messages, toolSpecs);
+                        takeLastThinking();
+                        if (wrapUp.content().text() != null && !wrapUp.content().text().isBlank()) {
+                            summary = wrapUp.content().text();
+                        }
+                    } catch (Exception wrapUpError) {
+                        log.warn("Could not get a summary after the step limit: {}", wrapUpError.getMessage());
+                    }
+                    String msg = (summary != null ? summary + "\n\n" : "")
+                            + "⏸ Paused after " + maxIterations + " agent steps. Reply \"continue\" to keep going, "
+                            + "or raise \"Max agent steps per task\" in Settings → Editor & Appearance.";
                     session.addMessage(new AgentMessage(AgentRole.ASSISTANT, msg));
                     SessionManager.getInstance().autoSaveCurrentProjectSessions();
                     listener.onToken(msg);
@@ -356,6 +384,8 @@ public class LangChainAgentService implements AIAgentService {
                 listener.onError(new RuntimeException(
                         String.format("Error calling provider %s [%s] at URL [%s]: %s",
                                 activeProviderName, activeTargetModel, activeEndpointUrl, e.getMessage()), e));
+            } finally {
+                dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.clearThinkingReplay();
             }
         });
     }
@@ -451,5 +481,46 @@ public class LangChainAgentService implements AIAgentService {
 
     private static String truncate(String s, int max) {
         return s.length() <= max ? s : s.substring(0, max) + "\n…";
+    }
+
+    static String stepLimitPrompt(int maxIterations) {
+        return "You have used all " + maxIterations + " agent steps for this request. Do not call any more tools. "
+                + "Reply with: what you completed, what is still left to do, and your best answer so far.";
+    }
+
+    /**
+     * Detects a model repeatedly issuing the same tool call (a common failure of reasoning models that lose
+     * track of earlier results) and answers repeats from the earlier result instead of running them again.
+     */
+    static final class ToolCallGuard {
+        private final int maxIdentical;
+        private final java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+        private final java.util.Map<String, String> lastResults = new java.util.HashMap<>();
+
+        ToolCallGuard(int maxIdentical) {
+            this.maxIdentical = maxIdentical;
+        }
+
+        private static String key(String tool, String args) {
+            return tool + "\u0000" + (args == null ? "" : args.replaceAll("\\s+", ""));
+        }
+
+        /** Returns a replacement result when this exact call already ran the maximum number of times, else null. */
+        String checkRepeat(String tool, String args) {
+            String k = key(tool, args);
+            int n = counts.getOrDefault(k, 0);
+            if (n < maxIdentical) return null;
+            counts.put(k, n + 1);
+            String previous = lastResults.getOrDefault(k, "");
+            if (previous.length() > 4_000) previous = previous.substring(0, 4_000) + "\n…";
+            return "NOTE: You already called " + tool + " with these exact arguments " + n + " times; it was not run again. "
+                    + "Its result was:\n" + previous + "\n\nUse this result: take a different next step or give the final answer.";
+        }
+
+        void record(String tool, String args, String result) {
+            String k = key(tool, args);
+            counts.merge(k, 1, Integer::sum);
+            lastResults.put(k, result);
+        }
     }
 }
