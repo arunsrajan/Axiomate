@@ -21,6 +21,7 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.output.FinishReason;
 import dev.langchain4j.model.output.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +40,9 @@ public class LangChainAgentService implements AIAgentService {
 
     private static final Logger log = LoggerFactory.getLogger(LangChainAgentService.class);
     private static final int MAX_TOOL_ITERATIONS = 10;
+    /** How many times a reasoning-only (or truncated) step is asked to continue before giving up. */
+    static final int MAX_REASONING_CONTINUATIONS = 2;
+    private static final int MAX_REASONING_ECHO_CHARS = 8_000;
 
     private final List<AgentTool> tools = new CopyOnWriteArrayList<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -207,12 +211,21 @@ public class LangChainAgentService implements AIAgentService {
 
                 // 7. Multi-Turn Autonomous Tool Calling Execution Loop
                 int iteration = 0;
+                int continuations = 0;
                 while (iteration++ < MAX_TOOL_ITERATIONS && !cancelled) {
                     listener.onThinking("Reasoning with " + targetModel + " (Step " + iteration + ")...");
 
                     Response<AiMessage> response = chatModel.generate(messages, toolSpecs);
                     AiMessage aiMessage = response.content();
                     messages.add(aiMessage);
+
+                    // Surface this step's reasoning (thinking models: Claude, DeepSeek...) for every step,
+                    // including steps that call tools, and never leak it into the next step.
+                    String thinkingContent = takeLastThinking();
+                    if (thinkingContent != null) {
+                        session.addMessage(new AgentMessage(AgentRole.THINKING, thinkingContent, null));
+                        listener.onThinking("💭 Model Reasoning:\n" + thinkingContent);
+                    }
 
                     // Track tokens from response if provided by provider
                     if (response.tokenUsage() != null) {
@@ -229,6 +242,22 @@ public class LangChainAgentService implements AIAgentService {
                     }
 
                     SessionManager.getInstance().notifyListeners();
+
+                    ReasoningOutcome outcome = classifyStep(aiMessage, response.finishReason(), thinkingContent);
+                    if (outcome != ReasoningOutcome.COMPLETE && continuations < MAX_REASONING_CONTINUATIONS) {
+                        // The model stopped after reasoning (usually the output token limit): keep the turn
+                        // structure valid and ask it to carry on instead of ending the task here.
+                        continuations++;
+                        messages.remove(messages.size() - 1);
+                        messages.add(AiMessage.from(thinkingContent != null
+                                ? "[My reasoning so far]\n" + truncate(thinkingContent, MAX_REASONING_ECHO_CHARS)
+                                : "(My previous response was cut off.)"));
+                        messages.add(UserMessage.from(continuationPrompt(outcome)));
+                        listener.onThinking("↻ The model returned reasoning without an answer ("
+                                + (outcome == ReasoningOutcome.TRUNCATED ? "output token limit reached" : "no final text")
+                                + "). Asking it to continue (" + continuations + "/" + MAX_REASONING_CONTINUATIONS + ")...");
+                        continue;
+                    }
 
                     if (aiMessage.hasToolExecutionRequests()) {
                         for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
@@ -263,28 +292,18 @@ public class LangChainAgentService implements AIAgentService {
                             session.addMessage(new AgentMessage(AgentRole.TOOL, toolResult, toolName));
                         }
                     } else {
-                        // Surface any thinking/reasoning from the model (DeepSeek, Claude 3.7, etc.)
-                        // AnthropicMapper stores thinking via LAST_THINKING thread-local after generate()
-                        String thinkingContent = null;
-                        try {
-                            thinkingContent = dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.get();
-                            if (thinkingContent != null && !thinkingContent.isBlank()) {
-                                log.debug("Surfacing {} chars of model thinking to UI", thinkingContent.length());
-                                session.addMessage(new AgentMessage(AgentRole.THINKING, thinkingContent, null));
-                                listener.onThinking("💭 Model Reasoning:\n" + thinkingContent);
-                            }
-                        } finally {
-                            dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.remove();
-                        }
-
                         // Final resolution reached - ensure content is never blank
                         String finalResponse = (aiMessage.text() != null && !aiMessage.text().isBlank()) ? aiMessage.text() : "";
                         if (finalResponse.isBlank()) {
-                            if (thinkingContent != null && !thinkingContent.isBlank()) {
-                                finalResponse = thinkingContent;
+                            if (thinkingContent != null) {
+                                finalResponse = thinkingContent + "\n\n⚠️ The model only returned reasoning and no final answer. "
+                                        + "Try increasing the model's Max Output tokens (Settings → AI Providers → Edit Model).";
                             } else {
                                 finalResponse = "Task completed successfully.";
                             }
+                        } else if (response.finishReason() == FinishReason.LENGTH) {
+                            finalResponse += "\n\n⚠️ Response truncated at the model's output token limit. "
+                                    + "Increase Max Output in Settings → AI Providers → Edit Model.";
                         }
 
                         // Store in session (actual response only, without thinking)
@@ -390,5 +409,47 @@ public class LangChainAgentService implements AIAgentService {
         }
         return null;
     }
-}
 
+    enum ReasoningOutcome {
+        /** Tool calls or a final answer: proceed normally. */
+        COMPLETE,
+        /** Cut off by the output token limit before producing an answer or tool call. */
+        TRUNCATED,
+        /** Only reasoning, no text and no tool calls. */
+        REASONING_ONLY
+    }
+
+    /**
+     * Decides whether a step ended properly or stopped after reasoning without acting.
+     */
+    static ReasoningOutcome classifyStep(AiMessage aiMessage, FinishReason finishReason, String thinking) {
+        if (aiMessage.hasToolExecutionRequests()) return ReasoningOutcome.COMPLETE;
+        boolean hasText = aiMessage.text() != null && !aiMessage.text().isBlank();
+        if (hasText) return ReasoningOutcome.COMPLETE;
+        if (finishReason == FinishReason.LENGTH) return ReasoningOutcome.TRUNCATED;
+        if (thinking != null) return ReasoningOutcome.REASONING_ONLY;
+        return ReasoningOutcome.COMPLETE;
+    }
+
+    static String continuationPrompt(ReasoningOutcome outcome) {
+        return outcome == ReasoningOutcome.TRUNCATED
+                ? "Your previous response hit the output token limit before you answered. Continue from your reasoning above "
+                  + "without repeating it: keep any further reasoning brief, then either call the next tool or give the final answer."
+                : "You reasoned about the task but did not respond. Based on your reasoning above, now either call the next tool "
+                  + "or give the final answer.";
+    }
+
+    /** Reads and clears the reasoning captured by AnthropicMapper for the last generate() call. */
+    private static String takeLastThinking() {
+        try {
+            String t = dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.get();
+            return t != null && !t.isBlank() ? t : null;
+        } finally {
+            dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.remove();
+        }
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + "\n…";
+    }
+}

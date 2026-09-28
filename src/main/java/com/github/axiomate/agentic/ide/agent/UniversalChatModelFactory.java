@@ -18,6 +18,31 @@ public class UniversalChatModelFactory {
 
     private static final Logger log = LoggerFactory.getLogger(UniversalChatModelFactory.class);
 
+    /**
+     * Reasoning models (Claude with thinking, DeepSeek R1/V3 via the Anthropic API, o-series) can take several
+     * minutes per step; a 60s timeout aborted them mid-reasoning.
+     */
+    static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
+
+    /**
+     * Used when the model has no configured max output. Anthropic requires max_tokens and LangChain4j
+     * otherwise sends 1,024, which a reasoning model can spend entirely on its thinking block.
+     */
+    static final int DEFAULT_ANTHROPIC_MAX_OUTPUT = 8_192;
+
+    /**
+     * The max output tokens to request for a model: its configured "Max Output" when available.
+     */
+    static int resolveMaxOutputTokens(ProviderConfig config, String modelName, int fallback) {
+        if (config != null && modelName != null) {
+            var model = config.findModel(modelName);
+            if (model != null && model.getMaxOutputTokens() > 0) {
+                return model.getMaxOutputTokens();
+            }
+        }
+        return fallback;
+    }
+
     public static ChatLanguageModel createChatModel(ProviderConfig config, String modelName, double temperature) {
         String providerId = config != null ? config.getId() : "OPENAI";
         String providerType = config != null ? config.getProviderType() : "OPENAI";
@@ -60,7 +85,8 @@ public class UniversalChatModelFactory {
                         .apiKey(apiKey)
                         .modelName(targetModel)
                         .temperature(temperature)
-                        .timeout(Duration.ofSeconds(60));
+                        .maxTokens(resolveMaxOutputTokens(config, targetModel, DEFAULT_ANTHROPIC_MAX_OUTPUT))
+                        .timeout(REQUEST_TIMEOUT);
                 if (baseUrl != null && !baseUrl.isBlank()) {
                     String formattedUrl = baseUrl.trim();
                     if (!formattedUrl.endsWith("/")) {
@@ -75,7 +101,7 @@ public class UniversalChatModelFactory {
                         .apiKey(apiKey)
                         .modelName(targetModel)
                         .temperature(temperature)
-                        .timeout(Duration.ofSeconds(60));
+                        .timeout(REQUEST_TIMEOUT);
                 yield builder.build();
             }
             default -> { // OPENAI or CUSTOM (Ollama, LM Studio, vLLM, DeepSeek, etc.)
@@ -84,7 +110,7 @@ public class UniversalChatModelFactory {
                         .baseUrl(baseUrl)
                         .modelName(targetModel)
                         .temperature(temperature)
-                        .timeout(Duration.ofSeconds(60))
+                        .timeout(REQUEST_TIMEOUT)
                         .build();
             }
         };
