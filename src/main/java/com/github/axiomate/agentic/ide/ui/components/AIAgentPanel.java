@@ -88,6 +88,7 @@ public class AIAgentPanel extends JPanel {
     private final FileMentionController fileMentionController;
 
     private final SlashCommandCompletion slashCompletion;
+    private final List<JButton> quickActions = new ArrayList<>();
     private final List<Runnable> themeAppliers = new ArrayList<>();
     private IdeActions ideActions = IdeActions.NONE;
     private String displayedSessionId;
@@ -123,7 +124,6 @@ public class AIAgentPanel extends JPanel {
         titleSubPanel.add(iconLabel);
         titleSubPanel.add(titleLabel);
         titleSubPanel.add(Box.createHorizontalStrut(8));
-        titleSubPanel.add(statusBadge);
 
         JPanel headerButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         headerButtons.setOpaque(false);
@@ -262,17 +262,15 @@ public class AIAgentPanel extends JPanel {
         controlBar.add(tokenLine);
 
         // 4. Quick Action Chips Panel
-        JPanel chipsPanel = new JPanel(new WrapLayout(FlowLayout.LEFT, 4, 3));
-        chipsPanel.setBorder(new EmptyBorder(2, 8, 4, 8));
-
-        chipsPanel.add(createChip("⚡ Explain", "Explain this code in detail and highlight key logic"));
-        chipsPanel.add(createChip("🛠 Refactor", "Refactor and modernize this code for clarity and performance"));
-        chipsPanel.add(createChip("🧪 Add Tests", "Generate comprehensive JUnit 5 test cases for this code"));
-        chipsPanel.add(createChip("🐛 Find Bugs", "Diagnose potential bugs, security issues, and edge cases"));
-        chipsPanel.add(createChip("🧠 View Memory", "Show all project rules and stored agent memories"));
-        chipsPanel.add(createFeatureChip("📋 Plan Canvas", () -> new com.github.axiomate.agentic.ide.features.ui.LivingPlanDialog(null).setVisible(true)));
-        chipsPanel.add(createFeatureChip("📊 Analytics", () -> new com.github.axiomate.agentic.ide.features.ui.AnalyticsDashboardDialog(null).setVisible(true)));
-        chipsPanel.add(createFeatureChip("🎛 Autonomy", () -> new com.github.axiomate.agentic.ide.features.ui.ExecutionAndAutonomyDialog(null).setVisible(true)));
+        quickActions.clear();
+        quickActions.add(createChip("⚡ Explain", "Explain this code in detail and highlight key logic"));
+        quickActions.add(createChip("🛠 Refactor", "Refactor and modernize this code for clarity and performance"));
+        quickActions.add(createChip("🧪 Add Tests", "Generate comprehensive JUnit 5 test cases for this code"));
+        quickActions.add(createChip("🐛 Find Bugs", "Diagnose potential bugs, security issues, and edge cases"));
+        quickActions.add(createChip("🧠 View Memory", "Show all project rules and stored agent memories"));
+        quickActions.add(createFeatureChip("📋 Plan Canvas", () -> new com.github.axiomate.agentic.ide.features.ui.LivingPlanDialog(null).setVisible(true)));
+        quickActions.add(createFeatureChip("📊 Analytics", () -> new com.github.axiomate.agentic.ide.features.ui.AnalyticsDashboardDialog(null).setVisible(true)));
+        quickActions.add(createFeatureChip("🎛 Autonomy", () -> new com.github.axiomate.agentic.ide.features.ui.ExecutionAndAutonomyDialog(null).setVisible(true)));
 
         // 5. Output Display Filtering & Visibility Bar
         JPanel outputDisplayBar = new JPanel(new BorderLayout(4, 0));
@@ -350,18 +348,21 @@ public class AIAgentPanel extends JPanel {
         outputDisplayBar.add(filtersLeft, BorderLayout.CENTER);
         outputDisplayBar.add(actionsRight, BorderLayout.EAST);
 
-        JPanel topContainer = new JPanel();
-        topContainer.setLayout(new BoxLayout(topContainer, BoxLayout.Y_AXIS));
-        topContainer.add(headerPanel);
-        topContainer.add(sessionBar);
-        topContainer.add(chipsPanel);
-        topContainer.add(outputDisplayBar);
-        add(topContainer, BorderLayout.NORTH);
+        // Session picker sits in the header, Claude-app style ("Session title ⌄"); everything else lives in the ⋯ menu
+        sessionSelectorCombo.setPreferredSize(new Dimension(260, 26));
+        sessionSelectorCombo.setFont(UIUtils.uiFont(Font.BOLD, 13f));
+        sessionSelectorCombo.putClientProperty("FlatLaf.style", "borderWidth: 0; focusWidth: 0; arc: 8");
+        titleSubPanel.remove(titleLabel);
+        titleSubPanel.add(sessionSelectorCombo);
+        titleSubPanel.add(statusBadge);
+        onTheme(() -> headerPanel.setBorder(new CompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, UIUtils.borderColor()), new EmptyBorder(6, 12, 6, 12))));
+        add(headerPanel, BorderLayout.NORTH);
 
         // 5. Chat Messages Container
         chatBox = new ScrollablePanel(null); // tracks the viewport width so bubbles wrap instead of overflowing
         chatBox.setLayout(new BoxLayout(chatBox, BoxLayout.Y_AXIS));
-        chatBox.setBorder(new EmptyBorder(8, 8, 8, 8));
+        chatBox.setBorder(new EmptyBorder(16, 16, 16, 16));
 
         chatScrollPane = new JScrollPane(chatBox);
         chatScrollPane.setBorder(null);
@@ -372,8 +373,8 @@ public class AIAgentPanel extends JPanel {
         // 6. Input Area at Bottom
         JPanel inputPanel = new JPanel();
         inputPanel.setLayout(new BoxLayout(inputPanel, BoxLayout.Y_AXIS));
-        inputPanel.setBorder(new EmptyBorder(6, 8, 8, 8));
-        onTheme(() -> inputPanel.setBackground(UIUtils.surface(1)));
+        inputPanel.setBorder(new EmptyBorder(6, 16, 10, 16));
+        onTheme(() -> inputPanel.setBackground(UIUtils.panelBackground()));
 
         includeContextCheck = new JCheckBox("Active File Context", true);
         includeContextCheck.setFont(new Font("SansSerif", Font.PLAIN, 11));
@@ -415,6 +416,12 @@ public class AIAgentPanel extends JPanel {
         inputScroll.setBorder(null);
         inputScroll.setOpaque(false);
         inputScroll.getViewport().setOpaque(false);
+        inputScroll.setViewportBorder(null);
+        inputScroll.putClientProperty("FlatLaf.style", "borderWidth: 0; focusWidth: 0; innerFocusWidth: 0");
+        onTheme(() -> {
+            inputArea.setBackground(UIUtils.surface(3));
+            inputScroll.getViewport().setBackground(UIUtils.surface(3));
+        });
 
         // Claude Code style prompt box: rounded border with a "> " prompt, accent border while focused
         JPanel promptBox = new JPanel(new BorderLayout(6, 0)) {
@@ -439,8 +446,8 @@ public class AIAgentPanel extends JPanel {
         onTheme(() -> promptGlyph.setForeground(UIUtils.mutedForeground()));
         promptBox.add(promptGlyph, BorderLayout.WEST);
         promptBox.add(inputScroll, BorderLayout.CENTER);
-        promptBox.setPreferredSize(new Dimension(0, 84));
-        promptBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
+        promptBox.setPreferredSize(new Dimension(0, 92));
+        promptBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
         inputArea.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
             public void focusGained(java.awt.event.FocusEvent e) {
@@ -453,47 +460,64 @@ public class AIAgentPanel extends JPanel {
             }
         });
 
-        JPanel buttonBar = new JPanel(new BorderLayout());
-        buttonBar.setOpaque(false);
-
-        JPanel leftBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        leftBar.setOpaque(false);
-        leftBar.add(includeContextCheck);
-        leftBar.add(includeMemoryCheck);
-
-        JPanel rightBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        rightBar.setOpaque(false);
         stopBtn = new JButton("Stop", UIUtils.createStopIcon(12, UIUtils.ERROR_COLOR));
         stopBtn.setEnabled(false);
+        stopBtn.setToolTipText("Stop the agent (Esc)");
+        stopBtn.putClientProperty("JButton.buttonType", "toolBarButton");
         stopBtn.addActionListener(e -> cancelAgent());
 
-        sendBtn = new JButton("Send  Ctrl+↵");
-        sendBtn.setFont(UIUtils.uiFont(Font.BOLD, 12f));
+        sendBtn = new JButton("↵");
+        sendBtn.setFont(UIUtils.uiFont(Font.BOLD, 14f));
         sendBtn.setFocusable(false);
         sendBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        sendBtn.setToolTipText("Send (Ctrl+Enter)");
+        sendBtn.putClientProperty("FlatLaf.style", "arc: 999; borderWidth: 0");
+        sendBtn.setPreferredSize(new Dimension(34, 30));
         onTheme(() -> {
             sendBtn.setBackground(UIUtils.ACCENT_COLOR);
             sendBtn.setForeground(Color.WHITE);
         });
         sendBtn.addActionListener(e -> submitPrompt());
+        JPanel sendHolder = new JPanel(new BorderLayout());
+        sendHolder.setOpaque(false);
+        sendHolder.add(sendBtn, BorderLayout.SOUTH);
+        promptBox.add(sendHolder, BorderLayout.EAST);
 
-        rightBar.add(stopBtn);
-        rightBar.add(sendBtn);
+        // Footer under the prompt: model picker on the left, context usage and Stop on the right
+        providerCombo.putClientProperty("FlatLaf.style", "borderWidth: 0; focusWidth: 0");
+        modelCombo.putClientProperty("FlatLaf.style", "borderWidth: 0; focusWidth: 0");
+        providerCombo.setPreferredSize(new Dimension(120, 24));
+        modelCombo.setPreferredSize(new Dimension(190, 24));
+        JPanel footLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        footLeft.setOpaque(false);
+        footLeft.add(providerCombo);
+        footLeft.add(modelCombo);
+        JPanel footRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        footRight.setOpaque(false);
+        footRight.add(tokenUsageLabel);
+        footRight.add(stopBtn);
+        JPanel footer = new JPanel(new BorderLayout());
+        footer.setOpaque(false);
+        footer.add(footLeft, BorderLayout.WEST);
+        footer.add(footRight, BorderLayout.EAST);
+        footer.setMaximumSize(new Dimension(Integer.MAX_VALUE, 32));
 
-        buttonBar.add(leftBar, BorderLayout.WEST);
-        buttonBar.add(rightBar, BorderLayout.EAST);
-
-        // Provider/model/tokens sit above; the activity line and prompt box anchor the bottom, under the output
         thinkingIndicator.setAlignmentX(Component.LEFT_ALIGNMENT);
         promptBox.setAlignmentX(Component.LEFT_ALIGNMENT);
-        controlBar.setAlignmentX(Component.LEFT_ALIGNMENT);
-        buttonBar.setAlignmentX(Component.LEFT_ALIGNMENT);
-        inputPanel.add(controlBar);
-        inputPanel.add(Box.createVerticalStrut(4));
+        footer.setAlignmentX(Component.LEFT_ALIGNMENT);
         inputPanel.add(thinkingIndicator);
+        inputPanel.add(Box.createVerticalStrut(2));
         inputPanel.add(promptBox);
         inputPanel.add(Box.createVerticalStrut(4));
-        inputPanel.add(buttonBar);
+        inputPanel.add(footer);
+
+        // Keep the transcript and prompt in one readable centered column, like the Claude app
+        addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                centerColumn(inputPanel);
+            }
+        });
 
         add(inputPanel, BorderLayout.SOUTH);
 
@@ -1538,8 +1562,47 @@ public class AIAgentPanel extends JPanel {
         this.ideActions = actions != null ? actions : IdeActions.NONE;
     }
 
+    /** Readable width of the centered transcript/prompt column. */
+    static final int COLUMN_WIDTH = 820;
+
+    private void centerColumn(JPanel inputPanel) {
+        int side = Math.max(16, (getWidth() - COLUMN_WIDTH) / 2);
+        chatBox.setBorder(new EmptyBorder(16, side, 16, side));
+        inputPanel.setBorder(new EmptyBorder(6, side, 10, side));
+        revalidate();
+    }
+
     private JPopupMenu buildOverflowMenu() {
         JPopupMenu menu = new JPopupMenu();
+        JMenu session = new JMenu("Session");
+        session.add(menuItem("New session…", this::promptNewSession));
+        session.add(menuItem("Rename session…", this::promptRenameSession));
+        session.add(menuItem("Close session", this::closeActiveSession));
+        session.add(menuItem("Load / import sessions…", this::promptLoadOrImportSessions));
+        menu.add(session);
+
+        JMenu quick = new JMenu("Quick actions");
+        for (JButton b : quickActions) quick.add(menuItem(b.getText(), b::doClick));
+        menu.add(quick);
+
+        JMenu output = new JMenu("Output");
+        for (JCheckBox c : List.of(showToolCallsCheck, showToolResultsCheck, showThinkingCheck, showWalkthroughCheck)) {
+            output.add(linkedCheck(c, c.getText().replaceAll("^\\S+\\s", "Show ")));
+        }
+        output.addSeparator();
+        output.add(menuItem("Collapse all", collapseAllBtn::doClick));
+        output.add(menuItem("Expand all", expandAllBtn::doClick));
+        output.add(menuItem("Categories…", () -> showCategoriesToggleMenu(this)));
+        menu.add(output);
+
+        JMenu context = new JMenu("Context & model");
+        context.add(linkedCheck(includeContextCheck, "Include active file"));
+        context.add(linkedCheck(includeMemoryCheck, "Include agentic memory"));
+        context.add(linkedCheck(autoRouteCheck, "Auto-route provider & model"));
+        context.addSeparator();
+        context.add(menuItem("Compress context now (" + tokenProgressBar.getString() + ")", compressBtn::doClick));
+        menu.add(context);
+        menu.addSeparator();
         menu.add(menuItem("Import memory from coding agents…", () -> ideActions.openMemoryImport()));
         menu.add(menuItem("Export memory to coding agents…", () -> ideActions.openMemoryExport()));
         menu.add(menuItem("Import memory from file…", () -> {
@@ -1559,6 +1622,12 @@ public class AIAgentPanel extends JPanel {
         menu.addSeparator();
         menu.add(menuItem("Clear conversation", this::clearChat));
         return menu;
+    }
+
+    private static JCheckBoxMenuItem linkedCheck(JCheckBox source, String text) {
+        JCheckBoxMenuItem item = new JCheckBoxMenuItem(text, source.isSelected());
+        item.addActionListener(e -> source.doClick());
+        return item;
     }
 
     private static JMenuItem menuItem(String text, Runnable action) {
