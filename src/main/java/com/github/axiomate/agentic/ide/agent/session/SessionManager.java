@@ -115,6 +115,7 @@ public class SessionManager {
         }
 
         AgentSession session = new AgentSession(name, providerId, modelId, autoRoutingEnabled, maxCtx);
+        stampProject(session, currentProjectDirectory);
         sessions.add(session);
         activeSession = session;
         log.info("Created new Agent Session: '{}' ({}:{}, autoRoute={})", name, providerId, modelId, autoRoutingEnabled);
@@ -285,6 +286,7 @@ public class SessionManager {
 
         sessions.clear();
         if (!loaded.isEmpty()) {
+            loaded.forEach(s -> stampProject(s, projectDir));
             sessions.addAll(loaded);
             AgentSession matched = null;
             if (savedActiveId != null && !savedActiveId.isBlank()) {
@@ -313,6 +315,7 @@ public class SessionManager {
         AgentSession source = findSession(sessionId);
         if (source == null) return null;
         AgentSession copy = source.fork(source.getName() + " (copy)");
+        stampProject(copy, currentProjectDirectory);
         sessions.add(copy);
         activeSession = copy;
         notifyListeners();
@@ -345,12 +348,20 @@ public class SessionManager {
         if (session == null) return;
         boolean wasActive = activeSession != null && activeSession.getId().equals(session.getId());
         sessions.removeIf(s -> s.getId().equals(session.getId()));
+        stampProject(session, currentProjectDirectory);
         sessions.add(session);
         if (activate || wasActive || activeSession == null) {
             activeSession = session;
         }
         notifyListeners();
         autoSaveCurrentProjectSessions();
+    }
+
+    /** Records the folder a session belongs to, keeping any folder it already has. */
+    private static void stampProject(AgentSession session, File projectDir) {
+        if (projectDir != null && (session.getProjectPath() == null || session.getProjectPath().isBlank())) {
+            session.setProjectPath(projectDir.getAbsolutePath());
+        }
     }
 
     private boolean isCurrentProject(File projectDir) {
@@ -392,6 +403,7 @@ public class SessionManager {
         if (session == null || targetProjectDir == null) return null;
         AgentSession copy = session.fork(session.getName());
         copy.setOrigin("Copied from project session '" + session.getName() + "'");
+        copy.setProjectPath(targetProjectDir.getAbsolutePath());
         if (isCurrentProject(targetProjectDir)) {
             sessions.add(copy);
             notifyListeners();

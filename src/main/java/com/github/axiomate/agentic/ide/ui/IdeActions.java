@@ -25,6 +25,10 @@ public interface IdeActions {
     default void openSessionManager() {
     }
 
+    /** Opens the session's folder in the Explorer (switching project if needed) and activates the session. */
+    default void showSessionFolder(com.github.axiomate.agentic.ide.agent.session.AgentSession session) {
+    }
+
     default void openExternalSessionImport() {
     }
 

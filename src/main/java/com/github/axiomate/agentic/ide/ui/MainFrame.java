@@ -519,6 +519,25 @@ public class MainFrame extends JFrame implements IdeActions {
     }
 
     @Override
+    public void showSessionFolder(AgentSession session) {
+        if (session == null) return;
+        File dir = session.getProjectPath() != null ? new File(session.getProjectPath()) : null;
+        File current = ProjectManager.getInstance().getCurrentProjectDirectory();
+        if (dir != null && dir.isDirectory() && (current == null
+                || !ProjectStateManager.normalizePath(dir).equals(ProjectStateManager.normalizePath(current)))) {
+            openProjectDirectory(dir);
+            SessionManager sm = SessionManager.getInstance();
+            if (sm.findSession(session.getId()) != null) {
+                sm.switchSession(session.getId());
+            } else {
+                sm.addImportedSession(session, true);
+            }
+        }
+        showSidebarView(VIEW_EXPLORER);
+        projectTreePanel.revealRoot();
+    }
+
+    @Override
     public void openSessionManager() {
         new SessionManagerDialog(this, this).setVisible(true);
     }

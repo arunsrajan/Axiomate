@@ -91,7 +91,7 @@ public class SessionsPanel extends JPanel {
         list.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) openSelected();
+                if (e.getClickCount() == 1 && SwingUtilities.isLeftMouseButton(e)) openSelected();
             }
 
             @Override
@@ -172,7 +172,9 @@ public class SessionsPanel extends JPanel {
 
     private void openSelected() {
         AgentSession s = list.getSelectedValue();
-        if (s != null) SessionManager.getInstance().switchSession(s.getId());
+        if (s == null) return;
+        SessionManager.getInstance().switchSession(s.getId());
+        actions.showSessionFolder(s);
     }
 
     private void maybePopup(MouseEvent e) {

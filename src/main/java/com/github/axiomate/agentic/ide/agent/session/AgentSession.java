@@ -29,6 +29,8 @@ public class AgentSession {
     private String updatedAt;
     private boolean pinned = false;
     private String origin = "";
+    /** Folder the session works in; the Explorer switches to it when the session is selected. */
+    private String projectPath;
 
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -170,6 +172,14 @@ public class AgentSession {
 
     public void setPinned(boolean pinned) {
         this.pinned = pinned;
+    }
+
+    public String getProjectPath() {
+        return projectPath;
+    }
+
+    public void setProjectPath(String projectPath) {
+        this.projectPath = projectPath;
     }
 
     public String getOrigin() {

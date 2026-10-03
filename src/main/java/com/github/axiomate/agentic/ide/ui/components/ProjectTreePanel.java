@@ -65,6 +65,16 @@ public class ProjectTreePanel extends JPanel {
         tree.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                // A single click on a folder opens it in place so its files show right away
+                if (e.getClickCount() == 1 && SwingUtilities.isLeftMouseButton(e)) {
+                    TreePath path = tree.getPathForLocation(e.getX(), e.getY());
+                    if (path != null && path.getPathCount() > 1
+                            && ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject() instanceof FileNode fn
+                            && fn.file.isDirectory()) {
+                        if (tree.isExpanded(path)) tree.collapsePath(path);
+                        else tree.expandPath(path);
+                    }
+                }
                 if (e.getClickCount() == 2) {
                     TreePath path = tree.getPathForLocation(e.getX(), e.getY());
                     if (path != null) {
@@ -91,6 +101,18 @@ public class ProjectTreePanel extends JPanel {
             }
         });
 
+        // Folders load their children when first expanded, so every file (hidden ones too) can be listed cheaply
+        tree.addTreeWillExpandListener(new javax.swing.event.TreeWillExpandListener() {
+            @Override
+            public void treeWillExpand(javax.swing.event.TreeExpansionEvent event) {
+                loadChildren((DefaultMutableTreeNode) event.getPath().getLastPathComponent());
+            }
+
+            @Override
+            public void treeWillCollapse(javax.swing.event.TreeExpansionEvent event) {
+            }
+        });
+
         JScrollPane scrollPane = new JScrollPane(tree);
         scrollPane.setBorder(null);
         add(scrollPane, BorderLayout.CENTER);
@@ -107,27 +129,44 @@ public class ProjectTreePanel extends JPanel {
         }
 
         DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode(new FileNode(rootDir));
-        populateTree(rootDir, rootNode);
+        loadChildren(rootNode);
         treeModel = new DefaultTreeModel(rootNode);
         tree.setModel(treeModel);
 
         tree.expandRow(0);
     }
 
-    private void populateTree(File dir, DefaultMutableTreeNode parentNode) {
-        File[] files = dir.listFiles((f, name) -> !name.startsWith(".") && !name.equals("target") && !name.equals(".git"));
-        if (files == null) return;
-
-        Arrays.sort(files, Comparator.comparing(File::isFile).thenComparing(File::getName));
-
-        for (File file : files) {
-            DefaultMutableTreeNode childNode = new DefaultMutableTreeNode(new FileNode(file));
-            parentNode.add(childNode);
-            if (file.isDirectory()) {
-                populateTree(file, childNode);
-            }
-        }
+    /** Selects and scrolls to the project folder at the top of the tree. */
+    public void revealRoot() {
+        if (tree.getRowCount() == 0) return;
+        tree.expandRow(0);
+        tree.setSelectionRow(0);
+        tree.scrollRowToVisible(0);
     }
+
+    /** Lists every entry of a folder: folders first, then files, each sorted by name. */
+    static File[] listEntries(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) return new File[0];
+        Arrays.sort(files, Comparator.comparing(File::isFile).thenComparing(f -> f.getName().toLowerCase()));
+        return files;
+    }
+
+    private void loadChildren(DefaultMutableTreeNode node) {
+        if (!(node.getUserObject() instanceof FileNode fn) || fn.loaded) return;
+        fn.loaded = true;
+        node.removeAllChildren();
+        for (File file : listEntries(fn.file)) {
+            DefaultMutableTreeNode child = new DefaultMutableTreeNode(new FileNode(file));
+            if (file.isDirectory()) {
+                child.add(new DefaultMutableTreeNode(PLACEHOLDER)); // shows the expand handle until loaded
+            }
+            node.add(child);
+        }
+        if (treeModel != null) treeModel.nodeStructureChanged(node);
+    }
+
+    private static final String PLACEHOLDER = "Loading…";
 
     private void showContextMenu(MouseEvent e) {
         TreePath path = tree.getPathForLocation(e.getX(), e.getY());
@@ -214,6 +253,7 @@ public class ProjectTreePanel extends JPanel {
 
     public static class FileNode {
         public final File file;
+        boolean loaded;
 
         public FileNode(File file) {
             this.file = file;
