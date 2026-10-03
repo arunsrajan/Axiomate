@@ -385,7 +385,7 @@ public class LangChainAgentService implements AIAgentService {
                         String.format("Error calling provider %s [%s] at URL [%s]: %s",
                                 activeProviderName, activeTargetModel, activeEndpointUrl, e.getMessage()), e));
             } finally {
-                dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.clearThinkingReplay();
+                ReasoningContext.clear();
             }
         });
     }
@@ -471,12 +471,7 @@ public class LangChainAgentService implements AIAgentService {
 
     /** Reads and clears the reasoning captured by AnthropicMapper for the last generate() call. */
     private static String takeLastThinking() {
-        try {
-            String t = dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.get();
-            return t != null && !t.isBlank() ? t : null;
-        } finally {
-            dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.remove();
-        }
+        return ReasoningContext.takeLast();
     }
 
     private static String truncate(String s, int max) {

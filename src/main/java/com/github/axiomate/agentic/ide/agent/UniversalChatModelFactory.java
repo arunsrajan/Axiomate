@@ -4,7 +4,6 @@ import com.github.axiomate.agentic.ide.config.ProviderConfig;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
-import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -104,14 +103,9 @@ public class UniversalChatModelFactory {
                         .timeout(REQUEST_TIMEOUT);
                 yield builder.build();
             }
-            default -> { // OPENAI or CUSTOM (Ollama, LM Studio, vLLM, DeepSeek, etc.)
-                yield OpenAiChatModel.builder()
-                        .apiKey(apiKey)
-                        .baseUrl(baseUrl)
-                        .modelName(targetModel)
-                        .temperature(temperature)
-                        .timeout(REQUEST_TIMEOUT)
-                        .build();
+            default -> { // OPENAI or CUSTOM (Ollama, LM Studio, vLLM, DeepSeek, OpenRouter, etc.)
+                // Own client: keeps reasoning_content and sends it back with tool-calling turns
+                yield new OpenAiCompatibleChatModel(baseUrl, apiKey, targetModel, temperature, null, REQUEST_TIMEOUT);
             }
         };
     }

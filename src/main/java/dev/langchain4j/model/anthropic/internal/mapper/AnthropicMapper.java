@@ -55,7 +55,8 @@ public class AnthropicMapper {
      * on the same thread. LangChainAgentService reads this after chatModel.generate() returns
      * to surface reasoning to the UI via onThinking().
      */
-    public static final ThreadLocal<String> LAST_THINKING = new ThreadLocal<>();
+    public static final ThreadLocal<String> LAST_THINKING =
+            com.github.axiomate.agentic.ide.agent.ReasoningContext.LAST_REASONING;
 
     /**
      * Reasoning blocks of assistant turns that called tools, keyed by the AiMessage instance (identity), so they
