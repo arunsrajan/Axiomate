@@ -11,7 +11,7 @@ import java.util.*;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class IdeConfig {
 
-    private String theme = "FlatLaf Darcula";
+    private String theme = "Claude Dark";
     private int fontSize = 14;
     private String fontFamily = "Consolas";
 

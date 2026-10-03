@@ -5,6 +5,7 @@ import com.formdev.flatlaf.FlatDarkLaf;
 import com.formdev.flatlaf.FlatIntelliJLaf;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
+import com.github.axiomate.agentic.ide.ui.theme.ClaudeTheme;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,13 +27,39 @@ public class UIUtils {
 
     private static final Logger log = LoggerFactory.getLogger(UIUtils.class);
 
-    public static final Color ACCENT_COLOR = new Color(59, 130, 246);       // Vibrant Blue
-    public static final Color ACCENT_PURPLE = new Color(139, 92, 246);     // AI Purple
-    public static final Color SUCCESS_COLOR = new Color(34, 197, 94);       // Emerald Green
-    public static final Color WARNING_COLOR = new Color(245, 158, 11);      // Amber
-    public static final Color ERROR_COLOR = new Color(239, 68, 68);         // Rose Red
+    // Semantic colors; Claude themes replace them with Claude Code's palette when applied
+    public static volatile Color ACCENT_COLOR = new Color(59, 130, 246);       // Primary accent
+    public static volatile Color ACCENT_PURPLE = new Color(139, 92, 246);     // Secondary / AI accent
+    public static volatile Color SUCCESS_COLOR = new Color(34, 197, 94);
+    public static volatile Color WARNING_COLOR = new Color(245, 158, 11);
+    public static volatile Color ERROR_COLOR = new Color(239, 68, 68);
 
-    public static final String[] THEMES = {"FlatLaf Darcula", "FlatLaf Dark", "FlatLaf Light", "IntelliJ Light", "One Dark"};
+    public static final String DEFAULT_THEME = "Claude Dark";
+    public static final String[] THEMES = {"Claude Dark", "Claude Light", "Claude Dark (Colorblind)", "Claude Light (Colorblind)",
+            "FlatLaf Darcula", "FlatLaf Dark", "FlatLaf Light", "IntelliJ Light", "One Dark"};
+
+    private static volatile ClaudeTheme activeClaudeTheme;
+
+    /** The active Claude theme, or null when a classic FlatLaf theme is in use. */
+    public static ClaudeTheme claudeTheme() {
+        return activeClaudeTheme;
+    }
+
+    private static void setSemanticColors(ClaudeTheme t) {
+        if (t != null) {
+            ACCENT_COLOR = t.claude();
+            ACCENT_PURPLE = t.permission();
+            SUCCESS_COLOR = t.success();
+            WARNING_COLOR = t.warning();
+            ERROR_COLOR = t.error();
+        } else {
+            ACCENT_COLOR = new Color(59, 130, 246);
+            ACCENT_PURPLE = new Color(139, 92, 246);
+            SUCCESS_COLOR = new Color(34, 197, 94);
+            WARNING_COLOR = new Color(245, 158, 11);
+            ERROR_COLOR = new Color(239, 68, 68);
+        }
+    }
 
     private static final List<Runnable> themeListeners = new CopyOnWriteArrayList<>();
 
@@ -45,7 +72,14 @@ public class UIUtils {
 
     public static void applyTheme(String themeName, Component rootComponent) {
         try {
-            switch (themeName) {
+            ClaudeTheme claude = ClaudeTheme.byName(themeName == null ? "" : themeName).orElse(null);
+            activeClaudeTheme = claude;
+            setSemanticColors(claude);
+            FlatLaf.setGlobalExtraDefaults(claude != null ? claude.lafDefaults() : null);
+            if (claude != null) {
+                if (claude.isDark()) FlatDarkLaf.setup();
+                else FlatLightLaf.setup();
+            } else switch (themeName == null ? "" : themeName) {
                 case "FlatLaf Light" -> FlatLightLaf.setup();
                 case "FlatLaf Dark" -> FlatDarkLaf.setup();
                 case "IntelliJ Light" -> FlatIntelliJLaf.setup();
@@ -397,7 +431,7 @@ public class UIUtils {
     // Activity bar & action icons (stroke-drawn, DPI independent)
     // ------------------------------------------------------------------
 
-    public enum Glyph {EXPLORER, SESSIONS, MEMORY, SYNC, PLUGINS, SEARCH, PLUS, TRASH, PIN, DOWNLOAD, UPLOAD, MORE, REFRESH, TERMINAL, COMMAND}
+    public enum Glyph {EXPLORER, SESSIONS, MEMORY, SYNC, PLUGINS, SEARCH, PLUS, TRASH, PIN, DOWNLOAD, UPLOAD, MORE, REFRESH, TERMINAL, COMMAND, DOT, ELBOW, SPARK}
 
     /**
      * Stroke-based glyph icon; a null color follows the current theme's foreground.
@@ -512,6 +546,22 @@ public class UIUtils {
                         g2.draw(new Line2D.Float(s * .26f, s * .38f, s * .4f, s * .5f));
                         g2.draw(new Line2D.Float(s * .4f, s * .5f, s * .26f, s * .62f));
                         g2.draw(new Line2D.Float(s * .48f, s * .64f, s * .7f, s * .64f));
+                    }
+                    case DOT -> g2.fill(new Ellipse2D.Float(s * .3f, s * .3f, s * .4f, s * .4f));
+                    case ELBOW -> {
+                        // Claude Code's "⎿" connector in front of tool results
+                        g2.draw(new Line2D.Float(s * .35f, s * .05f, s * .35f, s * .6f));
+                        g2.draw(new Line2D.Float(s * .35f, s * .6f, s * .9f, s * .6f));
+                    }
+                    case SPARK -> {
+                        // Claude's "✻" asterisk: six rounded spokes
+                        g2.setStroke(new BasicStroke(Math.max(1.6f, s / 7.5f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                        for (int i = 0; i < 6; i++) {
+                            double a = Math.PI / 6 + i * Math.PI / 3;
+                            float x2 = (float) (s / 2 + Math.cos(a) * s * .42);
+                            float y2 = (float) (s / 2 + Math.sin(a) * s * .42);
+                            g2.draw(new Line2D.Float(s / 2f, s / 2f, x2, y2));
+                        }
                     }
                     case COMMAND -> {
                         g2.draw(new RoundRectangle2D.Float(s * .12f, s * .12f, s * .76f, s * .76f, s * .2f, s * .2f));

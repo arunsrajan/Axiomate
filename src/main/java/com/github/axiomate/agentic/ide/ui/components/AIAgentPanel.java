@@ -53,6 +53,7 @@ public class AIAgentPanel extends JPanel {
     private final JButton sendBtn;
     private final JButton stopBtn;
     private final JLabel statusBadge;
+    private final ThinkingIndicator thinkingIndicator = new ThinkingIndicator();
     private final JCheckBox includeContextCheck;
     private final JCheckBox includeMemoryCheck;
 
@@ -109,14 +110,15 @@ public class AIAgentPanel extends JPanel {
 
         JPanel titleSubPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         titleSubPanel.setOpaque(false);
-        JLabel iconLabel = new JLabel(UIUtils.createSparkleIcon(16, UIUtils.ACCENT_PURPLE));
-        JLabel titleLabel = new JLabel("AXIOMATE AI");
-        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        JLabel iconLabel = new JLabel();
+        onTheme(() -> iconLabel.setIcon(UIUtils.glyph(UIUtils.Glyph.SPARK, 16, UIUtils.ACCENT_COLOR)));
+        JLabel titleLabel = new JLabel("Axiomate");
+        titleLabel.setFont(UIUtils.uiFont(Font.BOLD, 13f));
         onTheme(() -> titleLabel.setForeground(UIUtils.foreground()));
 
-        statusBadge = new JLabel("● Ready");
-        statusBadge.setFont(new Font("SansSerif", Font.BOLD, 11));
-        statusBadge.setForeground(UIUtils.SUCCESS_COLOR);
+        statusBadge = new JLabel("Ready");
+        statusBadge.setFont(UIUtils.uiFont(Font.PLAIN, 11.5f));
+        onTheme(() -> statusBadge.setForeground(UIUtils.mutedForeground()));
 
         titleSubPanel.add(iconLabel);
         titleSubPanel.add(titleLabel);
@@ -384,8 +386,9 @@ public class AIAgentPanel extends JPanel {
         inputArea = new JTextArea(3, 20);
         inputArea.setLineWrap(true);
         inputArea.setWrapStyleWord(true);
-        inputArea.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        inputArea.setBorder(new EmptyBorder(6, 6, 6, 6));
+        inputArea.setFont(transcriptFont(Font.PLAIN, 0f));
+        inputArea.setBorder(new EmptyBorder(6, 2, 6, 6));
+        inputArea.setOpaque(false);
         inputArea.setToolTipText("Type your prompt... Type '@' to mention files, '/' for slash commands");
         inputArea.putClientProperty("JTextField.placeholderText", "Ask Axiomate…  @ mention files · / commands · Ctrl+Enter to send");
 
@@ -399,12 +402,56 @@ public class AIAgentPanel extends JPanel {
                     e.consume();
                     submitPrompt();
                 }
+                // Esc interrupts a running agent, like Claude Code (popups consume Esc first when open)
+                if (e.getKeyCode() == KeyEvent.VK_ESCAPE && !e.isConsumed() && thinkingIndicator.isRunning()
+                        && !slashCompletion.isPopupVisible()) {
+                    e.consume();
+                    cancelAgent();
+                }
             }
         });
 
         JScrollPane inputScroll = new JScrollPane(inputArea);
-        inputScroll.setPreferredSize(new Dimension(0, 72));
-        inputScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 90));
+        inputScroll.setBorder(null);
+        inputScroll.setOpaque(false);
+        inputScroll.getViewport().setOpaque(false);
+
+        // Claude Code style prompt box: rounded border with a "> " prompt, accent border while focused
+        JPanel promptBox = new JPanel(new BorderLayout(6, 0)) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(UIUtils.surface(3));
+                g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
+                g2.setColor(inputArea.isFocusOwner() ? UIUtils.ACCENT_COLOR : UIUtils.borderColor());
+                g2.setStroke(new BasicStroke(inputArea.isFocusOwner() ? 1.6f : 1f));
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
+                g2.dispose();
+            }
+        };
+        promptBox.setOpaque(false);
+        promptBox.setBorder(new EmptyBorder(4, 10, 4, 6));
+        JLabel promptGlyph = new JLabel(">");
+        promptGlyph.setFont(transcriptFont(Font.BOLD, 1f));
+        promptGlyph.setVerticalAlignment(SwingConstants.TOP);
+        promptGlyph.setBorder(new EmptyBorder(6, 0, 0, 0));
+        onTheme(() -> promptGlyph.setForeground(UIUtils.mutedForeground()));
+        promptBox.add(promptGlyph, BorderLayout.WEST);
+        promptBox.add(inputScroll, BorderLayout.CENTER);
+        promptBox.setPreferredSize(new Dimension(0, 84));
+        promptBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
+        inputArea.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent e) {
+                promptBox.repaint();
+            }
+
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                promptBox.repaint();
+            }
+        });
 
         JPanel buttonBar = new JPanel(new BorderLayout());
         buttonBar.setOpaque(false);
@@ -420,8 +467,14 @@ public class AIAgentPanel extends JPanel {
         stopBtn.setEnabled(false);
         stopBtn.addActionListener(e -> cancelAgent());
 
-        sendBtn = UIUtils.createPillButton("Send (Ctrl+↵)", UIUtils.createSparkleIcon(12, Color.WHITE),
-                UIUtils.ACCENT_COLOR, Color.WHITE);
+        sendBtn = new JButton("Send  Ctrl+↵");
+        sendBtn.setFont(UIUtils.uiFont(Font.BOLD, 12f));
+        sendBtn.setFocusable(false);
+        sendBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        onTheme(() -> {
+            sendBtn.setBackground(UIUtils.ACCENT_COLOR);
+            sendBtn.setForeground(Color.WHITE);
+        });
         sendBtn.addActionListener(e -> submitPrompt());
 
         rightBar.add(stopBtn);
@@ -430,8 +483,13 @@ public class AIAgentPanel extends JPanel {
         buttonBar.add(leftBar, BorderLayout.WEST);
         buttonBar.add(rightBar, BorderLayout.EAST);
 
-        // 1. Chat prompt text box
-        inputPanel.add(inputScroll);
+        // 1. Activity line ("✻ Thinking… (12s · esc to interrupt)") and the chat prompt box
+        thinkingIndicator.setAlignmentX(Component.LEFT_ALIGNMENT);
+        promptBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+        controlBar.setAlignmentX(Component.LEFT_ALIGNMENT);
+        buttonBar.setAlignmentX(Component.LEFT_ALIGNMENT);
+        inputPanel.add(thinkingIndicator);
+        inputPanel.add(promptBox);
         inputPanel.add(Box.createVerticalStrut(4));
 
         // 2. Provider dropdown, Model dropdown, Auto-Route checkbox, Tokens progressbar below prompt
@@ -984,20 +1042,32 @@ public class AIAgentPanel extends JPanel {
         return btn;
     }
 
+    /**
+     * Claude Code style welcome box: accent-bordered card with the essentials and the working directory.
+     */
     private void addWelcomeMessage() {
-        appendAssistantBubble("""
-            👋 **Welcome to Axiomate AI Agent IDE!**
-            Autonomous pair programming environment with **Multi-Provider Models**, **Task-Based Routing**, and **Agentic Memory**.
-            
-            Key Features:
-            - 🌐 **Anthropic, OpenAI & Gemini URLs**: Independently configurable endpoints and custom models.
-            - 🎯 **Autonomous Task Routing**: Automatically routes Refactoring to Claude, Explanations to Gemini, Tests to OpenAI.
-            - 👥 **Multi-Agent Sessions**: Launch, save, load, and switch between multiple concurrent agent sessions per project.
-            - 🎛 **Output Display Filters**: Show or hide tool requests, responses, model reasoning, and walkthroughs on demand.
-            - 📊 **Token Usage & Limit Meter**: Displays real-time context consumption and % limit.
-            - ⚡ **95% Context Compression**: Automatically condenses conversation history into episodic memory when reaching 95% capacity.
-            - 📎 **`@` File Mentions**: Type `@` to select and inject workspace files directly into the AI agent prompt.
-            """);
+        File dir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        JPanel box = roundedPanel(UIUtils.panelBackground(), UIUtils.ACCENT_COLOR);
+        box.setLayout(new BorderLayout(0, 6));
+        box.setBorder(new EmptyBorder(10, 14, 10, 14));
+        JLabel title = new JLabel("Welcome to Axiomate!", UIUtils.glyph(UIUtils.Glyph.SPARK, 14, UIUtils.ACCENT_COLOR), JLabel.LEFT);
+        title.setIconTextGap(8);
+        title.setFont(transcriptFont(Font.BOLD, 0f));
+        title.setForeground(UIUtils.foreground());
+        JTextArea body = createBubbleTextArea(
+                "/help for commands · @ to mention files · Ctrl+Enter to send · Esc to interrupt\n\n"
+                        + "cwd: " + (dir != null ? dir.getAbsolutePath() : "(no project)"));
+        body.setForeground(UIUtils.mutedForeground());
+        body.setFont(transcriptFont(Font.PLAIN, -1f));
+        box.add(title, BorderLayout.NORTH);
+        box.add(body, BorderLayout.CENTER);
+
+        // A walkthrough card so the output filters treat it like any assistant reply
+        MessageCard card = new MessageCard(MessageDisplayType.WALKTHROUGH, box, null);
+        card.setBorder(new EmptyBorder(8, 4, 8, 4));
+        card.add(box, BorderLayout.CENTER);
+        card.setVisible(showWalkthroughCheck.isSelected());
+        addCard(card, 6);
     }
 
     public void clearChat() {
@@ -1151,10 +1221,15 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void setAgentState(String status, Color color, boolean isBusy) {
-        statusBadge.setText("● " + status);
-        statusBadge.setForeground(color);
+        statusBadge.setText(status);
+        statusBadge.setForeground(isBusy ? UIUtils.ACCENT_COLOR : color);
         sendBtn.setEnabled(!isBusy);
         stopBtn.setEnabled(isBusy);
+        if (isBusy) {
+            thinkingIndicator.start(status);
+        } else {
+            thinkingIndicator.stop();
+        }
     }
 
     private JButton createCollapseToggleButton() {
@@ -1162,142 +1237,144 @@ public class AIAgentPanel extends JPanel {
     }
 
     private JButton createCollapseToggleButton(boolean startCollapsed) {
-        JButton btn = new JButton(startCollapsed ? "▾ Expand" : "▴ Collapse");
-        btn.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        JButton btn = new JButton(startCollapsed ? "expand" : "collapse");
+        btn.setFont(transcriptFont(Font.PLAIN, -2f));
         btn.setForeground(UIUtils.mutedForeground());
         btn.setContentAreaFilled(false);
         btn.setBorderPainted(false);
         btn.setFocusPainted(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.setMargin(new Insets(1, 4, 1, 4));
+        btn.setMargin(new Insets(0, 4, 0, 4));
         return btn;
     }
 
+    // ------------------------------------------------------------------
+    // Claude Code style transcript: "> prompt", "● reply", "● Tool(args)" + "⎿ result", "✻ Thinking"
+    // ------------------------------------------------------------------
+
+    /** Monospace transcript font, like the Claude Code terminal UI. */
+    private static Font transcriptFont(int style, float delta) {
+        Font f = UIUtils.getEditorFont(13);
+        return f.deriveFont(style, f.getSize2D() + delta);
+    }
+
+    /** A transcript row: a fixed-width gutter glyph followed by the content (header + optional body). */
+    private static JPanel transcriptRow(Icon gutterIcon, JComponent content) {
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        JLabel gutter = new JLabel(gutterIcon);
+        gutter.setVerticalAlignment(SwingConstants.TOP);
+        gutter.setBorder(new EmptyBorder(3, 0, 0, 0));
+        gutter.setPreferredSize(new Dimension(16, 16));
+        row.add(gutter, BorderLayout.WEST);
+        row.add(content, BorderLayout.CENTER);
+        return row;
+    }
+
+    /** Header line of a collapsible entry: title (truncates) + expand/collapse link, clickable as a whole. */
+    private static JPanel entryHeader(JComponent title, JButton toggle) {
+        JPanel header = new JPanel(new BorderLayout(6, 0));
+        header.setOpaque(false);
+        header.add(title, BorderLayout.CENTER);
+        if (toggle != null) header.add(toggle, BorderLayout.EAST);
+        header.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return header;
+    }
+
+    private static void wireToggle(MessageCard card, JButton toggle, JComponent header) {
+        toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
+        header.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                card.setCollapsed(!card.isCollapsed());
+            }
+        });
+    }
+
+    private void addCard(MessageCard card, int gap) {
+        chatBox.add(card);
+        chatBox.add(Box.createVerticalStrut(gap));
+        scrollToBottom();
+    }
+
     private void appendUserBubble(String text) {
-        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.ACCENT_COLOR, 0.16f), null);
-        inner.setBorder(new EmptyBorder(8, 12, 8, 12));
-
-        JLabel header = new JLabel("You");
-        header.setFont(new Font("SansSerif", Font.BOLD, 11));
-        header.setForeground(UIUtils.accentText(UIUtils.ACCENT_COLOR));
-
+        // Claude Code shows the prompt as "> text" on a subtle highlighted block
+        JPanel inner = roundedPanel(UIUtils.surface(3), null);
+        inner.setBorder(new EmptyBorder(6, 10, 6, 10));
+        JLabel prompt = new JLabel(">");
+        prompt.setFont(transcriptFont(Font.BOLD, 0f));
+        prompt.setForeground(UIUtils.mutedForeground());
+        prompt.setVerticalAlignment(SwingConstants.TOP);
+        prompt.setBorder(new EmptyBorder(0, 0, 0, 8));
         JTextArea area = createBubbleTextArea(text);
-        inner.add(header, BorderLayout.NORTH);
+        inner.add(prompt, BorderLayout.WEST);
         inner.add(area, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.USER, inner, null);
-        card.setBorder(new EmptyBorder(6, 36, 6, 6));
+        card.setBorder(new EmptyBorder(8, 4, 4, 4));
         card.add(inner, BorderLayout.CENTER);
-
-        chatBox.add(card);
-        chatBox.add(Box.createVerticalStrut(6));
-        scrollToBottom();
+        addCard(card, 4);
     }
 
     private void ensureAssistantBubble() {
         if (currentAssistantMessagePanel == null) {
-            JPanel inner = roundedPanel(UIUtils.surface(2), UIUtils.borderColor());
-            inner.setBorder(new EmptyBorder(8, 12, 8, 12));
-
-            AgentSession session = SessionManager.getInstance().getActiveSession();
-            String title = (session != null)
-                    ? session.getName() + " [" + session.getModelId() + "]"
-                    : "Axiomate AI";
-
-            JPanel headerBar = new JPanel(new BorderLayout());
-            headerBar.setOpaque(false);
-            headerBar.setBorder(new EmptyBorder(0, 0, 4, 0));
-
-            JLabel header = new JLabel(title + " — Walkthrough / Response", UIUtils.createSparkleIcon(14, UIUtils.ACCENT_PURPLE), JLabel.LEFT);
-            header.setFont(new Font("SansSerif", Font.BOLD, 11));
-            header.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
-
             JButton toggle = createCollapseToggleButton(false);
-
-            headerBar.add(header, BorderLayout.CENTER);
-            headerBar.add(toggle, BorderLayout.EAST);
-
             currentAssistantTextArea = createBubbleTextArea("");
 
             JPanel contentPanel = new JPanel(new BorderLayout());
             contentPanel.setOpaque(false);
             contentPanel.add(currentAssistantTextArea, BorderLayout.CENTER);
 
-            inner.add(headerBar, BorderLayout.NORTH);
-            inner.add(contentPanel, BorderLayout.CENTER);
+            // The reply starts on the ● line; the collapse link sits at the right of the first line
+            JPanel header = new JPanel(new BorderLayout());
+            header.setOpaque(false);
+            header.add(toggle, BorderLayout.NORTH);
+            JPanel body = new JPanel(new BorderLayout(6, 0));
+            body.setOpaque(false);
+            body.add(contentPanel, BorderLayout.CENTER);
+            body.add(header, BorderLayout.EAST);
 
-            // Final summary / walkthrough remains in expanded state by default
             MessageCard card = new MessageCard(MessageDisplayType.WALKTHROUGH, contentPanel, toggle, false);
-            toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
-            headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            headerBar.addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    card.setCollapsed(!card.isCollapsed());
-                }
-            });
-            card.setBorder(new EmptyBorder(6, 6, 6, 6));
-            card.add(inner, BorderLayout.CENTER);
-
+            wireToggle(card, toggle, header);
+            card.setBorder(new EmptyBorder(4, 4, 4, 4));
+            card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.DOT, 14, UIUtils.foreground()), body), BorderLayout.CENTER);
             card.setVisible(showWalkthroughCheck.isSelected());
-            chatBox.add(card);
-            chatBox.add(Box.createVerticalStrut(6));
-
+            addCard(card, 4);
             currentAssistantMessagePanel = card;
         }
     }
 
     /**
-     * Renders the model's thinking/reasoning in a styled dark-purple bubble in the chat.
+     * Renders model reasoning as Claude Code does: a muted "✻ Thinking" line, expandable to the full text.
      */
     private void appendThinkingBubble(String thought) {
-        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.ACCENT_PURPLE, 0.10f), UIUtils.tint(UIUtils.ACCENT_PURPLE, 0.45f));
-
-        JPanel headerBar = new JPanel(new BorderLayout());
-        headerBar.setOpaque(false);
-        headerBar.setBorder(new EmptyBorder(4, 8, 4, 8));
-
-        JLabel header = new JLabel("🧠  Model Reasoning  (thinking block)");
-        header.setFont(new Font("SansSerif", Font.BOLD, 10));
-        header.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
+        String display = thought.length() > 4000 ? thought.substring(0, 4000) + "\n… (full reasoning in Agent Logs)" : thought;
+        String firstLine = display.strip().split("\\R", 2)[0];
+        JLabel title = new JLabel("Thinking… " + (firstLine.length() > 90 ? firstLine.substring(0, 89) + "…" : firstLine));
+        title.setFont(transcriptFont(Font.ITALIC, -1f));
+        title.setForeground(UIUtils.mutedForeground());
 
         JButton toggle = createCollapseToggleButton(true);
-
-        headerBar.add(header, BorderLayout.CENTER);
-        headerBar.add(toggle, BorderLayout.EAST);
-
-        String display = thought;
-        if (display.length() > 800) {
-            display = display.substring(0, 800) + "\n… (see terminal log for full reasoning)";
-        }
         JTextArea area = createBubbleTextArea(display);
-        area.setFont(new Font("SansSerif", Font.ITALIC, 12));
-        area.setForeground(UIUtils.blend(UIUtils.foreground(), UIUtils.ACCENT_PURPLE, 0.25f));
-        area.setBorder(new EmptyBorder(4, 8, 6, 8));
+        area.setFont(transcriptFont(Font.ITALIC, -1f));
+        area.setForeground(UIUtils.mutedForeground());
+        area.setBorder(new EmptyBorder(2, 0, 2, 0));
 
         JPanel contentPanel = new JPanel(new BorderLayout());
         contentPanel.setOpaque(false);
         contentPanel.add(area, BorderLayout.CENTER);
-
-        inner.add(headerBar, BorderLayout.NORTH);
-        inner.add(contentPanel, BorderLayout.CENTER);
+        JPanel header = entryHeader(title, toggle);
+        JPanel body = new JPanel(new BorderLayout());
+        body.setOpaque(false);
+        body.add(header, BorderLayout.NORTH);
+        body.add(contentPanel, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.THINKING, contentPanel, toggle, true);
-        toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
-        headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        headerBar.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                card.setCollapsed(!card.isCollapsed());
-            }
-        });
-        card.setBorder(new EmptyBorder(4, 12, 4, 12));
-        card.add(inner, BorderLayout.CENTER);
-
+        wireToggle(card, toggle, header);
+        card.setBorder(new EmptyBorder(2, 4, 2, 4));
+        card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.SPARK, 14, UIUtils.mutedForeground()), body), BorderLayout.CENTER);
         card.setVisible(showThinkingCheck.isSelected());
-        chatBox.add(card);
-        chatBox.add(Box.createVerticalStrut(4));
-        scrollToBottom();
+        addCard(card, 2);
     }
 
     private void appendAssistantBubble(String text) {
@@ -1309,120 +1386,104 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void appendSystemBubble(String text) {
-        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.ACCENT_PURPLE, 0.14f), UIUtils.tint(UIUtils.ACCENT_PURPLE, 0.6f));
-
-        JLabel header = new JLabel("⚡ System");
-        header.setFont(new Font("SansSerif", Font.BOLD, 10));
-        header.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
-        header.setBorder(new EmptyBorder(4, 8, 2, 8));
-
         JTextArea area = createBubbleTextArea(text);
-        area.setForeground(UIUtils.foreground());
-        area.setBorder(new EmptyBorder(2, 8, 6, 8));
-
-        inner.add(header, BorderLayout.NORTH);
+        area.setForeground(UIUtils.mutedForeground());
+        area.setFont(transcriptFont(Font.PLAIN, -1f));
+        JPanel inner = new JPanel(new BorderLayout());
+        inner.setOpaque(false);
         inner.add(area, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.SYSTEM, inner, null);
-        card.setBorder(new EmptyBorder(4, 12, 4, 12));
-        card.add(inner, BorderLayout.CENTER);
+        card.setBorder(new EmptyBorder(2, 4, 2, 4));
+        card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.ELBOW, 14, UIUtils.mutedForeground()), inner), BorderLayout.CENTER);
+        addCard(card, 2);
+    }
 
-        chatBox.add(card);
-        chatBox.add(Box.createVerticalStrut(4));
-        scrollToBottom();
+    /** "Tool(first argument…)" summary used in tool-call headers. */
+    static String toolCallSummary(String toolName, String input) {
+        String args = input == null ? "" : input.replaceAll("\\s+", " ").strip();
+        // Like Claude Code: show the argument values, e.g. Read(src/Main.java) rather than raw JSON
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(args);
+            if (node != null && node.isObject()) {
+                java.util.List<String> values = new java.util.ArrayList<>();
+                node.fields().forEachRemaining(e -> values.add(e.getValue().isValueNode() ? e.getValue().asText() : e.getValue().toString()));
+                args = String.join(", ", values).replaceAll("\\s+", " ").strip();
+            }
+        } catch (Exception ignored) {
+            if (args.startsWith("{") && args.endsWith("}")) args = args.substring(1, args.length() - 1).strip();
+        }
+        if (args.length() > 70) args = args.substring(0, 69) + "…";
+        return toolName + "(" + args + ")";
     }
 
     private void appendToolRequestBubble(String toolName, String input) {
-        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.ACCENT_COLOR, 0.07f), UIUtils.tint(UIUtils.ACCENT_COLOR, 0.4f));
-
-        JPanel headerBar = new JPanel(new BorderLayout());
-        headerBar.setOpaque(false);
-        headerBar.setBorder(new EmptyBorder(4, 8, 4, 8));
-
-        JLabel header = new JLabel("🔧  Tool Call: " + toolName);
-        header.setFont(new Font("Monospaced", Font.BOLD, 11));
-        header.setForeground(UIUtils.accentText(UIUtils.ACCENT_COLOR));
+        JLabel title = new JLabel(toolCallSummary(toolName, input));
+        title.setFont(transcriptFont(Font.BOLD, 0f));
+        title.setForeground(UIUtils.foreground());
 
         JButton toggle = createCollapseToggleButton(true);
-
-        headerBar.add(header, BorderLayout.CENTER);
-        headerBar.add(toggle, BorderLayout.EAST);
-
         JTextArea area = createBubbleTextArea(input != null ? input : "{}");
-        area.setFont(new Font("Consolas", Font.PLAIN, 11));
-        area.setForeground(UIUtils.blend(UIUtils.foreground(), UIUtils.ACCENT_COLOR, 0.2f));
-        area.setBorder(new EmptyBorder(4, 8, 6, 8));
+        area.setFont(transcriptFont(Font.PLAIN, -1f));
+        area.setForeground(UIUtils.mutedForeground());
+        area.setBorder(new EmptyBorder(2, 0, 2, 0));
 
         JPanel contentPanel = new JPanel(new BorderLayout());
         contentPanel.setOpaque(false);
         contentPanel.add(area, BorderLayout.CENTER);
-
-        inner.add(headerBar, BorderLayout.NORTH);
-        inner.add(contentPanel, BorderLayout.CENTER);
+        JPanel header = entryHeader(title, toggle);
+        JPanel body = new JPanel(new BorderLayout());
+        body.setOpaque(false);
+        body.add(header, BorderLayout.NORTH);
+        body.add(contentPanel, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.TOOL_REQUEST, contentPanel, toggle, true);
-        toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
-        headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        headerBar.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                card.setCollapsed(!card.isCollapsed());
-            }
-        });
-        card.setBorder(new EmptyBorder(4, 12, 4, 12));
-        card.add(inner, BorderLayout.CENTER);
-
+        wireToggle(card, toggle, header);
+        card.setBorder(new EmptyBorder(4, 4, 0, 4));
+        card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.DOT, 14, UIUtils.SUCCESS_COLOR), body), BorderLayout.CENTER);
         card.setVisible(showToolCallsCheck.isSelected());
-        chatBox.add(card);
-        chatBox.add(Box.createVerticalStrut(4));
-        scrollToBottom();
+        addCard(card, 0);
     }
 
     private void appendToolResultBubble(String toolName, String output) {
-        JPanel inner = roundedPanel(UIUtils.tint(UIUtils.SUCCESS_COLOR, 0.07f), UIUtils.tint(UIUtils.SUCCESS_COLOR, 0.4f));
-
-        JPanel headerBar = new JPanel(new BorderLayout());
-        headerBar.setOpaque(false);
-        headerBar.setBorder(new EmptyBorder(4, 8, 4, 8));
-
-        int lines = (output != null) ? output.split("\r\n|\r|\n").length : 0;
-        JLabel header = new JLabel("📥  Tool Result: " + toolName + " (" + lines + " lines)");
-        header.setFont(new Font("Monospaced", Font.BOLD, 11));
-        header.setForeground(UIUtils.accentText(UIUtils.SUCCESS_COLOR));
+        String text = output != null ? output : "(empty)";
+        String[] lines = text.split("\r\n|\r|\n");
+        boolean failed = text.startsWith("ERROR") || text.startsWith("[error]");
+        String first = lines.length > 0 ? lines[0].strip() : "";
+        if (first.length() > 90) first = first.substring(0, 89) + "…";
+        JLabel title = new JLabel(first.isEmpty() ? "(no output)" : first);
+        title.setFont(transcriptFont(Font.PLAIN, -1f));
+        title.setForeground(failed ? UIUtils.ERROR_COLOR : UIUtils.mutedForeground());
+        JLabel more = new JLabel(lines.length > 1 ? "… +" + (lines.length - 1) + " lines" : "");
+        more.setFont(transcriptFont(Font.PLAIN, -2f));
+        more.setForeground(UIUtils.mutedForeground());
+        JPanel titleRow = new JPanel(new BorderLayout(8, 0));
+        titleRow.setOpaque(false);
+        titleRow.add(title, BorderLayout.CENTER);
+        titleRow.add(more, BorderLayout.EAST);
 
         JButton toggle = createCollapseToggleButton(true);
-
-        headerBar.add(header, BorderLayout.CENTER);
-        headerBar.add(toggle, BorderLayout.EAST);
-
-        JTextArea area = createBubbleTextArea(output != null ? output : "(empty)");
-        area.setFont(new Font("Consolas", Font.PLAIN, 11));
-        area.setForeground(UIUtils.blend(UIUtils.foreground(), UIUtils.SUCCESS_COLOR, 0.2f));
-        area.setBorder(new EmptyBorder(4, 8, 6, 8));
+        JTextArea area = createBubbleTextArea(text);
+        area.setFont(transcriptFont(Font.PLAIN, -1f));
+        area.setForeground(UIUtils.mutedForeground());
+        area.setBorder(new EmptyBorder(2, 0, 2, 0));
 
         JPanel contentPanel = new JPanel(new BorderLayout());
         contentPanel.setOpaque(false);
         contentPanel.add(area, BorderLayout.CENTER);
-
-        inner.add(headerBar, BorderLayout.NORTH);
-        inner.add(contentPanel, BorderLayout.CENTER);
+        JPanel header = entryHeader(titleRow, toggle);
+        JPanel body = new JPanel(new BorderLayout());
+        body.setOpaque(false);
+        body.add(header, BorderLayout.NORTH);
+        body.add(contentPanel, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.TOOL_RESPONSE, contentPanel, toggle, true);
-        toggle.addActionListener(e -> card.setCollapsed(!card.isCollapsed()));
-        headerBar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        headerBar.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                card.setCollapsed(!card.isCollapsed());
-            }
-        });
-        card.setBorder(new EmptyBorder(4, 12, 4, 12));
-        card.add(inner, BorderLayout.CENTER);
-
+        wireToggle(card, toggle, header);
+        // Indented under the tool call, like Claude Code's "  ⎿  result"
+        card.setBorder(new EmptyBorder(0, 22, 4, 4));
+        card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.ELBOW, 14, UIUtils.mutedForeground()), body), BorderLayout.CENTER);
         card.setVisible(showToolResultsCheck.isSelected());
-        chatBox.add(card);
-        chatBox.add(Box.createVerticalStrut(4));
-        scrollToBottom();
+        addCard(card, 2);
     }
 
     private void appendToolBubble(String toolName, String input, String output) {
@@ -1440,7 +1501,7 @@ public class AIAgentPanel extends JPanel {
         area.setLineWrap(true);
         area.setWrapStyleWord(true);
         area.setOpaque(false);
-        area.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        area.setFont(transcriptFont(Font.PLAIN, 0f));
         area.setForeground(UIUtils.foreground());
         return area;
     }
