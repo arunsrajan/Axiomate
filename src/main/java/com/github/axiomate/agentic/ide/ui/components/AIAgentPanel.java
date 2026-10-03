@@ -417,7 +417,6 @@ public class AIAgentPanel extends JPanel {
         inputScroll.setOpaque(false);
         inputScroll.getViewport().setOpaque(false);
         inputScroll.setViewportBorder(null);
-        inputScroll.putClientProperty("FlatLaf.style", "borderWidth: 0; focusWidth: 0; innerFocusWidth: 0");
         onTheme(() -> {
             inputArea.setBackground(UIUtils.surface(3));
             inputScroll.getViewport().setBackground(UIUtils.surface(3));

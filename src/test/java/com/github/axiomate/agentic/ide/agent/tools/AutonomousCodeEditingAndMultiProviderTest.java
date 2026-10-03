@@ -133,7 +133,9 @@ class AutonomousCodeEditingAndMultiProviderTest {
         PowerShellTool tool = new PowerShellTool();
         String result = tool.execute("{\"command\": \"Write-Output 'PowerShell_Axiomate_Success'\"}");
         assertNotNull(result);
-        assertTrue(result.contains("PowerShell_Axiomate_Success") || result.contains("Exit code:"), result);
+        // Without PowerShell installed the tool must report that, not throw
+        assertTrue(result.contains("PowerShell_Axiomate_Success") || result.contains("Exit code:")
+                || result.startsWith("ERROR: PowerShell is not available"), result);
     }
 
     @Test
