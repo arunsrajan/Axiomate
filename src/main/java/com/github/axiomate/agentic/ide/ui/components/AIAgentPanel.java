@@ -483,20 +483,16 @@ public class AIAgentPanel extends JPanel {
         buttonBar.add(leftBar, BorderLayout.WEST);
         buttonBar.add(rightBar, BorderLayout.EAST);
 
-        // 1. Activity line ("✻ Thinking… (12s · esc to interrupt)") and the chat prompt box
+        // Provider/model/tokens sit above; the activity line and prompt box anchor the bottom, under the output
         thinkingIndicator.setAlignmentX(Component.LEFT_ALIGNMENT);
         promptBox.setAlignmentX(Component.LEFT_ALIGNMENT);
         controlBar.setAlignmentX(Component.LEFT_ALIGNMENT);
         buttonBar.setAlignmentX(Component.LEFT_ALIGNMENT);
+        inputPanel.add(controlBar);
+        inputPanel.add(Box.createVerticalStrut(4));
         inputPanel.add(thinkingIndicator);
         inputPanel.add(promptBox);
         inputPanel.add(Box.createVerticalStrut(4));
-
-        // 2. Provider dropdown, Model dropdown, Auto-Route checkbox, Tokens progressbar below prompt
-        inputPanel.add(controlBar);
-        inputPanel.add(Box.createVerticalStrut(4));
-
-        // 3. Action buttons bar (Context checkboxes + Stop + Send)
         inputPanel.add(buttonBar);
 
         add(inputPanel, BorderLayout.SOUTH);

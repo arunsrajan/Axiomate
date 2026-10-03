@@ -182,11 +182,11 @@ public class MainFrame extends JFrame implements IdeActions {
         activityBar.addAction("Settings (Ctrl+,)", UIUtils.Glyph.MORE, this::openSettings);
         activityBar.select(VIEW_EXPLORER);
 
-        // Center-Right split: Editor (left) vs AI Agent (right)
+        // Center-Right split: AI Agent output + prompt (center) vs Editor (right)
         editorPanel.setMinimumSize(new Dimension(320, 120));
         aiAgentPanel.setMinimumSize(new Dimension(380, 120));
-        centerRightSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, editorPanel, aiAgentPanel);
-        centerRightSplit.setResizeWeight(0.62);
+        centerRightSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, aiAgentPanel, editorPanel);
+        centerRightSplit.setResizeWeight(0.6);
         centerRightSplit.setContinuousLayout(true);
         centerRightSplit.setBorder(null);
 
@@ -350,9 +350,9 @@ public class MainFrame extends JFrame implements IdeActions {
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowOpened(java.awt.event.WindowEvent e) {
-                // The agent dock's preferred width would otherwise squeeze the editor; split evenly once sized
+                // Give the centered agent transcript the larger share once the window is sized
                 SwingUtilities.invokeLater(() -> {
-                    centerRightSplit.setDividerLocation(0.5);
+                    centerRightSplit.setDividerLocation(0.58);
                     verticalBottomSplit.setDividerLocation(0.72);
                 });
             }
