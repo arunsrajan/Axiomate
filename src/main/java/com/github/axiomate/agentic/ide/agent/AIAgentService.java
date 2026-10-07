@@ -22,6 +22,14 @@ public interface AIAgentService {
 
     void cancelCurrentTask();
 
+    /**
+     * True when the service saves the conversation (reasoning, tool calls, results, replies) to the session itself,
+     * so the chat must not save them again.
+     */
+    default boolean recordsSessionMessages() {
+        return false;
+    }
+
     boolean isBusy();
 
     List<AgentTool> getRegisteredTools();

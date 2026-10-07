@@ -265,6 +265,47 @@ class StreamingAgentTest {
         assertFalse(MAPPER.readTree(requests.get(0)).has("stream"));
     }
 
+    @Test
+    @DisplayName("Text before a tool call is saved as an interim reply, shown without streaming, and not resent later")
+    void preToolTextSaved() throws Exception {
+        String toolTurn = "{\"id\":\"c\",\"object\":\"chat.completion\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+                + "\"content\":\"Let me echo that.\",\"tool_calls\":[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"echo\","
+                + "\"arguments\":\"{\\\"input\\\":\\\"hi\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}";
+        String answer = "{\"id\":\"c\",\"object\":\"chat.completion\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+                + "\"content\":\"%s\"},\"finish_reason\":\"stop\"}]}";
+        List<String> requests = startServer("CUSTOM", "gpt-4o", new ConcurrentLinkedDeque<>(List.of(
+                Reply.json(toolTurn), Reply.json(answer.formatted("It echoed hi.")), Reply.json(answer.formatted("Sure.")))));
+        IdeConfig cfg = ConfigManager.getInstance().getConfig();
+        cfg.setStreamingEnabled(false);
+        ConfigManager.getInstance().saveConfig(cfg);
+        LangChainAgentService service = new LangChainAgentService();
+        service.registerTool(echoTool());
+        Recorder rec = run(service, "gpt-4o");
+
+        assertEquals(List.of("Let me echo that.", "It echoed hi."), rec.tokens, "the pre-tool text reaches the chat without streaming too");
+        AgentSession s = SessionManager.getInstance().getActiveSession();
+        List<String> order = new ArrayList<>();
+        for (AgentMessage m : s.getMessages()) {
+            if (m.getRole() == AgentRole.ASSISTANT) order.add((m.isInterim() ? "interim:" : "answer:") + m.getContent());
+            else if (m.getRole() == AgentRole.TOOL_CALL) order.add("tool:" + m.getToolName());
+        }
+        assertEquals(List.of("interim:Let me echo that.", "tool:echo", "answer:It echoed hi."), order);
+
+        AgentMessage saved = s.getMessages().stream().filter(AgentMessage::isInterim).findFirst().orElseThrow();
+        AgentMessage back = MAPPER.readValue(MAPPER.writeValueAsString(saved), AgentMessage.class);
+        assertTrue(back.isInterim(), "survives saving the session");
+        assertFalse(MAPPER.writeValueAsString(s.getMessages().get(s.getMessages().size() - 1)).contains("interim"),
+                "ordinary messages are saved as before");
+
+        // Follow-up turn: earlier answers are resent, the pre-tool text is not
+        Recorder next = new Recorder();
+        service.sendMessage("Thanks", "", "", next);
+        assertTrue(next.done.await(60, TimeUnit.SECONDS));
+        String followUp = requests.get(2);
+        assertTrue(followUp.contains("It echoed hi."));
+        assertFalse(followUp.contains("Let me echo that."), followUp);
+    }
+
     // ---------------------------------------------------------------- Anthropic events
 
     static String ev(String json) {
@@ -307,6 +348,8 @@ class StreamingAgentTest {
         assertEquals(List.of("Let me check.", "It said ", "pong."), rec.tokens, "narration before the tool call streams too");
         assertEquals("Need to echo.", String.join("", rec.reasoning));
         assertEquals(List.of("echo pong"), rec.tools);
+        assertTrue(SessionManager.getInstance().getActiveSession().getMessages().stream()
+                .anyMatch(m -> m.isInterim() && m.getContent().equals("Let me check.")), "streamed pre-tool text is saved");
 
         JsonNode first = MAPPER.readTree(requests.get(0));
         assertTrue(first.path("stream").asBoolean());

@@ -82,6 +82,15 @@ class StreamingUiTest {
         SwingUtilities.invokeAndWait(() -> { });
         SwingUtilities.invokeAndWait(() -> { });
 
+        List<String> live = entries(panel);
+        assertEquals(List.of("THINKING I should look.", "ANSWER Checking.", "TOOL", "ANSWER Final answer."), live);
+
+        // Reopening the session rebuilds the same transcript, including the text before the tool call
+        SwingUtilities.invokeAndWait(panel::reloadChatFromSession);
+        assertEquals(live, entries(panel));
+    }
+
+    private static List<String> entries(AIAgentPanel panel) throws Exception {
         List<String> entries = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
             for (Component c : all(panel, AIAgentPanel.MessageCard.class)) {
@@ -100,7 +109,7 @@ class StreamingUiTest {
                 }
             }
         });
-        assertEquals(List.of("THINKING I should look.", "ANSWER Checking.", "TOOL", "ANSWER Final answer."), entries);
+        return entries;
     }
 
     private static List<Component> all(Container c, Class<?> type) {

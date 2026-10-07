@@ -70,6 +70,11 @@ public class LangChainAgentService implements AIAgentService {
     }
 
     @Override
+    public boolean recordsSessionMessages() {
+        return true;
+    }
+
+    @Override
     public boolean isBusy() {
         return activeTask != null && !activeTask.isDone();
     }
@@ -225,7 +230,7 @@ public class LangChainAgentService implements AIAgentService {
                     }
                     if (priorMsg.isUser()) {
                         messages.add(replayUserMessage(priorMsg, replayImages.contains(priorMsg)));
-                    } else if (priorMsg.isAssistant()) {
+                    } else if (priorMsg.isAssistant() && !priorMsg.isInterim()) {
                         messages.add(new AiMessage(content.trim()));
                     }
                 }
@@ -323,6 +328,17 @@ public class LangChainAgentService implements AIAgentService {
                     }
 
                     if (aiMessage.hasToolExecutionRequests()) {
+                        // Text written before the tool calls: keep it in the session, and show it when not streamed
+                        String narration = aiMessage.text();
+                        if (narration != null && !narration.isBlank()) {
+                            AgentMessage interim = new AgentMessage(AgentRole.ASSISTANT, narration.strip());
+                            interim.setInterim(true);
+                            session.addMessage(interim);
+                            String unsent = unstreamedPart(narration, stream.text.toString());
+                            if (!unsent.isEmpty()) {
+                                listener.onToken(unsent);
+                            }
+                        }
                         for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
                             if (cancelled) break;
 

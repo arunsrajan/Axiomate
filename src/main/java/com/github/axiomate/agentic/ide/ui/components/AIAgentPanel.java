@@ -1191,6 +1191,8 @@ public class AIAgentPanel extends JPanel {
         currentAssistantMessagePanel = null;
         currentAssistantTextArea = null;
 
+        // Services that save the conversation themselves must not get every step saved a second time
+        boolean serviceRecords = agentService.recordsSessionMessages();
         agentService.sendMessage(prompt, contextCode, activeFilePath, images, new AgentListener() {
             @Override
             public void onToken(String token) {
@@ -1219,7 +1221,7 @@ public class AIAgentPanel extends JPanel {
                 SwingUtilities.invokeLater(() -> {
                     endLiveThinking();
                     setAgentState("Thinking...", UIUtils.WARNING_COLOR, true);
-                    recordSessionMessageIfNew(new AgentMessage(AgentRole.THINKING, thought, null));
+                    if (!serviceRecords) recordSessionMessageIfNew(new AgentMessage(AgentRole.THINKING, thought, null));
                     appendThinkingBubble(thought);
                     terminalPanel.appendAgentLog("AGENT REASONING", thought);
                 });
@@ -1234,7 +1236,7 @@ public class AIAgentPanel extends JPanel {
                     currentAssistantTextArea = null;
                     currentStreamingBuffer = new StringBuilder();
                     setAgentState("Running tool: " + toolName, UIUtils.ACCENT_COLOR, true);
-                    recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL_CALL, input, toolName));
+                    if (!serviceRecords) recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL_CALL, input, toolName));
                     appendToolRequestBubble(toolName, input);
                     terminalPanel.appendAgentLog("TOOL INVOCATION: " + toolName, input);
                 });
@@ -1243,7 +1245,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onToolResult(String toolName, String output) {
                 SwingUtilities.invokeLater(() -> {
-                    recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL, output, toolName));
+                    if (!serviceRecords) recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL, output, toolName));
                     appendToolResultBubble(toolName, output);
                     terminalPanel.appendAgentLog("TOOL RESULT: " + toolName, output);
                 });
