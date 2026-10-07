@@ -16,6 +16,8 @@ public class ModelDefinition {
     private int maxContextTokens = 128_000;
     private int maxOutputTokens = 4_096;
     private List<String> tags = new ArrayList<>();
+    /** Accepts image input. Null means detect from the model id. */
+    private Boolean vision;
 
     public ModelDefinition() {
     }
@@ -58,6 +60,14 @@ public class ModelDefinition {
 
     public void setMaxOutputTokens(int maxOutputTokens) {
         this.maxOutputTokens = maxOutputTokens;
+    }
+
+    public Boolean getVision() {
+        return vision;
+    }
+
+    public void setVision(Boolean vision) {
+        this.vision = vision;
     }
 
     public List<String> getTags() {

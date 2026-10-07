@@ -10,6 +10,8 @@ import com.github.axiomate.agentic.ide.agent.session.AgentSession;
 import com.github.axiomate.agentic.ide.agent.session.ContextCompressor;
 import com.github.axiomate.agentic.ide.agent.session.SessionManager;
 import com.github.axiomate.agentic.ide.agent.session.TokenTracker;
+import com.github.axiomate.agentic.ide.agent.vision.ImageAttachment;
+import com.github.axiomate.agentic.ide.agent.vision.VisionSupport;
 import com.github.axiomate.agentic.ide.config.ConfigManager;
 import com.github.axiomate.agentic.ide.config.IdeConfig;
 import com.github.axiomate.agentic.ide.config.ModelDefinition;
@@ -89,6 +91,8 @@ public class AIAgentPanel extends JPanel {
 
     private final SlashCommandCompletion slashCompletion;
     private final List<JButton> quickActions = new ArrayList<>();
+    private final ImageAttachmentStrip attachmentStrip = new ImageAttachmentStrip(true, this::updateVisionHint);
+    private final JLabel visionHint = new JLabel();
     private final List<Runnable> themeAppliers = new ArrayList<>();
     private IdeActions ideActions = IdeActions.NONE;
     private String displayedSessionId;
@@ -365,7 +369,7 @@ public class AIAgentPanel extends JPanel {
         chatBox.setBorder(new EmptyBorder(16, 16, 16, 16));
 
         chatScrollPane = new JScrollPane(chatBox);
-        chatScrollPane.setBorder(null);
+        chatScrollPane.setBorder(BorderFactory.createEmptyBorder()); // null would be replaced by the theme border on theme switch
         chatScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         chatScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         add(chatScrollPane, BorderLayout.CENTER);
@@ -395,6 +399,7 @@ public class AIAgentPanel extends JPanel {
 
         fileMentionController = new FileMentionController(inputArea);
         slashCompletion = new SlashCommandCompletion(inputArea);
+        installImageTransfer();
 
         inputArea.addKeyListener(new KeyAdapter() {
             @Override
@@ -413,7 +418,7 @@ public class AIAgentPanel extends JPanel {
         });
 
         JScrollPane inputScroll = new JScrollPane(inputArea);
-        inputScroll.setBorder(null);
+        inputScroll.setBorder(BorderFactory.createEmptyBorder());
         inputScroll.setOpaque(false);
         inputScroll.getViewport().setOpaque(false);
         inputScroll.setViewportBorder(null);
@@ -489,6 +494,9 @@ public class AIAgentPanel extends JPanel {
         modelCombo.setPreferredSize(new Dimension(190, 24));
         JPanel footLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         footLeft.setOpaque(false);
+        JButton attachBtn = UIUtils.iconButton(UIUtils.glyph(UIUtils.Glyph.PLUS, 16, null),
+                "Attach images for vision models (you can also paste or drop them)", e -> chooseImages());
+        footLeft.add(attachBtn);
         footLeft.add(providerCombo);
         footLeft.add(modelCombo);
         JPanel footRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
@@ -504,8 +512,16 @@ public class AIAgentPanel extends JPanel {
         thinkingIndicator.setAlignmentX(Component.LEFT_ALIGNMENT);
         promptBox.setAlignmentX(Component.LEFT_ALIGNMENT);
         footer.setAlignmentX(Component.LEFT_ALIGNMENT);
+        // Pending images sit just above the prompt, with a note on whether the chosen model can see them
+        visionHint.setFont(UIUtils.uiFont(Font.PLAIN, 11.5f));
+        visionHint.setBorder(new EmptyBorder(0, 4, 2, 0));
+        visionHint.setVisible(false);
+        attachmentStrip.setAlignmentX(Component.LEFT_ALIGNMENT);
+        visionHint.setAlignmentX(Component.LEFT_ALIGNMENT);
         inputPanel.add(thinkingIndicator);
         inputPanel.add(Box.createVerticalStrut(2));
+        inputPanel.add(attachmentStrip);
+        inputPanel.add(visionHint);
         inputPanel.add(promptBox);
         inputPanel.add(Box.createVerticalStrut(4));
         inputPanel.add(footer);
@@ -596,6 +612,7 @@ public class AIAgentPanel extends JPanel {
             updateTokenDisplay();
             AgentManager.getInstance().updateActiveService(config);
         }
+        updateVisionHint();
     }
 
     private void populateModelsForProvider(String providerId) {
@@ -789,7 +806,7 @@ public class AIAgentPanel extends JPanel {
         } else {
             for (AgentMessage msg : session.getMessages()) {
                 if (msg.isUser()) {
-                    appendUserBubble(msg.getContent());
+                    appendUserBubble(msg.getContent(), attachmentsOf(msg));
                 } else if (msg.isAssistant()) {
                     appendAssistantBubble(msg.getContent());
                 } else if (msg.getRole() == AgentRole.TOOL_CALL) {
@@ -1117,7 +1134,8 @@ public class AIAgentPanel extends JPanel {
 
     private void submitPrompt() {
         String prompt = inputArea.getText().trim();
-        if (prompt.isEmpty()) return;
+        if (prompt.isEmpty() && attachmentStrip.isEmpty()) return;
+        if (prompt.isEmpty()) prompt = "Describe the attached image(s).";
 
         Dispatch dispatch = SlashCommandRegistry.getInstance().dispatch(prompt);
         switch (dispatch.outcome()) {
@@ -1143,8 +1161,10 @@ public class AIAgentPanel extends JPanel {
             return;
         }
 
+        List<ImageAttachment> images = collectImages(prompt);
         inputArea.setText("");
-        appendUserBubble(prompt);
+        attachmentStrip.clear();
+        appendUserBubble(prompt, images);
 
         String contextCode = includeContextCheck.isSelected() ? activeCodeSupplier.get() : "";
         if (contextCode == null) contextCode = "";
@@ -1168,7 +1188,7 @@ public class AIAgentPanel extends JPanel {
         currentAssistantMessagePanel = null;
         currentAssistantTextArea = null;
 
-        agentService.sendMessage(prompt, contextCode, activeFilePath, new AgentListener() {
+        agentService.sendMessage(prompt, contextCode, activeFilePath, images, new AgentListener() {
             @Override
             public void onToken(String token) {
                 SwingUtilities.invokeLater(() -> {
@@ -1316,7 +1336,188 @@ public class AIAgentPanel extends JPanel {
         scrollToBottom();
     }
 
+    // ------------------------------------------------------------------
+    // Images for vision models
+    // ------------------------------------------------------------------
+
+    /** Attaches an image file to the next prompt (Explorer, image viewer, drag and drop). */
+    public void attachImageFile(File file) {
+        try {
+            attachmentStrip.add(VisionSupport.fromFile(file));
+            inputArea.requestFocusInWindow();
+        } catch (Exception e) {
+            Toast.warning(this, "Could not attach " + file.getName() + ": " + e.getMessage());
+        }
+    }
+
+    /** Attaches an in-memory image (pasted screenshot). */
+    public void attachImage(java.awt.Image image, String name) {
+        try {
+            attachmentStrip.add(VisionSupport.fromImage(image, name));
+            inputArea.requestFocusInWindow();
+        } catch (Exception e) {
+            Toast.warning(this, "Could not attach the pasted image: " + e.getMessage());
+        }
+    }
+
+    List<ImageAttachment> pendingImages() {
+        return attachmentStrip.getImages();
+    }
+
+    private void chooseImages() {
+        JFileChooser chooser = new JFileChooser(ProjectManager.getInstance().getCurrentProjectDirectory());
+        chooser.setMultiSelectionEnabled(true);
+        chooser.setDialogTitle("Attach images");
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "Images (png, jpg, gif, webp, bmp)", VisionSupport.IMAGE_EXTENSIONS.toArray(String[]::new)));
+        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            for (File f : chooser.getSelectedFiles()) attachImageFile(f);
+        }
+    }
+
+    /** Pending attachments plus '@'-mentioned image files; pasted images are saved into the project first. */
+    private List<ImageAttachment> collectImages(String prompt) {
+        List<ImageAttachment> out = new ArrayList<>();
+        File projectDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        for (ImageAttachment img : attachmentStrip.getImages()) {
+            try {
+                out.add(VisionSupport.saveToProject(img, projectDir));
+            } catch (Exception e) {
+                log.warn("Could not save pasted image {}: {}", img.name(), e.getMessage());
+                out.add(img);
+            }
+        }
+        for (File f : FileMentionController.findMentionedImages(prompt, projectDir)) {
+            boolean already = out.stream().anyMatch(i -> f.getAbsolutePath().equals(i.path()));
+            if (already) continue;
+            try {
+                out.add(VisionSupport.fromFile(f));
+            } catch (Exception e) {
+                log.warn("Could not load mentioned image {}: {}", f, e.getMessage());
+            }
+        }
+        return out;
+    }
+
+    private static List<ImageAttachment> attachmentsOf(AgentMessage msg) {
+        List<ImageAttachment> out = new ArrayList<>();
+        for (String path : msg.getAttachments()) {
+            File f = new File(path);
+            if (!f.isFile()) continue;
+            String ext = VisionSupport.extension(f.getName());
+            out.add(new ImageAttachment(f.getName(), VisionSupport.mimeFor(ext), null, f.getAbsolutePath(), 0, 0));
+        }
+        return out;
+    }
+
+    /** Shows whether the selected model will receive the pending images. */
+    private void updateVisionHint() {
+        if (attachmentStrip.isEmpty()) {
+            visionHint.setVisible(false);
+            return;
+        }
+        AgentSession session = SessionManager.getInstance().getActiveSession();
+        IdeConfig cfg = ConfigManager.getInstance().getConfig();
+        String model = session != null ? session.getModelId() : cfg.getActiveModelId();
+        ProviderConfig prov = cfg.getProvider(session != null ? session.getProviderId() : cfg.getActiveProviderId());
+        int n = attachmentStrip.getImages().size();
+        if (VisionSupport.supportsVision(prov, model)) {
+            visionHint.setText(n + " image" + (n == 1 ? "" : "s") + " will be sent to " + model);
+            visionHint.setForeground(UIUtils.mutedForeground());
+        } else {
+            visionHint.setText("⚠ " + model + " can't view images. Pick a vision model, or enable Vision for it in Settings → Edit Model.");
+            visionHint.setForeground(UIUtils.WARNING_COLOR);
+        }
+        visionHint.setVisible(true);
+        revalidate();
+    }
+
+    /**
+     * Paste (Ctrl+V) and drop images or image files into the prompt; everything else keeps the text
+     * area's normal behaviour.
+     */
+    private void installImageTransfer() {
+        TransferHandler text = inputArea.getTransferHandler();
+        TransferHandler handler = new TransferHandler() {
+            @Override
+            public boolean canImport(TransferSupport support) {
+                return hasImage(support.getDataFlavors()) || (text != null && text.canImport(support));
+            }
+
+            @Override
+            public boolean importData(TransferSupport support) {
+                if (importImages(support.getTransferable())) return true;
+                return text != null && text.importData(support);
+            }
+
+            @Override
+            public int getSourceActions(JComponent c) {
+                return text != null ? text.getSourceActions(c) : NONE;
+            }
+
+            @Override
+            public void exportToClipboard(JComponent comp, java.awt.datatransfer.Clipboard clip, int action) {
+                if (text != null) text.exportToClipboard(comp, clip, action);
+            }
+
+            @Override
+            public void exportAsDrag(JComponent comp, java.awt.event.InputEvent e, int action) {
+                if (text != null) text.exportAsDrag(comp, e, action);
+            }
+        };
+        inputArea.setTransferHandler(handler);
+        // Dropping onto the transcript attaches too
+        chatBox.setTransferHandler(new TransferHandler() {
+            @Override
+            public boolean canImport(TransferSupport support) {
+                return hasImage(support.getDataFlavors());
+            }
+
+            @Override
+            public boolean importData(TransferSupport support) {
+                return importImages(support.getTransferable());
+            }
+        });
+    }
+
+    private static boolean hasImage(java.awt.datatransfer.DataFlavor[] flavors) {
+        for (java.awt.datatransfer.DataFlavor f : flavors) {
+            if (f.equals(java.awt.datatransfer.DataFlavor.imageFlavor)
+                    || f.equals(java.awt.datatransfer.DataFlavor.javaFileListFlavor)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Attaches image files or pixel data from a clipboard/drop transfer. Returns false if it holds no images. */
+    boolean importImages(java.awt.datatransfer.Transferable t) {
+        try {
+            if (t.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor)) {
+                @SuppressWarnings("unchecked")
+                List<File> files = (List<File>) t.getTransferData(java.awt.datatransfer.DataFlavor.javaFileListFlavor);
+                List<File> images = files.stream().filter(VisionSupport::isImageFile).toList();
+                if (images.isEmpty()) return false;
+                images.forEach(this::attachImageFile);
+                return true;
+            }
+            if (t.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.imageFlavor)) {
+                java.awt.Image img = (java.awt.Image) t.getTransferData(java.awt.datatransfer.DataFlavor.imageFlavor);
+                String name = "pasted-" + java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HHmmss")) + ".png";
+                attachImage(img, name);
+                return true;
+            }
+        } catch (Exception e) {
+            log.warn("Could not import image: {}", e.getMessage());
+        }
+        return false;
+    }
+
     private void appendUserBubble(String text) {
+        appendUserBubble(text, List.of());
+    }
+
+    private void appendUserBubble(String text, List<ImageAttachment> images) {
         // Claude Code shows the prompt as "> text" on a subtle highlighted block
         JPanel inner = roundedPanel(UIUtils.surface(3), null);
         inner.setBorder(new EmptyBorder(6, 10, 6, 10));
@@ -1328,6 +1529,11 @@ public class AIAgentPanel extends JPanel {
         JTextArea area = createBubbleTextArea(text);
         inner.add(prompt, BorderLayout.WEST);
         inner.add(area, BorderLayout.CENTER);
+        if (!images.isEmpty()) {
+            ImageAttachmentStrip strip = new ImageAttachmentStrip(false, null);
+            images.forEach(strip::add);
+            inner.add(strip, BorderLayout.SOUTH);
+        }
 
         MessageCard card = new MessageCard(MessageDisplayType.USER, inner, null);
         card.setBorder(new EmptyBorder(8, 4, 4, 4));

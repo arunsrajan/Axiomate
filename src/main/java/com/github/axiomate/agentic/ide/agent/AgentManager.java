@@ -39,6 +39,7 @@ public class AgentManager {
         registerTool(termTool);
         registerTool(refactorTool);
         registerTool(memoryTool);
+        registerTool(new ViewImageTool());
 
         updateActiveService(ConfigManager.getInstance().getConfig());
 

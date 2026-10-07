@@ -186,7 +186,9 @@ public class ProjectTreePanel extends JPanel {
             openItem.addActionListener(ev -> fileOpenConsumer.accept(targetFile));
             popup.add(openItem);
 
-            JMenuItem askAiItem = new JMenuItem("Ask AI Agent About File", UIUtils.createSparkleIcon(14, UIUtils.ACCENT_PURPLE));
+            boolean image = com.github.axiomate.agentic.ide.agent.vision.VisionSupport.isImageFile(targetFile);
+            JMenuItem askAiItem = new JMenuItem(image ? "Ask AI Agent About Image" : "Ask AI Agent About File",
+                    UIUtils.createSparkleIcon(14, UIUtils.ACCENT_PURPLE));
             askAiItem.addActionListener(ev -> aiFileAskConsumer.accept(targetFile));
             popup.add(askAiItem);
 

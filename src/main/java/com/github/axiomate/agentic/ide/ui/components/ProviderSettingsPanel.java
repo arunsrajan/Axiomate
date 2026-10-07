@@ -436,7 +436,7 @@ public class ProviderSettingsPanel extends JPanel {
                         m.getDisplayName(),
                         String.format("%,d", m.getMaxContextTokens()),
                         String.format("%,d", m.getMaxOutputTokens()),
-                        String.join(", ", m.getTags())
+                        capabilities(prov, m)
                 });
             }
             defaultModelCombo.setSelectedItem(prov.getDefaultModel());
@@ -699,6 +699,17 @@ public class ProviderSettingsPanel extends JPanel {
     /**
      * Add (existing == null) or edit a model definition of the selected provider.
      */
+    /** Tags plus a "vision" marker when the model accepts images (set explicitly or detected from its id). */
+    static String capabilities(ProviderConfig prov, ModelDefinition m) {
+        List<String> parts = new ArrayList<>(m.getTags());
+        boolean vision = com.github.axiomate.agentic.ide.agent.vision.VisionSupport.supportsVision(prov, m.getId());
+        parts.removeIf(t -> t.equalsIgnoreCase("vision"));
+        if (vision) parts.add(0, m.getVision() == null ? "vision (auto)" : "vision");
+        return String.join(", ", parts);
+    }
+
+    static final String VISION_AUTO = "Auto-detect from model id";
+
     private void showModelDialog(ModelDefinition existing) {
         saveCurrentProviderFieldsToWorkingMap();
         boolean editing = existing != null;
@@ -712,8 +723,14 @@ public class ProviderSettingsPanel extends JPanel {
         outSpinner.setEditor(new JSpinner.NumberEditor(outSpinner, "#,##0"));
         outSpinner.setToolTipText("Maximum tokens the model may generate per response (up to 20,000,000)");
         JTextField tagsField = new JTextField(editing ? String.join(", ", existing.getTags()) : "coding, tools", 18);
+        String[] visionChoices = {VISION_AUTO, "Yes — accepts images", "No — text only"};
+        JComboBox<String> visionCombo = new JComboBox<>(visionChoices);
+        Boolean currentVision = editing ? existing.getVision() : null;
+        visionCombo.setSelectedIndex(currentVision == null ? 0 : currentVision ? 1 : 2);
+        visionCombo.setToolTipText("Whether pasted or attached images are sent to this model. "
+                + "Auto-detect recognises Claude, GPT-4o/4.1/5, Gemini, LLaVA, Qwen-VL, Pixtral, Llama 3.2 Vision and others.");
 
-        JPanel panel = new JPanel(new GridLayout(5, 2, 6, 6));
+        JPanel panel = new JPanel(new GridLayout(6, 2, 6, 6));
         panel.add(new JLabel("Model ID (e.g. claude-3-7-sonnet):"));
         panel.add(idField);
         panel.add(new JLabel("Display Name:"));
@@ -724,6 +741,8 @@ public class ProviderSettingsPanel extends JPanel {
         panel.add(outSpinner);
         panel.add(new JLabel("Tags / Capabilities:"));
         panel.add(tagsField);
+        panel.add(new JLabel("Vision (image input):"));
+        panel.add(visionCombo);
 
         int result = JOptionPane.showConfirmDialog(this, panel, editing ? "Edit Model Definition" : "Add New Model Definition",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
@@ -749,7 +768,10 @@ public class ProviderSettingsPanel extends JPanel {
 
         ProviderConfig current = workingProviders.get(currentSelectedProviderId);
         if (current == null) return;
-        applyModelDefinition(current, editing ? existing.getId() : null, new ModelDefinition(mId, mName, maxCtx, maxOut, tags));
+        ModelDefinition def = new ModelDefinition(mId, mName, maxCtx, maxOut, tags);
+        int v = visionCombo.getSelectedIndex();
+        def.setVision(v == 0 ? null : v == 1);
+        applyModelDefinition(current, editing ? existing.getId() : null, def);
         loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
         refreshRoutingCombos();
     }

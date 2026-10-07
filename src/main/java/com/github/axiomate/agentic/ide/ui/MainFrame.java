@@ -88,11 +88,18 @@ public class MainFrame extends JFrame implements IdeActions {
         aiAgentPanel = new AIAgentPanel(editorPanel::getActiveText, terminalPanel);
         aiAgentPanel.setIdeActions(this);
 
+        editorPanel.setImageAttachHandler(aiAgentPanel::attachImageFile);
         projectTreePanel = new ProjectTreePanel(
                 editorPanel::openFile,
                 file -> {
                     editorPanel.openFile(file);
-                    aiAgentPanel.sendPromptDirectly("Explain the file " + file.getName() + " and its architectural role.");
+                    if (com.github.axiomate.agentic.ide.agent.vision.VisionSupport.isImageFile(file)) {
+                        // Vision models look at the image itself
+                        aiAgentPanel.attachImageFile(file);
+                        aiAgentPanel.prefillPrompt("Describe this image and how it relates to the project.");
+                    } else {
+                        aiAgentPanel.sendPromptDirectly("Explain the file " + file.getName() + " and its architectural role.");
+                    }
                 }
         );
 

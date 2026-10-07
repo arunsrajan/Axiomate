@@ -9,6 +9,8 @@ import com.github.axiomate.agentic.ide.agent.session.ContextCompressor;
 import com.github.axiomate.agentic.ide.agent.session.SessionManager;
 import com.github.axiomate.agentic.ide.agent.session.TokenTracker;
 import com.github.axiomate.agentic.ide.agent.tools.AgentTool;
+import com.github.axiomate.agentic.ide.agent.vision.ImageAttachment;
+import com.github.axiomate.agentic.ide.agent.vision.VisionSupport;
 import com.github.axiomate.agentic.ide.config.ConfigManager;
 import com.github.axiomate.agentic.ide.config.IdeConfig;
 import com.github.axiomate.agentic.ide.config.ProviderConfig;
@@ -40,6 +42,8 @@ public class LangChainAgentService implements AIAgentService {
 
     private static final Logger log = LoggerFactory.getLogger(LangChainAgentService.class);
     /** A tool call with identical arguments is executed at most this many times per task. */
+    /** Images from earlier turns resent with each request (most recent first); older ones become a note. */
+    static final int MAX_HISTORY_IMAGES = 6;
     static final int MAX_IDENTICAL_TOOL_CALLS = 2;
     /** How many times a reasoning-only (or truncated) step is asked to continue before giving up. */
     static final int MAX_REASONING_CONTINUATIONS = 2;
@@ -80,6 +84,13 @@ public class LangChainAgentService implements AIAgentService {
 
     @Override
     public void sendMessage(String prompt, String contextCode, String activeFilePath, AgentListener listener) {
+        sendMessage(prompt, contextCode, activeFilePath, List.of(), listener);
+    }
+
+    @Override
+    public void sendMessage(String prompt, String contextCode, String activeFilePath, List<ImageAttachment> images,
+                            AgentListener listener) {
+        List<ImageAttachment> attached = images != null ? List.copyOf(images) : List.of();
         cancelled = false;
         activeTask = executor.submit(() -> {
             String activeProviderName = "Unknown";
@@ -137,6 +148,26 @@ public class LangChainAgentService implements AIAgentService {
                     providerConfig = config.getProvider(providerId);
                 }
 
+                // Images need a vision model: if routing picked a text-only one, prefer the session's own model
+                boolean vision = VisionSupport.supportsVision(providerConfig, targetModel);
+                if (!attached.isEmpty() && !vision && !Objects.equals(targetModel, session.getModelId())) {
+                    ProviderConfig sessionProvider = config.getProvider(session.getProviderId());
+                    if (sessionProvider != null && sessionProvider.isEnabled()
+                            && VisionSupport.supportsVision(sessionProvider, session.getModelId())) {
+                        providerId = session.getProviderId();
+                        providerConfig = sessionProvider;
+                        targetModel = session.getModelId();
+                        vision = true;
+                        listener.onThinking("🖼 Using " + targetModel + " because the request has images.");
+                    }
+                }
+                VisionSupport.setCurrentModelVision(vision);
+                if (!attached.isEmpty() && !vision) {
+                    listener.onThinking("🖼 " + targetModel + " does not accept images, so the " + attached.size()
+                            + " attached image(s) were not sent. Choose a vision model, or mark this model as "
+                            + "vision-capable in Settings → AI Providers → Edit Model.");
+                }
+
                 activeProviderName = providerConfig != null ? providerConfig.getName() : providerId;
                 activeTargetModel = targetModel;
                 activeEndpointUrl = providerConfig != null && providerConfig.getBaseUrl() != null ? providerConfig.getBaseUrl() : "default";
@@ -177,13 +208,23 @@ public class LangChainAgentService implements AIAgentService {
                 messages.add(new SystemMessage(systemPromptBuilder.toString()));
 
                 // Replay previous turns from session if applicable
-                for (AgentMessage priorMsg : session.getMessages()) {
+                List<AgentMessage> history = session.getMessages();
+                int imageBudget = MAX_HISTORY_IMAGES;
+                Set<AgentMessage> replayImages = Collections.newSetFromMap(new IdentityHashMap<>());
+                for (int i = history.size() - 1; i >= 0 && vision && imageBudget > 0; i--) {
+                    AgentMessage m = history.get(i);
+                    if (m.isUser() && !m.getAttachments().isEmpty()) {
+                        replayImages.add(m);
+                        imageBudget -= m.getAttachments().size();
+                    }
+                }
+                for (AgentMessage priorMsg : history) {
                     String content = priorMsg.getContent();
-                    if (content == null || content.trim().isEmpty()) {
+                    if ((content == null || content.trim().isEmpty()) && priorMsg.getAttachments().isEmpty()) {
                         continue;
                     }
                     if (priorMsg.isUser()) {
-                        messages.add(new UserMessage(content.trim()));
+                        messages.add(replayUserMessage(priorMsg, replayImages.contains(priorMsg)));
                     } else if (priorMsg.isAssistant()) {
                         messages.add(new AiMessage(content.trim()));
                     }
@@ -202,10 +243,24 @@ public class LangChainAgentService implements AIAgentService {
                 if (userText.isEmpty()) {
                     userText = "Process task";
                 }
-                messages.add(new UserMessage(userText));
+                if (!attached.isEmpty() && vision) {
+                    messages.add(UserMessage.from(VisionSupport.toContents(
+                            userText + "\n\nAttached image(s): " + VisionSupport.describe(attached), attached)));
+                } else if (!attached.isEmpty()) {
+                    messages.add(new UserMessage(userText + "\n\n[" + attached.size()
+                            + " image(s) were attached but this model cannot view images: " + VisionSupport.describe(attached) + "]"));
+                } else {
+                    messages.add(new UserMessage(userText));
+                }
 
                 // Add prompt message to active session
-                session.addMessage(new AgentMessage(AgentRole.USER, safePrompt));
+                AgentMessage userRecord = new AgentMessage(AgentRole.USER, safePrompt);
+                List<String> paths = new ArrayList<>();
+                for (ImageAttachment img : attached) {
+                    if (img.path() != null) paths.add(img.path());
+                }
+                userRecord.setAttachments(paths);
+                session.addMessage(userRecord);
 
                 // 6. Convert registered tools (FileSystem, Terminal, CodeRefactor, Memory, and all MCP tools)
                 List<ToolSpecification> toolSpecs = buildToolSpecifications();
@@ -303,6 +358,12 @@ public class LangChainAgentService implements AIAgentService {
                             // Record tool execution in session
                             session.addMessage(new AgentMessage(AgentRole.TOOL, toolResult, toolName));
                         }
+                        // Images a tool loaded (view_image) go to the model as a user turn after the tool results
+                        List<ImageAttachment> viewed = VisionSupport.drainQueued();
+                        if (!viewed.isEmpty() && !cancelled) {
+                            messages.add(UserMessage.from(VisionSupport.toContents(
+                                    "Image(s) loaded by view_image: " + VisionSupport.describe(viewed), viewed)));
+                        }
                     } else {
                         // Final resolution reached - ensure content is never blank
                         String finalResponse = (aiMessage.text() != null && !aiMessage.text().isBlank()) ? aiMessage.text() : "";
@@ -386,6 +447,7 @@ public class LangChainAgentService implements AIAgentService {
                                 activeProviderName, activeTargetModel, activeEndpointUrl, e.getMessage()), e));
             } finally {
                 ReasoningContext.clear();
+                VisionSupport.clearThreadState();
             }
         });
     }
@@ -518,4 +580,29 @@ public class LangChainAgentService implements AIAgentService {
             lastResults.put(k, result);
         }
     }
+
+    /** Rebuilds an earlier user turn, with its images when they are still on disk and within the budget. */
+    static UserMessage replayUserMessage(AgentMessage msg, boolean withImages) {
+        String text = msg.getContent() == null ? "" : msg.getContent().trim();
+        List<String> files = msg.getAttachments();
+        if (files.isEmpty()) return new UserMessage(text.isEmpty() ? "(empty)" : text);
+        List<ImageAttachment> images = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (String path : files) {
+            java.io.File f = new java.io.File(path);
+            names.add(f.getName());
+            if (withImages && f.isFile()) {
+                try {
+                    images.add(VisionSupport.fromFile(f));
+                } catch (Exception e) {
+                    log.debug("Could not reload image {}: {}", path, e.getMessage());
+                }
+            }
+        }
+        if (images.isEmpty()) {
+            return new UserMessage((text.isEmpty() ? "" : text + "\n\n") + "[Earlier image(s): " + String.join(", ", names) + "]");
+        }
+        return UserMessage.from(VisionSupport.toContents(text, images));
+    }
+
 }

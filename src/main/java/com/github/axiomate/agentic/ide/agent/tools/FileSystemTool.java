@@ -77,6 +77,9 @@ public class FileSystemTool implements AgentTool {
         if (Files.isDirectory(path)) {
             return "ERROR: Path is a directory: " + path.toAbsolutePath();
         }
+        if (com.github.axiomate.agentic.ide.agent.vision.VisionSupport.isImageFile(path.toFile())) {
+            return "This is an image file. Use the view_image tool to look at it: " + path.toAbsolutePath();
+        }
         return Files.readString(path);
     }
 

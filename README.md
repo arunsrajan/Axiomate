@@ -215,6 +215,14 @@ Axiomate reads and writes the native files of other coding agents, so your rules
 
 ---
 
+### 17. 🖼 Vision Models (Images in Prompts)
+- **Attach images** with the **+** button under the prompt, by pasting a screenshot (Ctrl+V), by dropping image files onto the prompt or transcript, or by mentioning them with `@` (e.g. `@docs/mockup.png`). Thumbnails appear above the prompt; click to view, × to remove.
+- **Image preview tabs**: opening a PNG/JPEG/GIF/WebP/BMP from the Explorer shows the picture with an **Attach to agent prompt** button. "Ask AI Agent About Image" in the Explorer menu attaches it for you.
+- **Every provider path**: images go to Anthropic as base64 image blocks, to OpenAI-compatible servers (OpenAI, Ollama, LM Studio, vLLM, OpenRouter…) as `image_url` data URLs, and to Gemini as inline data.
+- **Vision detection**: Claude, GPT-4o/4.1/5, o-series, Gemini, LLaVA, Qwen-VL, Pixtral, Llama 3.2 Vision, Gemma 3, MiniCPM-V and others are recognised automatically. Override per model in **Settings → AI Providers → Edit Model → Vision**. A note under the prompt says whether the selected model will receive the images; text-only models get a note instead of the pixels.
+- **`view_image` tool**: the agent can look at screenshots, mockups and diagrams in the project on its own.
+- **Sessions keep their images**: pasted images are saved to `.axiomate/attachments/`, shown again when the session reloads, and the 6 most recent are resent on follow-up turns. Large images are scaled to 1568 px on the longest edge.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

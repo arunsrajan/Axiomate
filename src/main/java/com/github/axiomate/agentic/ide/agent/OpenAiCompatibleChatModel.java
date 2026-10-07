@@ -9,7 +9,9 @@ import dev.langchain4j.agent.tool.ToolParameters;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.image.Image;
 import dev.langchain4j.data.message.Content;
+import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -159,7 +161,11 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel {
             node.put("content", sm.text());
         } else if (m instanceof UserMessage um) {
             node.put("role", "user");
-            node.put("content", userText(um));
+            if (hasImages(um)) {
+                node.set("content", multimodalContent(um));
+            } else {
+                node.put("content", userText(um));
+            }
         } else if (m instanceof AiMessage am) {
             node.put("role", "assistant");
             if (am.text() != null && !am.text().isBlank()) {
@@ -190,6 +196,34 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel {
             return null;
         }
         return node;
+    }
+
+    private static boolean hasImages(UserMessage um) {
+        return um.contents().stream().anyMatch(c -> c instanceof ImageContent);
+    }
+
+    /** OpenAI vision format: text parts plus image_url parts carrying data URLs (also used by Ollama, vLLM, LM Studio). */
+    private static ArrayNode multimodalContent(UserMessage um) {
+        ArrayNode parts = MAPPER.createArrayNode();
+        for (Content c : um.contents()) {
+            if (c instanceof TextContent tc) {
+                ObjectNode part = parts.addObject();
+                part.put("type", "text");
+                part.put("text", tc.text());
+            } else if (c instanceof ImageContent ic) {
+                Image img = ic.image();
+                String url = img.url() != null ? img.url().toString()
+                        : "data:" + (img.mimeType() != null ? img.mimeType() : "image/png") + ";base64," + img.base64Data();
+                ObjectNode part = parts.addObject();
+                part.put("type", "image_url");
+                ObjectNode imageUrl = part.putObject("image_url");
+                imageUrl.put("url", url);
+                if (ic.detailLevel() != null && ic.detailLevel() != ImageContent.DetailLevel.AUTO) {
+                    imageUrl.put("detail", ic.detailLevel().name().toLowerCase());
+                }
+            }
+        }
+        return parts;
     }
 
     private static String userText(UserMessage um) {
