@@ -248,6 +248,11 @@ class AgentMemoryInteropTest {
             assertFalse(CodingAgentCatalog.locations(agent).isEmpty(), agent + " has import locations");
             assertTrue(CodingAgentCatalog.exportTarget(agent, MemoryScope.PROJECT).isPresent(), agent + " has a project export target");
         }
-        assertEquals("-tmp-x-my-app", CodingAgentCatalog.encodeClaudeProjectDir(Path.of("/tmp/x/my_app")));
+        // Claude Code names a project's folder after its absolute path with every non-alphanumeric character as '-'
+        if (java.io.File.separatorChar == '\\') {
+            assertEquals("C--tmp-x-my-app", CodingAgentCatalog.encodeClaudeProjectDir(Path.of("C:\\tmp\\x\\my_app")));
+        } else {
+            assertEquals("-tmp-x-my-app", CodingAgentCatalog.encodeClaudeProjectDir(Path.of("/tmp/x/my_app")));
+        }
     }
 }

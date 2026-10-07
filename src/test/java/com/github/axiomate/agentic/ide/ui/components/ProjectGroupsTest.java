@@ -112,7 +112,9 @@ class ProjectGroupsTest {
         list.getActionMap().get("open").actionPerformed(null);
         assertNotNull(shown.get());
         assertEquals(saved.getId(), shown.get().getId());
-        assertEquals(other.getAbsolutePath(), shown.get().getProjectPath());
+        // same folder; compare normalized paths (on Windows the temp folder may be spelled ADMINI~1 or Administrator)
+        assertEquals(ProjectStateManager.normalizePath(other),
+                ProjectStateManager.normalizePath(new File(shown.get().getProjectPath())));
     }
 
     @Test
