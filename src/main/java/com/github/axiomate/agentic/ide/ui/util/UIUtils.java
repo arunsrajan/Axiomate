@@ -431,7 +431,7 @@ public class UIUtils {
     // Activity bar & action icons (stroke-drawn, DPI independent)
     // ------------------------------------------------------------------
 
-    public enum Glyph {EXPLORER, SESSIONS, MEMORY, SYNC, PLUGINS, SEARCH, PLUS, TRASH, PIN, DOWNLOAD, UPLOAD, MORE, REFRESH, TERMINAL, COMMAND, DOT, ELBOW, SPARK}
+    public enum Glyph {EXPLORER, SESSIONS, MEMORY, SYNC, PLUGINS, SEARCH, PLUS, TRASH, PIN, DOWNLOAD, UPLOAD, MORE, REFRESH, TERMINAL, COMMAND, DOT, ELBOW, SPARK, BRANCH, CHEVRON_RIGHT, CHEVRON_DOWN}
 
     /**
      * Stroke-based glyph icon; a null color follows the current theme's foreground.
@@ -548,6 +548,23 @@ public class UIUtils {
                         g2.draw(new Line2D.Float(s * .48f, s * .64f, s * .7f, s * .64f));
                     }
                     case DOT -> g2.fill(new Ellipse2D.Float(s * .3f, s * .3f, s * .4f, s * .4f));
+                    case BRANCH -> {
+                        // git branch: trunk with a commit at each end and a side branch curving off it
+                        float r = s * .11f;
+                        g2.draw(new Ellipse2D.Float(s * .3f - r, s * .18f - r, 2 * r, 2 * r));
+                        g2.draw(new Ellipse2D.Float(s * .3f - r, s * .82f - r, 2 * r, 2 * r));
+                        g2.draw(new Ellipse2D.Float(s * .72f - r, s * .3f - r, 2 * r, 2 * r));
+                        g2.draw(new Line2D.Float(s * .3f, s * .18f + r, s * .3f, s * .82f - r));
+                        g2.draw(new java.awt.geom.QuadCurve2D.Float(s * .72f, s * .3f + r, s * .72f, s * .62f, s * .3f, s * .7f));
+                    }
+                    case CHEVRON_RIGHT -> {
+                        g2.draw(new Line2D.Float(s * .4f, s * .25f, s * .65f, s * .5f));
+                        g2.draw(new Line2D.Float(s * .65f, s * .5f, s * .4f, s * .75f));
+                    }
+                    case CHEVRON_DOWN -> {
+                        g2.draw(new Line2D.Float(s * .25f, s * .4f, s * .5f, s * .65f));
+                        g2.draw(new Line2D.Float(s * .5f, s * .65f, s * .75f, s * .4f));
+                    }
                     case ELBOW -> {
                         // Claude Code's "⎿" connector in front of tool results
                         g2.draw(new Line2D.Float(s * .35f, s * .05f, s * .35f, s * .6f));

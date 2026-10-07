@@ -185,7 +185,8 @@ Axiomate reads and writes the native files of other coding agents, so your rules
 - **Commands**: Claude Code commands, Codex prompts, Antigravity/Windsurf workflows and Gemini CLI TOML commands are loaded automatically as `/slash` commands.
 
 ### 14. 🗂 Per-Project Session Management
-- **Sessions sidebar** (`Alt+5`): every session of the current project with search across names and messages, pinning, rename, duplicate/fork, delete, *Copy to project*, and *Export as Markdown* transcripts.
+- **Sessions sidebar** (`Alt+5`): sessions grouped under their projects — the open project first (in the accent colour), then every other known project — each heading showing the project's git branch and session count. Click a heading to collapse it; search covers names and messages across all projects. Opening a session from another project switches to that project. Pinning, rename, duplicate/fork, delete, *Copy to project*, and *Export as Markdown* transcripts.
+- **Branch in the agent panel**: the chat header shows the open project and its checked-out git branch (worktrees and detached HEADs included), updating within seconds when you switch branches outside the IDE.
 - **Session Manager** (`AI Agent → Multi-Agent Sessions → Session Manager`, or click the project name in the status bar): browse sessions of **all** known projects, search across every project, preview transcripts, copy a session into the current project, reopen a project, or forget a project.
 - **File → Open Recent Project** lists known projects with their session counts; switching projects restores its tabs and sessions.
 - Chat commands: `/new [name]`, `/rename <name>`, `/fork`, `/export`, `/sessions`.

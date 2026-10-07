@@ -93,6 +93,10 @@ public class AIAgentPanel extends JPanel {
     private final List<JButton> quickActions = new ArrayList<>();
     private final ImageAttachmentStrip attachmentStrip = new ImageAttachmentStrip(true, this::updateVisionHint);
     private final JLabel visionHint = new JLabel();
+    /** "payments-api  ⎇ main": the project the agent works in and its checked-out git branch. */
+    private final JLabel projectLabel = new JLabel();
+    private final JLabel branchLabel = new JLabel();
+    private String shownBranchKey;
     private final List<Runnable> themeAppliers = new ArrayList<>();
     private IdeActions ideActions = IdeActions.NONE;
     private String displayedSessionId;
@@ -138,6 +142,8 @@ public class AIAgentPanel extends JPanel {
         JButton newChatBtn = UIUtils.iconButton(UIUtils.glyph(UIUtils.Glyph.PLUS, 16, null), "New agent session", e -> promptNewSession());
         JButton moreBtn = UIUtils.iconButton(UIUtils.glyph(UIUtils.Glyph.MORE, 16, null), "More actions", null);
         moreBtn.addActionListener(e -> buildOverflowMenu().show(moreBtn, 0, moreBtn.getHeight()));
+        headerButtons.add(statusBadge);
+        headerButtons.add(Box.createHorizontalStrut(4));
         headerButtons.add(newChatBtn);
         headerButtons.add(moreBtn);
 
@@ -356,12 +362,26 @@ public class AIAgentPanel extends JPanel {
         outputDisplayBar.add(actionsRight, BorderLayout.EAST);
 
         // Session picker sits in the header, Claude-app style ("Session title ⌄"); everything else lives in the ⋯ menu
-        sessionSelectorCombo.setPreferredSize(new Dimension(260, 26));
+        sessionSelectorCombo.setPreferredSize(new Dimension(220, 26));
         sessionSelectorCombo.setFont(UIUtils.uiFont(Font.BOLD, 13f));
         sessionSelectorCombo.putClientProperty("FlatLaf.style", "borderWidth: 0; focusWidth: 0; arc: 8");
         titleSubPanel.remove(titleLabel);
         titleSubPanel.add(sessionSelectorCombo);
-        titleSubPanel.add(statusBadge);
+        projectLabel.setFont(UIUtils.uiFont(Font.PLAIN, 12f));
+        branchLabel.setFont(UIUtils.uiFont(Font.PLAIN, 12f));
+        branchLabel.setIconTextGap(4);
+        onTheme(() -> {
+            projectLabel.setForeground(UIUtils.mutedForeground());
+            branchLabel.setForeground(UIUtils.mutedForeground());
+            branchLabel.setIcon(UIUtils.glyph(UIUtils.Glyph.BRANCH, 13, UIUtils.mutedForeground()));
+        });
+        // Project and branch take the space between the session picker and the buttons; status sits by the buttons
+        JPanel whereLine = new JPanel(new BorderLayout(8, 0));
+        whereLine.setOpaque(false);
+        whereLine.setBorder(new EmptyBorder(0, 6, 0, 8));
+        whereLine.add(projectLabel, BorderLayout.WEST);
+        whereLine.add(branchLabel, BorderLayout.CENTER);
+        headerPanel.add(whereLine, BorderLayout.CENTER);
         onTheme(() -> headerPanel.setBorder(new CompoundBorder(
                 BorderFactory.createMatteBorder(0, 0, 1, 0, UIUtils.borderColor()), new EmptyBorder(6, 12, 6, 12))));
         add(headerPanel, BorderLayout.NORTH);
@@ -548,6 +568,14 @@ public class AIAgentPanel extends JPanel {
             }
         });
         ConfigManager.getInstance().addListener(updatedCfg -> refreshSessionUi());
+        ProjectManager.getInstance().addProjectChangeListener(dir -> SwingUtilities.invokeLater(this::updateProjectBranch));
+        SessionManager.getInstance().addSessionChangeListener(() -> SwingUtilities.invokeLater(this::updateProjectBranch));
+        // Branch switches made outside the IDE (terminal, other tools) show up within a few seconds
+        Timer branchPoll = new Timer(3000, e -> {
+            if (isShowing()) updateProjectBranch();
+        });
+        branchPoll.start();
+        updateProjectBranch();
         UIUtils.addThemeListener(() -> {
             themeAppliers.forEach(Runnable::run);
             reloadChatFromSession();
@@ -1365,6 +1393,32 @@ public class AIAgentPanel extends JPanel {
         chatBox.add(card);
         chatBox.add(Box.createVerticalStrut(gap));
         scrollToBottom();
+    }
+
+    /** Shows the open project and its git branch in the header; hides the branch outside a git repository. */
+    void updateProjectBranch() {
+        File dir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        String branch = dir != null ? com.github.axiomate.agentic.ide.util.GitBranch.of(dir) : null;
+        String key = (dir != null ? dir.getAbsolutePath() : "") + "|" + branch;
+        if (key.equals(shownBranchKey)) return;
+        shownBranchKey = key;
+        projectLabel.setText(dir != null ? dir.getName() : "");
+        projectLabel.setToolTipText(dir != null ? dir.getAbsolutePath() : null);
+        projectLabel.setVisible(dir != null);
+        branchLabel.setText(branch != null ? branch : "");
+        branchLabel.setVisible(branch != null);
+        branchLabel.setToolTipText(branch == null ? null : com.github.axiomate.agentic.ide.util.GitBranch.isDetached(branch)
+                ? "Detached HEAD at " + branch : "Git branch: " + branch);
+        revalidate();
+        repaint();
+    }
+
+    String shownProject() {
+        return projectLabel.isVisible() ? projectLabel.getText() : null;
+    }
+
+    String shownBranch() {
+        return branchLabel.isVisible() ? branchLabel.getText() : null;
     }
 
     // ------------------------------------------------------------------
