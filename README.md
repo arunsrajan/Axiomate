@@ -245,9 +245,9 @@ mvn compile exec:java
 ```bash
 mvn clean package -DskipTests
 ```
-Run the packaged application:
+Run the packaged application (the `-all` jar bundles every dependency):
 ```bash
-java -jar target/ai-agent-ide-1.0.0-SNAPSHOT.jar
+java -jar target/axiomate-agent-ide-1.0.0-SNAPSHOT-all.jar
 ```
 
 ### 3. Run Test Suite

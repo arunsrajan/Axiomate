@@ -5,11 +5,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.github.axiomate</groupId>
-    <artifactId>ai-agent-ide</artifactId>
+    <artifactId>axiomate-agent-ide</artifactId>
     <version>1.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
-    <name>AI Agent IDE</name>
+    <name>Axiomate Agent IDE</name>
     <description>Modern Java Desktop IDE with Integrated Agentic AI Memory and Autonomous Coding Agent</description>
 
     <properties>
