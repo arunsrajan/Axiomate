@@ -9,6 +9,8 @@ import com.github.axiomate.agentic.ide.agent.session.ContextCompressor;
 import com.github.axiomate.agentic.ide.agent.session.SessionManager;
 import com.github.axiomate.agentic.ide.agent.session.TokenTracker;
 import com.github.axiomate.agentic.ide.agent.tools.AgentTool;
+import com.github.axiomate.agentic.ide.agent.vision.ImageAttachment;
+import com.github.axiomate.agentic.ide.agent.vision.VisionSupport;
 import com.github.axiomate.agentic.ide.config.ConfigManager;
 import com.github.axiomate.agentic.ide.config.IdeConfig;
 import com.github.axiomate.agentic.ide.config.ProviderConfig;
@@ -21,6 +23,7 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.output.FinishReason;
 import dev.langchain4j.model.output.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +41,13 @@ import java.util.concurrent.Future;
 public class LangChainAgentService implements AIAgentService {
 
     private static final Logger log = LoggerFactory.getLogger(LangChainAgentService.class);
-    private static final int MAX_TOOL_ITERATIONS = 10;
+    /** A tool call with identical arguments is executed at most this many times per task. */
+    /** Images from earlier turns resent with each request (most recent first); older ones become a note. */
+    static final int MAX_HISTORY_IMAGES = 6;
+    static final int MAX_IDENTICAL_TOOL_CALLS = 2;
+    /** How many times a reasoning-only (or truncated) step is asked to continue before giving up. */
+    static final int MAX_REASONING_CONTINUATIONS = 2;
+    private static final int MAX_REASONING_ECHO_CHARS = 8_000;
 
     private final List<AgentTool> tools = new CopyOnWriteArrayList<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -61,6 +70,11 @@ public class LangChainAgentService implements AIAgentService {
     }
 
     @Override
+    public boolean recordsSessionMessages() {
+        return true;
+    }
+
+    @Override
     public boolean isBusy() {
         return activeTask != null && !activeTask.isDone();
     }
@@ -75,6 +89,13 @@ public class LangChainAgentService implements AIAgentService {
 
     @Override
     public void sendMessage(String prompt, String contextCode, String activeFilePath, AgentListener listener) {
+        sendMessage(prompt, contextCode, activeFilePath, List.of(), listener);
+    }
+
+    @Override
+    public void sendMessage(String prompt, String contextCode, String activeFilePath, List<ImageAttachment> images,
+                            AgentListener listener) {
+        List<ImageAttachment> attached = images != null ? List.copyOf(images) : List.of();
         cancelled = false;
         activeTask = executor.submit(() -> {
             String activeProviderName = "Unknown";
@@ -132,6 +153,26 @@ public class LangChainAgentService implements AIAgentService {
                     providerConfig = config.getProvider(providerId);
                 }
 
+                // Images need a vision model: if routing picked a text-only one, prefer the session's own model
+                boolean vision = VisionSupport.supportsVision(providerConfig, targetModel);
+                if (!attached.isEmpty() && !vision && !Objects.equals(targetModel, session.getModelId())) {
+                    ProviderConfig sessionProvider = config.getProvider(session.getProviderId());
+                    if (sessionProvider != null && sessionProvider.isEnabled()
+                            && VisionSupport.supportsVision(sessionProvider, session.getModelId())) {
+                        providerId = session.getProviderId();
+                        providerConfig = sessionProvider;
+                        targetModel = session.getModelId();
+                        vision = true;
+                        listener.onThinking("🖼 Using " + targetModel + " because the request has images.");
+                    }
+                }
+                VisionSupport.setCurrentModelVision(vision);
+                if (!attached.isEmpty() && !vision) {
+                    listener.onThinking("🖼 " + targetModel + " does not accept images, so the " + attached.size()
+                            + " attached image(s) were not sent. Choose a vision model, or mark this model as "
+                            + "vision-capable in Settings → AI Providers → Edit Model.");
+                }
+
                 activeProviderName = providerConfig != null ? providerConfig.getName() : providerId;
                 activeTargetModel = targetModel;
                 activeEndpointUrl = providerConfig != null && providerConfig.getBaseUrl() != null ? providerConfig.getBaseUrl() : "default";
@@ -172,14 +213,24 @@ public class LangChainAgentService implements AIAgentService {
                 messages.add(new SystemMessage(systemPromptBuilder.toString()));
 
                 // Replay previous turns from session if applicable
-                for (AgentMessage priorMsg : session.getMessages()) {
+                List<AgentMessage> history = session.getMessages();
+                int imageBudget = MAX_HISTORY_IMAGES;
+                Set<AgentMessage> replayImages = Collections.newSetFromMap(new IdentityHashMap<>());
+                for (int i = history.size() - 1; i >= 0 && vision && imageBudget > 0; i--) {
+                    AgentMessage m = history.get(i);
+                    if (m.isUser() && !m.getAttachments().isEmpty()) {
+                        replayImages.add(m);
+                        imageBudget -= m.getAttachments().size();
+                    }
+                }
+                for (AgentMessage priorMsg : history) {
                     String content = priorMsg.getContent();
-                    if (content == null || content.trim().isEmpty()) {
+                    if ((content == null || content.trim().isEmpty()) && priorMsg.getAttachments().isEmpty()) {
                         continue;
                     }
                     if (priorMsg.isUser()) {
-                        messages.add(new UserMessage(content.trim()));
-                    } else if (priorMsg.isAssistant()) {
+                        messages.add(replayUserMessage(priorMsg, replayImages.contains(priorMsg)));
+                    } else if (priorMsg.isAssistant() && !priorMsg.isInterim()) {
                         messages.add(new AiMessage(content.trim()));
                     }
                 }
@@ -197,22 +248,52 @@ public class LangChainAgentService implements AIAgentService {
                 if (userText.isEmpty()) {
                     userText = "Process task";
                 }
-                messages.add(new UserMessage(userText));
+                if (!attached.isEmpty() && vision) {
+                    messages.add(UserMessage.from(VisionSupport.toContents(
+                            userText + "\n\nAttached image(s): " + VisionSupport.describe(attached), attached)));
+                } else if (!attached.isEmpty()) {
+                    messages.add(new UserMessage(userText + "\n\n[" + attached.size()
+                            + " image(s) were attached but this model cannot view images: " + VisionSupport.describe(attached) + "]"));
+                } else {
+                    messages.add(new UserMessage(userText));
+                }
 
                 // Add prompt message to active session
-                session.addMessage(new AgentMessage(AgentRole.USER, safePrompt));
+                AgentMessage userRecord = new AgentMessage(AgentRole.USER, safePrompt);
+                List<String> paths = new ArrayList<>();
+                for (ImageAttachment img : attached) {
+                    if (img.path() != null) paths.add(img.path());
+                }
+                userRecord.setAttachments(paths);
+                session.addMessage(userRecord);
 
                 // 6. Convert registered tools (FileSystem, Terminal, CodeRefactor, Memory, and all MCP tools)
                 List<ToolSpecification> toolSpecs = buildToolSpecifications();
 
                 // 7. Multi-Turn Autonomous Tool Calling Execution Loop
+                int maxIterations = config.getMaxAgentIterations();
+                ToolCallGuard toolGuard = new ToolCallGuard(MAX_IDENTICAL_TOOL_CALLS);
+                boolean finished = false;
                 int iteration = 0;
-                while (iteration++ < MAX_TOOL_ITERATIONS && !cancelled) {
+                int continuations = 0;
+                while (iteration++ < maxIterations && !cancelled) {
                     listener.onThinking("Reasoning with " + targetModel + " (Step " + iteration + ")...");
 
-                    Response<AiMessage> response = chatModel.generate(messages, toolSpecs);
+                    StepStream stream = new StepStream(listener);
+                    Response<AiMessage> response = callModel(chatModel, messages, toolSpecs,
+                            config.isStreamingEnabled(), stream);
                     AiMessage aiMessage = response.content();
                     messages.add(aiMessage);
+
+                    // Surface this step's reasoning (thinking models: Claude, DeepSeek...) for every step,
+                    // including steps that call tools, and never leak it into the next step.
+                    String thinkingContent = takeLastThinking();
+                    if (thinkingContent != null) {
+                        session.addMessage(new AgentMessage(AgentRole.THINKING, thinkingContent, null));
+                        if (!stream.reasoningStreamed) {
+                            listener.onThinking("💭 Model Reasoning:\n" + thinkingContent);
+                        }
+                    }
 
                     // Track tokens from response if provided by provider
                     if (response.tokenUsage() != null) {
@@ -230,7 +311,34 @@ public class LangChainAgentService implements AIAgentService {
 
                     SessionManager.getInstance().notifyListeners();
 
+                    ReasoningOutcome outcome = classifyStep(aiMessage, response.finishReason(), thinkingContent);
+                    if (outcome != ReasoningOutcome.COMPLETE && continuations < MAX_REASONING_CONTINUATIONS) {
+                        // The model stopped after reasoning (usually the output token limit): keep the turn
+                        // structure valid and ask it to carry on instead of ending the task here.
+                        continuations++;
+                        messages.remove(messages.size() - 1);
+                        messages.add(AiMessage.from(thinkingContent != null
+                                ? "[My reasoning so far]\n" + truncate(thinkingContent, MAX_REASONING_ECHO_CHARS)
+                                : "(My previous response was cut off.)"));
+                        messages.add(UserMessage.from(continuationPrompt(outcome)));
+                        listener.onThinking("↻ The model returned reasoning without an answer ("
+                                + (outcome == ReasoningOutcome.TRUNCATED ? "output token limit reached" : "no final text")
+                                + "). Asking it to continue (" + continuations + "/" + MAX_REASONING_CONTINUATIONS + ")...");
+                        continue;
+                    }
+
                     if (aiMessage.hasToolExecutionRequests()) {
+                        // Text written before the tool calls: keep it in the session, and show it when not streamed
+                        String narration = aiMessage.text();
+                        if (narration != null && !narration.isBlank()) {
+                            AgentMessage interim = new AgentMessage(AgentRole.ASSISTANT, narration.strip());
+                            interim.setInterim(true);
+                            session.addMessage(interim);
+                            String unsent = unstreamedPart(narration, stream.text.toString());
+                            if (!unsent.isEmpty()) {
+                                listener.onToken(unsent);
+                            }
+                        }
                         for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
                             if (cancelled) break;
 
@@ -242,7 +350,12 @@ public class LangChainAgentService implements AIAgentService {
 
                             String toolResult;
                             AgentTool tool = findTool(toolName);
-                            if (tool != null) {
+                            String repeated = toolGuard.checkRepeat(toolName, arguments);
+                            if (repeated != null) {
+                                // The model is looping on the same call: don't run it again, point it at the result
+                                toolResult = repeated;
+                                listener.onThinking("🔁 Skipped a repeated call to " + toolName + " with identical arguments.");
+                            } else if (tool != null) {
                                 try {
                                     toolResult = tool.execute(arguments);
                                 } catch (Exception ex) {
@@ -255,6 +368,9 @@ public class LangChainAgentService implements AIAgentService {
                             if (toolResult == null || toolResult.trim().isEmpty()) {
                                 toolResult = "(command executed with no output)";
                             }
+                            if (repeated == null) {
+                                toolGuard.record(toolName, arguments, toolResult);
+                            }
 
                             listener.onToolResult(toolName, toolResult);
                             messages.add(ToolExecutionResultMessage.from(req, toolResult));
@@ -262,29 +378,25 @@ public class LangChainAgentService implements AIAgentService {
                             // Record tool execution in session
                             session.addMessage(new AgentMessage(AgentRole.TOOL, toolResult, toolName));
                         }
-                    } else {
-                        // Surface any thinking/reasoning from the model (DeepSeek, Claude 3.7, etc.)
-                        // AnthropicMapper stores thinking via LAST_THINKING thread-local after generate()
-                        String thinkingContent = null;
-                        try {
-                            thinkingContent = dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.get();
-                            if (thinkingContent != null && !thinkingContent.isBlank()) {
-                                log.debug("Surfacing {} chars of model thinking to UI", thinkingContent.length());
-                                session.addMessage(new AgentMessage(AgentRole.THINKING, thinkingContent, null));
-                                listener.onThinking("💭 Model Reasoning:\n" + thinkingContent);
-                            }
-                        } finally {
-                            dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.LAST_THINKING.remove();
+                        // Images a tool loaded (view_image) go to the model as a user turn after the tool results
+                        List<ImageAttachment> viewed = VisionSupport.drainQueued();
+                        if (!viewed.isEmpty() && !cancelled) {
+                            messages.add(UserMessage.from(VisionSupport.toContents(
+                                    "Image(s) loaded by view_image: " + VisionSupport.describe(viewed), viewed)));
                         }
-
+                    } else {
                         // Final resolution reached - ensure content is never blank
                         String finalResponse = (aiMessage.text() != null && !aiMessage.text().isBlank()) ? aiMessage.text() : "";
                         if (finalResponse.isBlank()) {
-                            if (thinkingContent != null && !thinkingContent.isBlank()) {
-                                finalResponse = thinkingContent;
+                            if (thinkingContent != null) {
+                                finalResponse = thinkingContent + "\n\n⚠️ The model only returned reasoning and no final answer. "
+                                        + "Try increasing the model's Max Output tokens (Settings → AI Providers → Edit Model).";
                             } else {
                                 finalResponse = "Task completed successfully.";
                             }
+                        } else if (response.finishReason() == FinishReason.LENGTH) {
+                            finalResponse += "\n\n⚠️ Response truncated at the model's output token limit. "
+                                    + "Increase Max Output in Settings → AI Providers → Edit Model.";
                         }
 
                         // Store in session (actual response only, without thinking)
@@ -298,11 +410,11 @@ public class LangChainAgentService implements AIAgentService {
                             log.info("Post-generation context compression: {}", postComp.summary());
                         }
 
-                        // Emit the response as a token so the chat bubble is populated.
-                        // chatModel.generate() is synchronous (non-streaming), so onToken() is
-                        // the only way to push text into the streaming chat bubble in the UI.
-                        if (!finalResponse.isBlank()) {
-                            listener.onToken(finalResponse);
+                        // Send whatever the chat has not shown yet: the whole answer for non-streaming models,
+                        // only the appended notes (e.g. truncation warning) when the answer was streamed.
+                        String unsent = unstreamedPart(finalResponse, stream.text.toString());
+                        if (!unsent.isEmpty()) {
+                            listener.onToken(unsent);
                         }
 
                         SessionManager.getInstance().autoSaveCurrentProjectSessions();
@@ -311,13 +423,29 @@ public class LangChainAgentService implements AIAgentService {
                         com.github.axiomate.agentic.ide.features.devexperience.AgentAnalyticsDashboard.getInstance()
                                 .recordTaskOutcome("GENERAL", true, 20.0, 0.005, null);
 
+                        finished = true;
                         listener.onComplete(finalResponse);
                         return;
                     }
                 }
 
-                if (iteration >= MAX_TOOL_ITERATIONS) {
-                    String msg = "Task reached maximum tool calling iterations (" + MAX_TOOL_ITERATIONS + "). Completed.";
+                if (!finished && !cancelled) {
+                    // Step limit reached: ask the model to wrap up instead of ending with a bare notice
+                    listener.onThinking("⏸ Reached the step limit (" + maxIterations + "). Asking the model for a summary...");
+                    String summary = null;
+                    try {
+                        messages.add(UserMessage.from(stepLimitPrompt(maxIterations)));
+                        Response<AiMessage> wrapUp = chatModel.generate(messages, toolSpecs);
+                        takeLastThinking();
+                        if (wrapUp.content().text() != null && !wrapUp.content().text().isBlank()) {
+                            summary = wrapUp.content().text();
+                        }
+                    } catch (Exception wrapUpError) {
+                        log.warn("Could not get a summary after the step limit: {}", wrapUpError.getMessage());
+                    }
+                    String msg = (summary != null ? summary + "\n\n" : "")
+                            + "⏸ Paused after " + maxIterations + " agent steps. Reply \"continue\" to keep going, "
+                            + "or raise \"Max agent steps per task\" in Settings → Editor & Appearance.";
                     session.addMessage(new AgentMessage(AgentRole.ASSISTANT, msg));
                     SessionManager.getInstance().autoSaveCurrentProjectSessions();
                     listener.onToken(msg);
@@ -337,6 +465,9 @@ public class LangChainAgentService implements AIAgentService {
                 listener.onError(new RuntimeException(
                         String.format("Error calling provider %s [%s] at URL [%s]: %s",
                                 activeProviderName, activeTargetModel, activeEndpointUrl, e.getMessage()), e));
+            } finally {
+                ReasoningContext.clear();
+                VisionSupport.clearThreadState();
             }
         });
     }
@@ -390,5 +521,157 @@ public class LangChainAgentService implements AIAgentService {
         }
         return null;
     }
-}
 
+    enum ReasoningOutcome {
+        /** Tool calls or a final answer: proceed normally. */
+        COMPLETE,
+        /** Cut off by the output token limit before producing an answer or tool call. */
+        TRUNCATED,
+        /** Only reasoning, no text and no tool calls. */
+        REASONING_ONLY
+    }
+
+    /**
+     * Decides whether a step ended properly or stopped after reasoning without acting.
+     */
+    static ReasoningOutcome classifyStep(AiMessage aiMessage, FinishReason finishReason, String thinking) {
+        if (aiMessage.hasToolExecutionRequests()) return ReasoningOutcome.COMPLETE;
+        boolean hasText = aiMessage.text() != null && !aiMessage.text().isBlank();
+        if (hasText) return ReasoningOutcome.COMPLETE;
+        if (finishReason == FinishReason.LENGTH) return ReasoningOutcome.TRUNCATED;
+        if (thinking != null) return ReasoningOutcome.REASONING_ONLY;
+        return ReasoningOutcome.COMPLETE;
+    }
+
+    static String continuationPrompt(ReasoningOutcome outcome) {
+        return outcome == ReasoningOutcome.TRUNCATED
+                ? "Your previous response hit the output token limit before you answered. Continue from your reasoning above "
+                  + "without repeating it: keep any further reasoning brief, then either call the next tool or give the final answer."
+                : "You reasoned about the task but did not respond. Based on your reasoning above, now either call the next tool "
+                  + "or give the final answer.";
+    }
+
+    /** Reads and clears the reasoning captured by AnthropicMapper for the last generate() call. */
+    private static String takeLastThinking() {
+        return ReasoningContext.takeLast();
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + "\n…";
+    }
+
+    static String stepLimitPrompt(int maxIterations) {
+        return "You have used all " + maxIterations + " agent steps for this request. Do not call any more tools. "
+                + "Reply with: what you completed, what is still left to do, and your best answer so far.";
+    }
+
+    /**
+     * Detects a model repeatedly issuing the same tool call (a common failure of reasoning models that lose
+     * track of earlier results) and answers repeats from the earlier result instead of running them again.
+     */
+    static final class ToolCallGuard {
+        private final int maxIdentical;
+        private final java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+        private final java.util.Map<String, String> lastResults = new java.util.HashMap<>();
+
+        ToolCallGuard(int maxIdentical) {
+            this.maxIdentical = maxIdentical;
+        }
+
+        private static String key(String tool, String args) {
+            return tool + "\u0000" + (args == null ? "" : args.replaceAll("\\s+", ""));
+        }
+
+        /** Returns a replacement result when this exact call already ran the maximum number of times, else null. */
+        String checkRepeat(String tool, String args) {
+            String k = key(tool, args);
+            int n = counts.getOrDefault(k, 0);
+            if (n < maxIdentical) return null;
+            counts.put(k, n + 1);
+            String previous = lastResults.getOrDefault(k, "");
+            if (previous.length() > 4_000) previous = previous.substring(0, 4_000) + "\n…";
+            return "NOTE: You already called " + tool + " with these exact arguments " + n + " times; it was not run again. "
+                    + "Its result was:\n" + previous + "\n\nUse this result: take a different next step or give the final answer.";
+        }
+
+        void record(String tool, String args, String result) {
+            String k = key(tool, args);
+            counts.merge(k, 1, Integer::sum);
+            lastResults.put(k, result);
+        }
+    }
+
+    /** Answer text and reasoning streamed during one model call, forwarded to the listener as it arrives. */
+    private final class StepStream implements StreamingChat.Sink {
+        private final AgentListener listener;
+        final StringBuilder text = new StringBuilder();
+        boolean reasoningStreamed;
+
+        StepStream(AgentListener listener) {
+            this.listener = listener;
+        }
+
+        @Override
+        public void onText(String delta) {
+            if (delta == null || delta.isEmpty()) return;
+            text.append(delta);
+            listener.onToken(delta);
+        }
+
+        @Override
+        public void onReasoning(String delta) {
+            if (delta == null || delta.isEmpty()) return;
+            reasoningStreamed = true;
+            listener.onReasoningToken(delta);
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled;
+        }
+    }
+
+    /** Streams when the model supports it and streaming is enabled; otherwise a normal blocking call. */
+    static Response<AiMessage> callModel(ChatLanguageModel model, List<ChatMessage> messages, List<ToolSpecification> tools,
+                                         boolean streaming, StreamingChat.Sink sink) {
+        if (streaming && model instanceof StreamingChat streamingModel) {
+            return streamingModel.generateStreaming(messages, tools, sink);
+        }
+        return model.generate(messages, tools);
+    }
+
+    /**
+     * The part of the final answer the chat has not received yet. When the stream does not match the final text
+     * exactly, nothing more is sent and the listener's onComplete carries the authoritative text.
+     */
+    static String unstreamedPart(String finalResponse, String streamed) {
+        if (streamed.isEmpty()) return finalResponse;
+        if (finalResponse.startsWith(streamed)) return finalResponse.substring(streamed.length());
+        return "";
+    }
+
+    /** Rebuilds an earlier user turn, with its images when they are still on disk and within the budget. */
+    static UserMessage replayUserMessage(AgentMessage msg, boolean withImages) {
+        String text = msg.getContent() == null ? "" : msg.getContent().trim();
+        List<String> files = msg.getAttachments();
+        if (files.isEmpty()) return new UserMessage(text.isEmpty() ? "(empty)" : text);
+        List<ImageAttachment> images = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (String path : files) {
+            java.io.File f = new java.io.File(path);
+            names.add(f.getName());
+            if (withImages && f.isFile()) {
+                try {
+                    images.add(VisionSupport.fromFile(f));
+                } catch (Exception e) {
+                    log.debug("Could not reload image {}: {}", path, e.getMessage());
+                }
+            }
+        }
+        if (images.isEmpty()) {
+            return new UserMessage((text.isEmpty() ? "" : text + "\n\n") + "[Earlier image(s): " + String.join(", ", names) + "]");
+        }
+        return UserMessage.from(VisionSupport.toContents(text, images));
+    }
+
+}

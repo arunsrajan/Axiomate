@@ -11,7 +11,7 @@ import java.util.*;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class IdeConfig {
 
-    private String theme = "FlatLaf Darcula";
+    private String theme = "Claude Dark";
     private int fontSize = 14;
     private String fontFamily = "Consolas";
 
@@ -22,9 +22,12 @@ public class IdeConfig {
     // Auto-Routing & Compression
     private boolean autoRoutingEnabled = true;
     private double autoCompressionThreshold = 0.95; // 95% limit triggers compression
+    private int maxAgentIterations = DEFAULT_MAX_AGENT_ITERATIONS; // model/tool steps per task
 
     // File Mentions (@)
     private boolean fileMentionsEnabled = true;
+    /** Show replies in the agent chat as they are generated (providers that support streaming). */
+    private boolean streamingEnabled = true;
     private String mentionTriggerChar = "@";
 
     private double temperature = 0.2;
@@ -183,12 +186,37 @@ public class IdeConfig {
         this.autoRoutingEnabled = autoRoutingEnabled;
     }
 
+    public static final int DEFAULT_MAX_AGENT_ITERATIONS = 50;
+    public static final int MIN_AGENT_ITERATIONS = 5;
+    public static final int MAX_AGENT_ITERATIONS = 500;
+
+    /**
+     * Maximum number of model steps (each usually a tool call) the agent may take for one request.
+     */
+    public int getMaxAgentIterations() {
+        return maxAgentIterations;
+    }
+
+    public void setMaxAgentIterations(int maxAgentIterations) {
+        // 0 means "not set" in configs saved by older versions
+        int v = maxAgentIterations <= 0 ? DEFAULT_MAX_AGENT_ITERATIONS : maxAgentIterations;
+        this.maxAgentIterations = Math.max(MIN_AGENT_ITERATIONS, Math.min(MAX_AGENT_ITERATIONS, v));
+    }
+
     public double getAutoCompressionThreshold() {
         return autoCompressionThreshold;
     }
 
     public void setAutoCompressionThreshold(double autoCompressionThreshold) {
         this.autoCompressionThreshold = Math.max(0.5, Math.min(0.99, autoCompressionThreshold));
+    }
+
+    public boolean isStreamingEnabled() {
+        return streamingEnabled;
+    }
+
+    public void setStreamingEnabled(boolean streamingEnabled) {
+        this.streamingEnabled = streamingEnabled;
     }
 
     public boolean isFileMentionsEnabled() {

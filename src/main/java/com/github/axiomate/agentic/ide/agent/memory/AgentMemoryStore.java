@@ -2,6 +2,7 @@ package com.github.axiomate.agentic.ide.agent.memory;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -12,6 +13,44 @@ public interface AgentMemoryStore {
     void addMemory(MemoryItem item);
 
     void removeMemory(String id);
+
+    /**
+     * Adds (or replaces by id) a batch of memories with a single persistence write.
+     */
+    default void addMemories(Collection<MemoryItem> items) {
+        if (items == null) return;
+        for (MemoryItem item : items) {
+            addMemory(item);
+        }
+    }
+
+    /**
+     * Removes every memory whose {@link MemoryItem#getSource()} equals the given source key.
+     *
+     * @return number of memories removed
+     */
+    default int removeMemoriesBySource(String source) {
+        if (source == null) return 0;
+        int removed = 0;
+        for (MemoryItem item : getAllMemories()) {
+            if (source.equals(item.getSource())) {
+                removeMemory(item.getId());
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    /**
+     * Restricts search and context retrieval to global memories plus memories of the given project.
+     * A null scope disables filtering.
+     */
+    default void setActiveProjectScope(String projectPath) {
+    }
+
+    default String getActiveProjectScope() {
+        return null;
+    }
 
     List<MemoryItem> getAllMemories();
 

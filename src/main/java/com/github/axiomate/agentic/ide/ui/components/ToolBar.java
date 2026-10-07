@@ -2,6 +2,7 @@ package com.github.axiomate.agentic.ide.ui.components;
 
 import com.github.axiomate.agentic.ide.config.ConfigManager;
 import com.github.axiomate.agentic.ide.config.IdeConfig;
+import com.github.axiomate.agentic.ide.ui.IdeActions;
 import com.github.axiomate.agentic.ide.ui.util.UIUtils;
 
 import javax.swing.*;
@@ -10,12 +11,14 @@ import java.awt.*;
 import java.util.function.Consumer;
 
 /**
- * Top action toolbar providing rapid access to file actions, execution, and quick AI prompts.
+ * Top action toolbar providing rapid access to file actions, execution, agent sync, plugins,
+ * the command palette and quick AI prompts.
  */
 public class ToolBar extends JToolBar {
 
     private final JComboBox<String> providerCombo;
     private final JTextField quickAiInput;
+    private boolean updatingToolbar = false;
 
     public ToolBar(Runnable onNewFile,
                    Runnable onOpenFile,
@@ -24,42 +27,66 @@ public class ToolBar extends JToolBar {
                    Runnable onImportMemory,
                    Consumer<String> onQuickAiPrompt,
                    Runnable onOpenSettings) {
+        this(onNewFile, onOpenFile, onSaveFile, onRunFile, onImportMemory, onQuickAiPrompt, onOpenSettings, IdeActions.NONE);
+    }
+
+    public ToolBar(Runnable onNewFile,
+                   Runnable onOpenFile,
+                   Runnable onSaveFile,
+                   Runnable onRunFile,
+                   Runnable onImportMemory,
+                   Consumer<String> onQuickAiPrompt,
+                   Runnable onOpenSettings,
+                   IdeActions actions) {
         setFloatable(false);
         setRollover(true);
-        setBorder(new EmptyBorder(4, 8, 4, 8));
+        applyColors();
+        UIUtils.addThemeListener(this::applyColors);
 
-        // File buttons
-        JButton newBtn = createToolButton("New", UIUtils.createFileIcon(16, null), e -> onNewFile.run());
-        JButton openBtn = createToolButton("Open", UIUtils.createFolderIcon(16, null), e -> onOpenFile.run());
-        JButton saveBtn = createToolButton("Save", null, e -> onSaveFile.run());
-        saveBtn.setText("💾 Save");
-
-        add(newBtn);
-        add(openBtn);
+        add(createToolButton("New file (Ctrl+N)", UIUtils.createFileIcon(16, null), e -> onNewFile.run()));
+        add(createToolButton("Open file (Ctrl+O)", UIUtils.createFolderIcon(16, null), e -> onOpenFile.run()));
+        JButton saveBtn = createToolButton("Save (Ctrl+S)", UIUtils.glyph(UIUtils.Glyph.DOWNLOAD, 16, null), e -> onSaveFile.run());
         add(saveBtn);
-        addSeparator(new Dimension(12, 24));
+        addSeparator(new Dimension(10, 24));
 
-        // Run button
-        JButton runBtn = createToolButton("Run File", UIUtils.createPlayIcon(16, UIUtils.SUCCESS_COLOR), e -> onRunFile.run());
-        runBtn.setText(" Run");
-        runBtn.setFont(new Font("SansSerif", Font.BOLD, 12));
+        JButton runBtn = createToolButton("Run active file (Shift+F10)", UIUtils.createPlayIcon(16, UIUtils.SUCCESS_COLOR), e -> onRunFile.run());
+        runBtn.setText("Run");
         add(runBtn);
+        addSeparator(new Dimension(10, 24));
 
-        addSeparator(new Dimension(12, 24));
+        // Agent Sync dropdown: memory, MCP servers and sessions from other coding agents
+        JButton syncBtn = createToolButton("Import/export memory, MCP servers and sessions with Claude Code, Codex, Cursor, Antigravity…",
+                UIUtils.glyph(UIUtils.Glyph.SYNC, 16, UIUtils.ACCENT_PURPLE), null);
+        syncBtn.setText("Agent Sync ▾");
+        syncBtn.addActionListener(e -> {
+            JPopupMenu menu = new JPopupMenu();
+            menu.add(item("Import memory from coding agents…", actions::openMemoryImport));
+            menu.add(item("Export memory to coding agents…", actions::openMemoryExport));
+            menu.add(item("Import memory from file…", onImportMemory));
+            menu.addSeparator();
+            menu.add(item("Import MCP servers from agents…", () -> actions.openMcpInterop(false)));
+            menu.add(item("Export MCP servers to agents…", () -> actions.openMcpInterop(true)));
+            menu.addSeparator();
+            menu.add(item("Import sessions from Claude Code / Codex…", actions::openExternalSessionImport));
+            menu.add(item("Show Agent Sync panel", () -> actions.showSidebarView(IdeActions.VIEW_AGENT_SYNC)));
+            menu.show(syncBtn, 0, syncBtn.getHeight());
+        });
+        add(syncBtn);
 
-        // Import Memory Button
-        JButton memBtn = createToolButton("Import All Memory", null, e -> onImportMemory.run());
-        memBtn.setText("🧠 Import Memory");
-        memBtn.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        add(memBtn);
+        JButton pluginsBtn = createToolButton("Plugins (Ctrl+Shift+X)", UIUtils.glyph(UIUtils.Glyph.PLUGINS, 16, UIUtils.ACCENT_COLOR),
+                e -> actions.openPluginManager(0));
+        pluginsBtn.setText("Plugins");
+        add(pluginsBtn);
 
-        addSeparator(new Dimension(16, 24));
+        addSeparator(new Dimension(14, 24));
 
         // Quick AI Prompt box in toolbar
         JLabel aiLabel = new JLabel(UIUtils.createSparkleIcon(16, UIUtils.ACCENT_PURPLE));
         quickAiInput = new JTextField(20);
-        quickAiInput.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        quickAiInput.putClientProperty("JTextField.placeholderText", "Ask Axiomate AI...");
+        quickAiInput.setFont(UIUtils.uiFont(Font.PLAIN, 12f));
+        quickAiInput.putClientProperty("JTextField.placeholderText", "Ask Axiomate AI…");
+        quickAiInput.setToolTipText("Quick prompt for the active agent session — supports /slash commands");
+        quickAiInput.setMaximumSize(new Dimension(360, 30));
         quickAiInput.addActionListener(e -> {
             String text = quickAiInput.getText().trim();
             if (!text.isEmpty()) {
@@ -86,12 +113,17 @@ public class ToolBar extends JToolBar {
 
         add(Box.createHorizontalGlue());
 
+        add(createToolButton("Command palette (Ctrl+K / F1)", UIUtils.glyph(UIUtils.Glyph.COMMAND, 16, null),
+                e -> actions.openCommandPalette()));
+        addSeparator(new Dimension(8, 24));
+
         // Model provider selector
         JLabel provLabel = new JLabel("Provider: ");
-        provLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        provLabel.setFont(UIUtils.uiFont(Font.PLAIN, 11f));
         providerCombo = new JComboBox<>();
-        providerCombo.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        providerCombo.setFont(UIUtils.uiFont(Font.PLAIN, 12f));
         providerCombo.setFocusable(false);
+        providerCombo.setMaximumSize(new Dimension(180, 30));
 
         refreshProviderCombo(ConfigManager.getInstance().getConfig());
 
@@ -111,11 +143,21 @@ public class ToolBar extends JToolBar {
         add(providerCombo);
         addSeparator(new Dimension(8, 24));
 
-        JButton settingsBtn = createToolButton("Settings", UIUtils.createGearIcon(16, null), e -> onOpenSettings.run());
-        add(settingsBtn);
+        add(createToolButton("Settings (Ctrl+,)", UIUtils.createGearIcon(16, null), e -> onOpenSettings.run()));
     }
 
-    private boolean updatingToolbar = false;
+    private void applyColors() {
+        setBackground(UIUtils.surface(2));
+        setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, UIUtils.borderColor()),
+                new EmptyBorder(4, 8, 4, 8)));
+    }
+
+    private static JMenuItem item(String text, Runnable r) {
+        JMenuItem i = new JMenuItem(text);
+        i.addActionListener(e -> r.run());
+        return i;
+    }
 
     private void refreshProviderCombo(IdeConfig cfg) {
         if (providerCombo == null || cfg == null) return;
@@ -138,8 +180,7 @@ public class ToolBar extends JToolBar {
         btn.setToolTipText(tooltip);
         btn.setFocusable(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.addActionListener(listener);
+        if (listener != null) btn.addActionListener(listener);
         return btn;
     }
 }
-

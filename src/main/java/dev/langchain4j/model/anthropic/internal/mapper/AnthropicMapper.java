@@ -22,6 +22,8 @@ import dev.langchain4j.model.anthropic.internal.api.AnthropicContentBlockType;
 import dev.langchain4j.model.anthropic.internal.api.AnthropicImageContent;
 import dev.langchain4j.model.anthropic.internal.api.AnthropicMessage;
 import dev.langchain4j.model.anthropic.internal.api.AnthropicMessageContent;
+import dev.langchain4j.model.anthropic.internal.api.AnthropicRedactedThinkingContent;
+import dev.langchain4j.model.anthropic.internal.api.AnthropicThinkingContent;
 import dev.langchain4j.model.anthropic.internal.api.AnthropicRole;
 import dev.langchain4j.model.anthropic.internal.api.AnthropicTextContent;
 import dev.langchain4j.model.anthropic.internal.api.AnthropicTool;
@@ -34,6 +36,7 @@ import dev.langchain4j.model.output.TokenUsage;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,7 +55,23 @@ public class AnthropicMapper {
      * on the same thread. LangChainAgentService reads this after chatModel.generate() returns
      * to surface reasoning to the UI via onThinking().
      */
-    public static final ThreadLocal<String> LAST_THINKING = new ThreadLocal<>();
+    public static final ThreadLocal<String> LAST_THINKING =
+            com.github.axiomate.agentic.ide.agent.ReasoningContext.LAST_REASONING;
+
+    /**
+     * Reasoning blocks of assistant turns that called tools, keyed by the AiMessage instance (identity), so they
+     * can be sent back with that turn. Cleared by the agent when a task ends.
+     */
+    private static final Map<AiMessage, List<AnthropicMessageContent>> THINKING_REPLAY =
+            Collections.synchronizedMap(new IdentityHashMap<>());
+
+    public static void clearThinkingReplay() {
+        THINKING_REPLAY.clear();
+    }
+
+    static int thinkingReplaySize() {
+        return THINKING_REPLAY.size();
+    }
 
     public AnthropicMapper() {
     }
@@ -200,6 +219,11 @@ public class AnthropicMapper {
 
     private static List<AnthropicMessageContent> toAnthropicMessageContents(AiMessage aiMessage) {
         List<AnthropicMessageContent> contents = new ArrayList<>();
+        // Reasoning comes first in the turn, exactly as the model produced it
+        List<AnthropicMessageContent> thinking = THINKING_REPLAY.get(aiMessage);
+        if (thinking != null) {
+            contents.addAll(thinking);
+        }
         if (Utils.isNotNullOrBlank(aiMessage.text())) {
             contents.add(new AnthropicTextContent(aiMessage.text()));
         }
@@ -293,13 +317,30 @@ public class AnthropicMapper {
         // The AiMessage text is ONLY the final answer (not the thinking)
         String combinedText = Utils.isNotNullOrBlank(text) ? text : "";
 
+        AiMessage result;
         if (Utils.isNotNullOrBlank(combinedText) && !Utils.isNullOrEmpty(toolExecutionRequests)) {
-            return AiMessage.from(combinedText, toolExecutionRequests);
+            result = AiMessage.from(combinedText, toolExecutionRequests);
         } else if (!Utils.isNullOrEmpty(toolExecutionRequests)) {
-            return AiMessage.from(toolExecutionRequests);
+            result = AiMessage.from(toolExecutionRequests);
         } else {
-            return AiMessage.from(combinedText);
+            result = AiMessage.from(combinedText);
         }
+
+        // Keep the reasoning of tool-calling turns so it is sent back with them on the next request
+        if (!Utils.isNullOrEmpty(toolExecutionRequests)) {
+            List<AnthropicMessageContent> blocks = new ArrayList<>();
+            for (AnthropicContent c : contents) {
+                if (c.type == AnthropicContentBlockType.THINKING && c.thinking != null) {
+                    blocks.add(new AnthropicThinkingContent(c.thinking, c.signature));
+                } else if (c.type == AnthropicContentBlockType.REDACTED_THINKING && c.data != null) {
+                    blocks.add(new AnthropicRedactedThinkingContent(c.data));
+                }
+            }
+            if (!blocks.isEmpty()) {
+                THINKING_REPLAY.put(result, blocks);
+            }
+        }
+        return result;
     }
 
     public static TokenUsage toTokenUsage(AnthropicUsage usage) {

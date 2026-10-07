@@ -79,8 +79,8 @@ public class ProviderSettingsPanel extends JPanel {
 
         // Provider Header Selector & Management Toolbar
         JPanel selectorPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
-        selectorPanel.setBorder(new CompoundBorder(new LineBorder(new Color(60, 60, 65), 1), new EmptyBorder(6, 10, 6, 10)));
-        selectorPanel.setBackground(new Color(36, 38, 44));
+        selectorPanel.setBorder(new CompoundBorder(new LineBorder(UIUtils.borderColor(), 1), new EmptyBorder(6, 10, 6, 10)));
+        selectorPanel.setBackground(UIUtils.surface(2));
 
         JLabel selectLabel = new JLabel("Provider:");
         selectLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
@@ -133,7 +133,7 @@ public class ProviderSettingsPanel extends JPanel {
 
         setActiveCheck = new JCheckBox("Active Provider");
         setActiveCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
-        setActiveCheck.setForeground(new Color(255, 205, 85));
+        setActiveCheck.setForeground(UIUtils.accentText(UIUtils.WARNING_COLOR));
         setActiveCheck.setToolTipText("Set this provider as the active AI provider in the IDE");
         setActiveCheck.setSelected(currentSelectedProviderId.equals(targetActiveProviderId));
         setActiveCheck.addActionListener(e -> {
@@ -236,6 +236,12 @@ public class ProviderSettingsPanel extends JPanel {
         modelsTable.setRowHeight(22);
         modelsTable.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 11));
         modelsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        modelsTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2 && modelsTable.getSelectedRow() >= 0) showEditModelDialog();
+            }
+        });
 
         JScrollPane tableScroll = new JScrollPane(modelsTable);
         tableScroll.setPreferredSize(new Dimension(500, 160));
@@ -251,7 +257,13 @@ public class ProviderSettingsPanel extends JPanel {
         removeModelBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
         removeModelBtn.addActionListener(e -> removeSelectedModel());
 
+        JButton editModelBtn = new JButton("✎ Edit Model");
+        editModelBtn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        editModelBtn.setToolTipText("Edit the selected model's name, context window, max output tokens and tags");
+        editModelBtn.addActionListener(e -> showEditModelDialog());
+
         tableBtnBar.add(addModelBtn);
+        tableBtnBar.add(editModelBtn);
         tableBtnBar.add(removeModelBtn);
         modelsPanel.add(tableBtnBar, BorderLayout.SOUTH);
 
@@ -265,8 +277,8 @@ public class ProviderSettingsPanel extends JPanel {
         routingTab.setBorder(new EmptyBorder(12, 12, 12, 12));
 
         JPanel routingHeader = new JPanel(new BorderLayout(8, 4));
-        routingHeader.setBorder(new CompoundBorder(new LineBorder(new Color(60, 60, 65), 1), new EmptyBorder(8, 10, 8, 10)));
-        routingHeader.setBackground(new Color(36, 38, 44));
+        routingHeader.setBorder(new CompoundBorder(new LineBorder(UIUtils.borderColor(), 1), new EmptyBorder(8, 10, 8, 10)));
+        routingHeader.setBackground(UIUtils.surface(2));
 
         autoRoutingCheck = new JCheckBox("Enable Autonomous Task-Based Model Routing", config.isAutoRoutingEnabled());
         autoRoutingCheck.setFont(new Font("SansSerif", Font.BOLD, 12));
@@ -424,7 +436,7 @@ public class ProviderSettingsPanel extends JPanel {
                         m.getDisplayName(),
                         String.format("%,d", m.getMaxContextTokens()),
                         String.format("%,d", m.getMaxOutputTokens()),
-                        String.join(", ", m.getTags())
+                        capabilities(prov, m)
                 });
             }
             defaultModelCombo.setSelectedItem(prov.getDefaultModel());
@@ -553,7 +565,7 @@ public class ProviderSettingsPanel extends JPanel {
         panel.add(new JLabel("API Protocol Type:"));
         JLabel protocolLabel = new JLabel("ANTHROPIC (Claude API Protocol)");
         protocolLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
-        protocolLabel.setForeground(new Color(180, 100, 240));
+        protocolLabel.setForeground(UIUtils.accentText(UIUtils.ACCENT_PURPLE));
         panel.add(protocolLabel);
         panel.add(new JLabel("Display Name:"));
         panel.add(nameInputField);
@@ -662,48 +674,142 @@ public class ProviderSettingsPanel extends JPanel {
         };
     }
 
-    private void showAddModelDialog() {
-        saveCurrentProviderFieldsToWorkingMap();
-        JTextField idField = new JTextField(18);
-        JTextField nameModalField = new JTextField(18);
-        JSpinner ctxSpinner = new JSpinner(new SpinnerNumberModel(128_000, 1_000, 2_000_000, 1_000));
-        JSpinner outSpinner = new JSpinner(new SpinnerNumberModel(4_096, 512, 64_000, 512));
-        JTextField tagsField = new JTextField("coding, tools", 18);
+    /** Upper bound for the "Max Output Tokens" field (20 million). */
+    public static final int MAX_OUTPUT_TOKENS_LIMIT = 20_000_000;
+    /** Upper bound for the "Max Context Tokens" field; kept at least as large as the output limit. */
+    public static final int MAX_CONTEXT_TOKENS_LIMIT = 20_000_000;
 
-        JPanel panel = new JPanel(new GridLayout(5, 2, 6, 6));
+    private void showAddModelDialog() {
+        showModelDialog(null);
+    }
+
+    private void showEditModelDialog() {
+        saveCurrentProviderFieldsToWorkingMap();
+        int selectedRow = modelsTable.getSelectedRow();
+        if (selectedRow < 0) {
+            JOptionPane.showMessageDialog(this, "Please select a model row to edit.", "Selection", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        String modelId = (String) modelsTableModel.getValueAt(modelsTable.convertRowIndexToModel(selectedRow), 0);
+        ProviderConfig current = workingProviders.get(currentSelectedProviderId);
+        if (current == null) return;
+        current.getModels().stream().filter(m -> m.getId().equals(modelId)).findFirst().ifPresent(this::showModelDialog);
+    }
+
+    /**
+     * Add (existing == null) or edit a model definition of the selected provider.
+     */
+    /** Tags plus a "vision" marker when the model accepts images (set explicitly or detected from its id). */
+    static String capabilities(ProviderConfig prov, ModelDefinition m) {
+        List<String> parts = new ArrayList<>(m.getTags());
+        boolean vision = com.github.axiomate.agentic.ide.agent.vision.VisionSupport.supportsVision(prov, m.getId());
+        parts.removeIf(t -> t.equalsIgnoreCase("vision"));
+        if (vision) parts.add(0, m.getVision() == null ? "vision (auto)" : "vision");
+        return String.join(", ", parts);
+    }
+
+    static final String VISION_AUTO = "Auto-detect from model id";
+
+    private void showModelDialog(ModelDefinition existing) {
+        saveCurrentProviderFieldsToWorkingMap();
+        boolean editing = existing != null;
+        JTextField idField = new JTextField(editing ? existing.getId() : "", 18);
+        JTextField nameModalField = new JTextField(editing ? existing.getDisplayName() : "", 18);
+        int ctxValue = editing ? clamp(existing.getMaxContextTokens(), 1_000, MAX_CONTEXT_TOKENS_LIMIT) : 128_000;
+        int outValue = editing ? clamp(existing.getMaxOutputTokens(), 1, MAX_OUTPUT_TOKENS_LIMIT) : 4_096;
+        JSpinner ctxSpinner = new JSpinner(new SpinnerNumberModel(ctxValue, 1_000, MAX_CONTEXT_TOKENS_LIMIT, 1_000));
+        JSpinner outSpinner = new JSpinner(new SpinnerNumberModel(outValue, 1, MAX_OUTPUT_TOKENS_LIMIT, 1_024));
+        ctxSpinner.setEditor(new JSpinner.NumberEditor(ctxSpinner, "#,##0"));
+        outSpinner.setEditor(new JSpinner.NumberEditor(outSpinner, "#,##0"));
+        outSpinner.setToolTipText("Maximum tokens the model may generate per response (up to 20,000,000)");
+        JTextField tagsField = new JTextField(editing ? String.join(", ", existing.getTags()) : "coding, tools", 18);
+        String[] visionChoices = {VISION_AUTO, "Yes — accepts images", "No — text only"};
+        JComboBox<String> visionCombo = new JComboBox<>(visionChoices);
+        Boolean currentVision = editing ? existing.getVision() : null;
+        visionCombo.setSelectedIndex(currentVision == null ? 0 : currentVision ? 1 : 2);
+        visionCombo.setToolTipText("Whether pasted or attached images are sent to this model. "
+                + "Auto-detect recognises Claude, GPT-4o/4.1/5, Gemini, LLaVA, Qwen-VL, Pixtral, Llama 3.2 Vision and others.");
+
+        JPanel panel = new JPanel(new GridLayout(6, 2, 6, 6));
         panel.add(new JLabel("Model ID (e.g. claude-3-7-sonnet):"));
         panel.add(idField);
         panel.add(new JLabel("Display Name:"));
         panel.add(nameModalField);
         panel.add(new JLabel("Max Context Tokens:"));
         panel.add(ctxSpinner);
-        panel.add(new JLabel("Max Output Tokens:"));
+        panel.add(new JLabel("Max Output Tokens (≤ 20,000,000):"));
         panel.add(outSpinner);
         panel.add(new JLabel("Tags / Capabilities:"));
         panel.add(tagsField);
+        panel.add(new JLabel("Vision (image input):"));
+        panel.add(visionCombo);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Add New Model Definition",
+        int result = JOptionPane.showConfirmDialog(this, panel, editing ? "Edit Model Definition" : "Add New Model Definition",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION || idField.getText().isBlank()) return;
 
-        if (result == JOptionPane.OK_OPTION && !idField.getText().isBlank()) {
-            String mId = idField.getText().trim();
-            String mName = nameModalField.getText().isBlank() ? mId : nameModalField.getText().trim();
-            int maxCtx = (Integer) ctxSpinner.getValue();
-            int maxOut = (Integer) outSpinner.getValue();
-            List<String> tags = Arrays.stream(tagsField.getText().split(","))
-                    .map(String::trim)
-                    .filter(s -> !s.isEmpty())
-                    .toList();
+        try {
+            ctxSpinner.commitEdit();
+            outSpinner.commitEdit();
+        } catch (java.text.ParseException ex) {
+            JOptionPane.showMessageDialog(this, "Token limits must be whole numbers (max output 20,000,000).",
+                    "Invalid Value", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
 
-            ModelDefinition modelDef = new ModelDefinition(mId, mName, maxCtx, maxOut, tags);
-            ProviderConfig current = workingProviders.get(currentSelectedProviderId);
-            if (current != null) {
-                current.getModels().removeIf(m -> m.getId().equalsIgnoreCase(mId));
-                current.getModels().add(modelDef);
-                loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
-                refreshRoutingCombos();
+        String mId = idField.getText().trim();
+        String mName = nameModalField.getText().isBlank() ? mId : nameModalField.getText().trim();
+        int maxCtx = ((Number) ctxSpinner.getValue()).intValue();
+        int maxOut = ((Number) outSpinner.getValue()).intValue();
+        List<String> tags = Arrays.stream(tagsField.getText().split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+
+        ProviderConfig current = workingProviders.get(currentSelectedProviderId);
+        if (current == null) return;
+        ModelDefinition def = new ModelDefinition(mId, mName, maxCtx, maxOut, tags);
+        int v = visionCombo.getSelectedIndex();
+        def.setVision(v == 0 ? null : v == 1);
+        applyModelDefinition(current, editing ? existing.getId() : null, def);
+        loadProviderFieldsFromWorkingMap(currentSelectedProviderId);
+        refreshRoutingCombos();
+    }
+
+    /**
+     * Adds or replaces a model in the provider. When editing, the original entry keeps its position and a
+     * renamed id also updates the provider's default model.
+     */
+    static void applyModelDefinition(ProviderConfig provider, String originalId, ModelDefinition model) {
+        List<ModelDefinition> models = provider.getModels();
+        int index = -1;
+        if (originalId != null) {
+            for (int i = 0; i < models.size(); i++) {
+                if (models.get(i).getId().equals(originalId)) {
+                    index = i;
+                    break;
+                }
             }
         }
+        // Drop any other model that already uses the (possibly new) id
+        final int keep = index;
+        List<ModelDefinition> duplicates = new ArrayList<>();
+        for (int i = 0; i < models.size(); i++) {
+            if (i != keep && models.get(i).getId().equalsIgnoreCase(model.getId())) duplicates.add(models.get(i));
+        }
+        if (index >= 0) {
+            models.set(index, model);
+        } else {
+            models.add(model);
+        }
+        models.removeAll(duplicates);
+        if (originalId != null && originalId.equals(provider.getDefaultModel())) {
+            provider.setDefaultModel(model.getId());
+        }
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private void removeSelectedModel() {

@@ -4,7 +4,6 @@ import com.github.axiomate.agentic.ide.config.ProviderConfig;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
-import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,6 +16,31 @@ import java.time.Duration;
 public class UniversalChatModelFactory {
 
     private static final Logger log = LoggerFactory.getLogger(UniversalChatModelFactory.class);
+
+    /**
+     * Reasoning models (Claude with thinking, DeepSeek R1/V3 via the Anthropic API, o-series) can take several
+     * minutes per step; a 60s timeout aborted them mid-reasoning.
+     */
+    static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
+
+    /**
+     * Used when the model has no configured max output. Anthropic requires max_tokens and LangChain4j
+     * otherwise sends 1,024, which a reasoning model can spend entirely on its thinking block.
+     */
+    static final int DEFAULT_ANTHROPIC_MAX_OUTPUT = 8_192;
+
+    /**
+     * The max output tokens to request for a model: its configured "Max Output" when available.
+     */
+    static int resolveMaxOutputTokens(ProviderConfig config, String modelName, int fallback) {
+        if (config != null && modelName != null) {
+            var model = config.findModel(modelName);
+            if (model != null && model.getMaxOutputTokens() > 0) {
+                return model.getMaxOutputTokens();
+            }
+        }
+        return fallback;
+    }
 
     public static ChatLanguageModel createChatModel(ProviderConfig config, String modelName, double temperature) {
         String providerId = config != null ? config.getId() : "OPENAI";
@@ -56,36 +80,36 @@ public class UniversalChatModelFactory {
 
         return switch (normalizedType) {
             case "ANTHROPIC" -> {
+                int maxOutput = resolveMaxOutputTokens(config, targetModel, DEFAULT_ANTHROPIC_MAX_OUTPUT);
                 AnthropicChatModel.AnthropicChatModelBuilder builder = AnthropicChatModel.builder()
                         .apiKey(apiKey)
                         .modelName(targetModel)
                         .temperature(temperature)
-                        .timeout(Duration.ofSeconds(60));
+                        .maxTokens(maxOutput)
+                        .timeout(REQUEST_TIMEOUT);
+                String formattedUrl = null;
                 if (baseUrl != null && !baseUrl.isBlank()) {
-                    String formattedUrl = baseUrl.trim();
+                    formattedUrl = baseUrl.trim();
                     if (!formattedUrl.endsWith("/")) {
                         formattedUrl = formattedUrl + "/";
                     }
                     builder.baseUrl(formattedUrl);
                 }
-                yield builder.build();
+                // Same model, plus streaming over server-sent events for the agent chat
+                yield new AnthropicSseChatModel(builder.build(), formattedUrl, apiKey, targetModel, temperature,
+                        maxOutput, REQUEST_TIMEOUT);
             }
             case "GEMINI" -> {
                 GoogleAiGeminiChatModel.GoogleAiGeminiChatModelBuilder builder = GoogleAiGeminiChatModel.builder()
                         .apiKey(apiKey)
                         .modelName(targetModel)
                         .temperature(temperature)
-                        .timeout(Duration.ofSeconds(60));
+                        .timeout(REQUEST_TIMEOUT);
                 yield builder.build();
             }
-            default -> { // OPENAI or CUSTOM (Ollama, LM Studio, vLLM, DeepSeek, etc.)
-                yield OpenAiChatModel.builder()
-                        .apiKey(apiKey)
-                        .baseUrl(baseUrl)
-                        .modelName(targetModel)
-                        .temperature(temperature)
-                        .timeout(Duration.ofSeconds(60))
-                        .build();
+            default -> { // OPENAI or CUSTOM (Ollama, LM Studio, vLLM, DeepSeek, OpenRouter, etc.)
+                // Own client: keeps reasoning_content and sends it back with tool-calling turns
+                yield new OpenAiCompatibleChatModel(baseUrl, apiKey, targetModel, temperature, null, REQUEST_TIMEOUT);
             }
         };
     }

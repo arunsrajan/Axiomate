@@ -66,14 +66,12 @@ public class FileMentionController {
         this.inputArea = inputArea;
 
         this.popupMenu = new JPopupMenu();
-        this.popupMenu.setBorder(new LineBorder(new Color(75, 80, 95), 1));
+        this.popupMenu.setBorder(new LineBorder(UIUtils.borderColor(), 1));
         this.popupMenu.setFocusable(false);
 
         this.listModel = new DefaultListModel<>();
         this.fileList = new JList<>(listModel);
         this.fileList.setFont(new Font("Consolas", Font.PLAIN, 12));
-        this.fileList.setBackground(new Color(30, 32, 38));
-        this.fileList.setForeground(new Color(225, 230, 240));
         this.fileList.setSelectionBackground(UIUtils.ACCENT_COLOR);
         this.fileList.setSelectionForeground(Color.WHITE);
         this.fileList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -341,6 +339,23 @@ public class FileMentionController {
      * Scans a prompt string for '@' mentions, resolves each matching file in the workspace,
      * reads its contents, and formats them into an attached context block.
      */
+    /** Image files mentioned with '@' in the prompt; they are sent as images rather than as text. */
+    public static java.util.List<File> findMentionedImages(String prompt, File projectDir) {
+        java.util.List<File> images = new java.util.ArrayList<>();
+        if (prompt == null || prompt.isBlank() || projectDir == null || !projectDir.exists()) return images;
+        IdeConfig config = ConfigManager.getInstance().getConfig();
+        String trigger = Pattern.quote(config.getMentionTriggerChar());
+        Matcher matcher = Pattern.compile("(?:^|\\s)" + trigger + "([\\w\\.\\-\\/\\\\]+)").matcher(prompt);
+        while (matcher.find()) {
+            File f = resolveMentionedFile(projectDir, matcher.group(1).trim().replace('\\', '/'));
+            if (f != null && f.isFile() && com.github.axiomate.agentic.ide.agent.vision.VisionSupport.isImageFile(f)
+                    && !images.contains(f)) {
+                images.add(f);
+            }
+        }
+        return images;
+    }
+
     public static String buildMentionedFilesContext(String prompt, File projectDir) {
         if (prompt == null || prompt.isBlank() || projectDir == null || !projectDir.exists()) {
             return "";
@@ -366,6 +381,9 @@ public class FileMentionController {
         StringBuilder contextBuilder = new StringBuilder();
         for (String token : matchedTokens) {
             File targetFile = resolveMentionedFile(projectDir, token);
+            if (com.github.axiomate.agentic.ide.agent.vision.VisionSupport.isImageFile(targetFile)) {
+                continue; // images are attached for vision models, see findMentionedImages
+            }
             if (targetFile != null && targetFile.exists() && targetFile.isFile()) {
                 try {
                     String content = Files.readString(targetFile.toPath());

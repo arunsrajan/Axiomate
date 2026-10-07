@@ -37,6 +37,7 @@ public class EditorPanel extends JPanel {
     private final Map<Component, File> tabFileMap = new HashMap<>();
     private final Map<Component, RSyntaxTextArea> tabEditorMap = new HashMap<>();
     private final Map<Component, Boolean> dirtyMap = new HashMap<>();
+    private java.util.function.Consumer<File> imageAttachHandler = f -> { };
 
     public EditorPanel() {
         setLayout(new BorderLayout());
@@ -54,6 +55,24 @@ public class EditorPanel extends JPanel {
 
         add(tabbedPane, BorderLayout.CENTER);
         ProjectManager.getInstance().addFileContentListener(this::reloadOrUpdateFile);
+        UIUtils.addThemeListener(() -> tabEditorMap.values().forEach(this::applyEditorTheme));
+    }
+
+    /**
+     * Applies the RSyntaxTextArea color scheme matching the current light/dark look-and-feel.
+     */
+    private void applyEditorTheme(RSyntaxTextArea textArea) {
+        String scheme = UIUtils.isDark() ? "dark.xml" : "idea.xml";
+        try (var in = getClass().getResourceAsStream("/org/fife/ui/rsyntaxtextarea/themes/" + scheme)) {
+            Theme.load(in).apply(textArea);
+        } catch (Exception e) {
+            textArea.setBackground(UIUtils.consoleBackground());
+            textArea.setForeground(UIUtils.consoleForeground());
+            textArea.setCaretColor(UIUtils.consoleForeground());
+        }
+        // Themes may reset the font; keep the user's configured editor font size
+        IdeConfig config = ConfigManager.getInstance().getConfig();
+        textArea.setFont(UIUtils.getEditorFont(config.getFontSize()));
     }
 
     public void reloadOrUpdateFile(File file, String newContent) {
@@ -90,6 +109,12 @@ public class EditorPanel extends JPanel {
             }
         }
 
+        if (com.github.axiomate.agentic.ide.agent.vision.VisionSupport.isImageFile(file)) {
+            createImageTab(file);
+            ProjectManager.getInstance().setActiveFile(file);
+            return;
+        }
+
         try {
             String content = Files.readString(file.toPath());
             createTab(file.getName(), content, file);
@@ -98,6 +123,53 @@ public class EditorPanel extends JPanel {
             log.error("Failed to read file: {}", file.getAbsolutePath(), e);
             JOptionPane.showMessageDialog(this, "Could not read file: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    /** Called with an image file when the user clicks "Attach to agent prompt" in an image tab. */
+    public void setImageAttachHandler(java.util.function.Consumer<File> handler) {
+        this.imageAttachHandler = handler != null ? handler : f -> { };
+    }
+
+    /** Read-only preview for image files, with a button to send the image to a vision model. */
+    private void createImageTab(File file) {
+        JPanel view = new JPanel(new BorderLayout());
+        JLabel picture = new JLabel();
+        picture.setHorizontalAlignment(SwingConstants.CENTER);
+        String info;
+        try {
+            java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(file);
+            if (img != null) {
+                picture.setIcon(new ImageIcon(img));
+                info = img.getWidth() + " × " + img.getHeight() + " px · " + Math.max(1, file.length() / 1024) + " KB";
+            } else {
+                picture.setText("No preview available for this format");
+                info = Math.max(1, file.length() / 1024) + " KB";
+            }
+        } catch (IOException e) {
+            picture.setText("Could not read image: " + e.getMessage());
+            info = "";
+        }
+        JScrollPane scroll = new JScrollPane(picture);
+        scroll.setBorder(null);
+        view.add(scroll, BorderLayout.CENTER);
+
+        JPanel bar = new JPanel(new BorderLayout());
+        bar.setBorder(new EmptyBorder(4, 10, 4, 10));
+        JLabel infoLabel = new JLabel(info);
+        infoLabel.setForeground(UIUtils.mutedForeground());
+        JButton attach = new JButton("Attach to agent prompt");
+        attach.setToolTipText("Send this image to a vision model with your next prompt");
+        attach.addActionListener(e -> imageAttachHandler.accept(file));
+        bar.add(infoLabel, BorderLayout.WEST);
+        bar.add(attach, BorderLayout.EAST);
+        view.add(bar, BorderLayout.NORTH);
+
+        tabFileMap.put(view, file);
+        dirtyMap.put(view, false);
+        tabbedPane.addTab(file.getName(), view);
+        int index = tabbedPane.indexOfComponent(view);
+        tabbedPane.setTabComponentAt(index, createTabHeader(file.getName(), view));
+        tabbedPane.setSelectedComponent(view);
     }
 
     public void newFile(String title, String initialContent) {
@@ -113,21 +185,10 @@ public class EditorPanel extends JPanel {
         textArea.setBracketMatchingEnabled(true);
         textArea.setAnimateBracketMatching(true);
 
-        IdeConfig config = ConfigManager.getInstance().getConfig();
-        textArea.setFont(UIUtils.getEditorFont(config.getFontSize()));
-
         String syntaxStyle = getSyntaxStyleForFile(file != null ? file.getName() : title);
         textArea.setSyntaxEditingStyle(syntaxStyle);
 
-        try {
-            Theme theme = Theme.load(getClass().getResourceAsStream(
-                    "/org/fife/ui/rsyntaxtextarea/themes/dark.xml"));
-            theme.apply(textArea);
-        } catch (Exception e) {
-            textArea.setBackground(new Color(30, 30, 30));
-            textArea.setForeground(new Color(220, 220, 220));
-            textArea.setCaretColor(Color.WHITE);
-        }
+        applyEditorTheme(textArea);
 
         RTextScrollPane scrollPane = new RTextScrollPane(textArea);
         scrollPane.setFoldIndicatorEnabled(true);
@@ -233,7 +294,7 @@ public class EditorPanel extends JPanel {
 
     public boolean saveActiveFileAs() {
         Component selected = tabbedPane.getSelectedComponent();
-        if (selected == null) return false;
+        if (selected == null || !tabEditorMap.containsKey(selected)) return false; // image previews are read-only
 
         JFileChooser chooser = new JFileChooser(ProjectManager.getInstance().getCurrentProjectDirectory());
         if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {

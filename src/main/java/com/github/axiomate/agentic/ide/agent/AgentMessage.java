@@ -18,6 +18,15 @@ public class AgentMessage {
     private String content = "";
     private String toolName;
     private String timestamp;
+    /** Image files sent with this message (paths on disk). */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+    private java.util.List<String> attachments = new java.util.ArrayList<>();
+    /**
+     * Assistant text written before a tool call ("Let me check the tests"). Shown in the transcript, but not
+     * resent to the model: earlier turns are replayed without their tool calls, where it would be out of context.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_DEFAULT)
+    private boolean interim;
 
     public AgentMessage() {
         this.timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
@@ -43,6 +52,22 @@ public class AgentMessage {
 
     public AgentMessage(AgentRole role, String content, String toolName) {
         this(role, content, toolName, null);
+    }
+
+    public boolean isInterim() {
+        return interim;
+    }
+
+    public void setInterim(boolean interim) {
+        this.interim = interim;
+    }
+
+    public java.util.List<String> getAttachments() {
+        return attachments;
+    }
+
+    public void setAttachments(java.util.List<String> attachments) {
+        this.attachments = attachments != null ? new java.util.ArrayList<>(attachments) : new java.util.ArrayList<>();
     }
 
     public AgentRole getRole() {

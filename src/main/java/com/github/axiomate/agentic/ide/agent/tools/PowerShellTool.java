@@ -75,7 +75,14 @@ public class PowerShellTool implements AgentTool {
         pb.directory(workingDir);
         pb.redirectErrorStream(true);
 
-        Process process = pb.start();
+        Process process;
+        try {
+            process = pb.start();
+        } catch (java.io.IOException e) {
+            // Missing executable: report it to the agent instead of failing the step
+            return "ERROR: PowerShell is not available on this machine ('" + psExecutable + "' could not be started: "
+                    + e.getMessage() + "). Use the 'bash' or 'terminal' tool instead.";
+        }
         StringBuilder output = new StringBuilder();
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {

@@ -21,6 +21,7 @@ public class ProjectStateManager {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectStateManager.class);
     public static final String STATE_FILE_NAME = "project_state.json";
+    public static final String DEFAULT_WORKSPACE_KEY = "__DEFAULT__";
 
     private static ProjectStateManager instance;
 
@@ -143,7 +144,7 @@ public class ProjectStateManager {
     }
 
     public synchronized void saveDefaultSessions(List<AgentSession> sessions, String activeSessionId) {
-        ProjectState state = workspaceState.getProjects().computeIfAbsent("__DEFAULT__", k -> new ProjectState("__DEFAULT__"));
+        ProjectState state = workspaceState.getProjects().computeIfAbsent(DEFAULT_WORKSPACE_KEY, k -> new ProjectState(DEFAULT_WORKSPACE_KEY));
         state.setProjectName("Default Workspace");
         if (sessions != null) {
             state.setSessions(sessions);
@@ -155,7 +156,7 @@ public class ProjectStateManager {
     }
 
     public synchronized List<AgentSession> getDefaultSessions() {
-        ProjectState state = workspaceState.getProjects().get("__DEFAULT__");
+        ProjectState state = workspaceState.getProjects().get(DEFAULT_WORKSPACE_KEY);
         if (state != null && state.getSessions() != null) {
             return new ArrayList<>(state.getSessions());
         }
@@ -163,7 +164,7 @@ public class ProjectStateManager {
     }
 
     public synchronized String getDefaultActiveSessionId() {
-        ProjectState state = workspaceState.getProjects().get("__DEFAULT__");
+        ProjectState state = workspaceState.getProjects().get(DEFAULT_WORKSPACE_KEY);
         if (state != null && state.getActiveSessionId() != null) {
             return state.getActiveSessionId();
         }
@@ -241,6 +242,36 @@ public class ProjectStateManager {
     public synchronized void setLastOpenProjectPath(String path) {
         workspaceState.setLastOpenProjectPath(path != null ? path.trim() : "");
         saveWorkspaceState(workspaceState);
+    }
+
+    /**
+     * All projects with saved state (excluding the default workspace), most recently opened first.
+     */
+    public synchronized List<ProjectState> getKnownProjects() {
+        List<ProjectState> list = new ArrayList<>();
+        for (var e : workspaceState.getProjects().entrySet()) {
+            if (!DEFAULT_WORKSPACE_KEY.equals(e.getKey())) {
+                list.add(e.getValue());
+            }
+        }
+        list.sort((a, b) -> Long.compare(b.getLastOpenedTime(), a.getLastOpenedTime()));
+        return list;
+    }
+
+    /**
+     * Removes a project's saved state (open tabs and sessions) from the workspace index.
+     * Project-local files such as .axiomate/sessions.json are left untouched.
+     */
+    public synchronized boolean forgetProject(String projectPath) {
+        if (projectPath == null || DEFAULT_WORKSPACE_KEY.equals(projectPath)) return false;
+        boolean removed = workspaceState.getProjects().remove(projectPath) != null;
+        if (removed) {
+            if (projectPath.equalsIgnoreCase(workspaceState.getLastOpenProjectPath())) {
+                workspaceState.setLastOpenProjectPath("");
+            }
+            saveWorkspaceState(workspaceState);
+        }
+        return removed;
     }
 
     public Path getStateFilePath() {

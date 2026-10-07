@@ -16,11 +16,17 @@ import java.awt.*;
  */
 public class SettingsDialog extends JDialog {
 
+    public static final int TAB_PROVIDERS = 0;
+    public static final int TAB_EDITOR = 1;
+    public static final int TAB_MCP = 2;
+
     private final ProviderSettingsPanel providerSettingsPanel;
     private final McpSettingsPanel mcpSettingsPanel;
     private final JTabbedPane tabbedPane;
 
     private final JSlider tempSlider;
+    private final JSpinner maxStepsSpinner;
+    private final JCheckBox streamingCheck;
     private final JTextArea systemPromptArea;
     private final JComboBox<String> themeCombo;
     private final JSpinner fontSizeSpinner;
@@ -73,6 +79,23 @@ public class SettingsDialog extends JDialog {
         tempSlider.setPaintTicks(true);
         tempSlider.setPaintLabels(true);
         tempPanel.add(tempSlider, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.3;
+        tempPanel.add(new JLabel("Max agent steps per task:"), gbc);
+        gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 0.7;
+        maxStepsSpinner = new JSpinner(new SpinnerNumberModel(config.getMaxAgentIterations(),
+                IdeConfig.MIN_AGENT_ITERATIONS, IdeConfig.MAX_AGENT_ITERATIONS, 5));
+        maxStepsSpinner.setToolTipText("How many model/tool-call steps the agent may take before it stops and summarizes (default "
+                + IdeConfig.DEFAULT_MAX_AGENT_ITERATIONS + ")");
+        tempPanel.add(maxStepsSpinner, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.3;
+        tempPanel.add(new JLabel("Streaming:"), gbc);
+        gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 0.7;
+        streamingCheck = new JCheckBox("Stream replies as they are generated", config.isStreamingEnabled());
+        streamingCheck.setToolTipText("Anthropic and OpenAI-compatible providers (OpenAI, DeepSeek, Ollama, LM Studio, vLLM, "
+                + "OpenRouter) stream; Gemini replies arrive in one piece");
+        tempPanel.add(streamingCheck, gbc);
         generalPanel.add(tempPanel);
         generalPanel.add(Box.createVerticalStrut(10));
 
@@ -83,7 +106,7 @@ public class SettingsDialog extends JDialog {
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.3;
         uiPanel.add(new JLabel("Color Theme:"), gbc);
         gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 0.7;
-        themeCombo = new JComboBox<>(new String[]{"FlatLaf Darcula", "FlatLaf Dark", "FlatLaf Light", "IntelliJ Light", "One Dark"});
+        themeCombo = new JComboBox<>(UIUtils.THEMES);
         themeCombo.setSelectedItem(config.getTheme());
         uiPanel.add(themeCombo, gbc);
 
@@ -127,6 +150,8 @@ public class SettingsDialog extends JDialog {
 
         // 2. Apply editor & appearance settings
         config.setTemperature(tempSlider.getValue() / 100.0);
+        config.setMaxAgentIterations((Integer) maxStepsSpinner.getValue());
+        config.setStreamingEnabled(streamingCheck.isSelected());
         config.setSystemPrompt(systemPromptArea.getText().trim());
 
         String newTheme = (String) themeCombo.getSelectedItem();

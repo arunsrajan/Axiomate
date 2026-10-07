@@ -115,6 +115,7 @@ public class SessionManager {
         }
 
         AgentSession session = new AgentSession(name, providerId, modelId, autoRoutingEnabled, maxCtx);
+        stampProject(session, currentProjectDirectory);
         sessions.add(session);
         activeSession = session;
         log.info("Created new Agent Session: '{}' ({}:{}, autoRoute={})", name, providerId, modelId, autoRoutingEnabled);
@@ -206,6 +207,10 @@ public class SessionManager {
         log.info("Saved {} sessions for project [{}] in ProjectStateManager", currentSessionsList.size(), projectDir.getName());
 
         // 2. Project-local storage in .axiomate/sessions.json
+        writeProjectLocalSessions(projectDir, activeId, currentSessionsList);
+    }
+
+    private void writeProjectLocalSessions(File projectDir, String activeId, List<AgentSession> list) {
         try {
             if (projectDir.exists() && projectDir.isDirectory()) {
                 Path dotAxiomate = projectDir.toPath().resolve(".axiomate");
@@ -213,9 +218,9 @@ public class SessionManager {
                     Files.createDirectories(dotAxiomate);
                 }
                 File localFile = dotAxiomate.resolve("sessions.json").toFile();
-                SessionExportData data = new SessionExportData(activeId, currentSessionsList);
+                SessionExportData data = new SessionExportData(activeId, list);
                 objectMapper.writeValue(localFile, data);
-                log.info("Wrote project-local session state to {}", localFile);
+                log.debug("Wrote project-local session state to {}", localFile);
             }
         } catch (Exception e) {
             log.warn("Could not save project-local sessions file: {}", e.getMessage());
@@ -281,6 +286,7 @@ public class SessionManager {
 
         sessions.clear();
         if (!loaded.isEmpty()) {
+            loaded.forEach(s -> stampProject(s, projectDir));
             sessions.addAll(loaded);
             AgentSession matched = null;
             if (savedActiveId != null && !savedActiveId.isBlank()) {
@@ -300,6 +306,142 @@ public class SessionManager {
         }
 
         notifyListeners();
+    }
+
+    /**
+     * Duplicates a session (history and settings) of the current project and activates the copy.
+     */
+    public synchronized AgentSession duplicateSession(String sessionId) {
+        AgentSession source = findSession(sessionId);
+        if (source == null) return null;
+        AgentSession copy = source.fork(source.getName() + " (copy)");
+        stampProject(copy, currentProjectDirectory);
+        sessions.add(copy);
+        activeSession = copy;
+        notifyListeners();
+        autoSaveCurrentProjectSessions();
+        return copy;
+    }
+
+    public synchronized void setPinned(String sessionId, boolean pinned) {
+        AgentSession s = findSession(sessionId);
+        if (s != null) {
+            s.setPinned(pinned);
+            notifyListeners();
+            autoSaveCurrentProjectSessions();
+        }
+    }
+
+    public AgentSession findSession(String sessionId) {
+        if (sessionId == null) return null;
+        for (AgentSession s : sessions) {
+            if (s.getId().equals(sessionId)) return s;
+        }
+        return null;
+    }
+
+    /**
+     * Adds a session produced elsewhere (e.g. imported from Claude Code or Codex) to the current project.
+     * A session with the same id is replaced, which makes repeated imports idempotent.
+     */
+    public synchronized void addImportedSession(AgentSession session, boolean activate) {
+        if (session == null) return;
+        boolean wasActive = activeSession != null && activeSession.getId().equals(session.getId());
+        sessions.removeIf(s -> s.getId().equals(session.getId()));
+        stampProject(session, currentProjectDirectory);
+        sessions.add(session);
+        if (activate || wasActive || activeSession == null) {
+            activeSession = session;
+        }
+        notifyListeners();
+        autoSaveCurrentProjectSessions();
+    }
+
+    /** Records the folder a session belongs to, keeping any folder it already has. */
+    private static void stampProject(AgentSession session, File projectDir) {
+        if (projectDir != null && (session.getProjectPath() == null || session.getProjectPath().isBlank())) {
+            session.setProjectPath(projectDir.getAbsolutePath());
+        }
+    }
+
+    private boolean isCurrentProject(File projectDir) {
+        if (projectDir == null || currentProjectDirectory == null) {
+            return projectDir == null && currentProjectDirectory == null;
+        }
+        return ProjectStateManager.normalizePath(projectDir).equals(ProjectStateManager.normalizePath(currentProjectDirectory));
+    }
+
+    /**
+     * Returns the sessions stored for any project without switching to it.
+     */
+    public synchronized List<AgentSession> getSessionsForProject(File projectDir) {
+        if (isCurrentProject(projectDir)) {
+            return getSessions();
+        }
+        if (projectDir == null) {
+            return ProjectStateManager.getInstance().getDefaultSessions();
+        }
+        List<AgentSession> loaded = ProjectStateManager.getInstance().getProjectSessions(projectDir);
+        if (loaded.isEmpty()) {
+            File localFile = projectDir.toPath().resolve(".axiomate").resolve("sessions.json").toFile();
+            if (localFile.exists()) {
+                try {
+                    SessionExportData data = objectMapper.readValue(localFile, SessionExportData.class);
+                    if (data.getSessions() != null) loaded = data.getSessions();
+                } catch (Exception e) {
+                    log.warn("Failed reading project-local sessions.json for {}: {}", projectDir, e.getMessage());
+                }
+            }
+        }
+        return loaded;
+    }
+
+    /**
+     * Copies a session (as an independent fork) into another project's saved sessions.
+     */
+    public synchronized AgentSession copySessionToProject(AgentSession session, File targetProjectDir) {
+        if (session == null || targetProjectDir == null) return null;
+        AgentSession copy = session.fork(session.getName());
+        copy.setOrigin("Copied from project session '" + session.getName() + "'");
+        copy.setProjectPath(targetProjectDir.getAbsolutePath());
+        if (isCurrentProject(targetProjectDir)) {
+            sessions.add(copy);
+            notifyListeners();
+            autoSaveCurrentProjectSessions();
+            return copy;
+        }
+        List<AgentSession> target = new ArrayList<>(getSessionsForProject(targetProjectDir));
+        target.add(copy);
+        String activeId = ProjectStateManager.getInstance().getProjectActiveSessionId(targetProjectDir);
+        persistOtherProject(targetProjectDir, target, activeId.isBlank() ? copy.getId() : activeId);
+        log.info("Copied session '{}' to project [{}]", session.getName(), targetProjectDir.getName());
+        return copy;
+    }
+
+    /**
+     * Deletes a session from any project. Deleting from the current project behaves like {@link #closeSession}.
+     */
+    public synchronized void deleteSessionFromProject(File projectDir, String sessionId) {
+        if (isCurrentProject(projectDir)) {
+            closeSession(sessionId);
+            return;
+        }
+        List<AgentSession> target = new ArrayList<>(getSessionsForProject(projectDir));
+        target.removeIf(s -> s.getId().equals(sessionId));
+        String activeId = ProjectStateManager.getInstance().getProjectActiveSessionId(projectDir);
+        if (sessionId.equals(activeId)) {
+            activeId = target.isEmpty() ? "" : target.get(0).getId();
+        }
+        persistOtherProject(projectDir, target, activeId);
+    }
+
+    private void persistOtherProject(File projectDir, List<AgentSession> list, String activeId) {
+        if (projectDir == null) {
+            ProjectStateManager.getInstance().saveDefaultSessions(list, activeId);
+            return;
+        }
+        ProjectStateManager.getInstance().saveProjectSessions(projectDir, list, activeId);
+        writeProjectLocalSessions(projectDir, activeId, list);
     }
 
     public synchronized void autoSaveCurrentProjectSessions() {

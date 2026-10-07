@@ -163,7 +163,72 @@ Axiomate includes 50 purpose-built agentic capabilities accessible via the top-l
 49. **Focus Guardian (`FocusGuardianService`)**: Batches non-critical agent questions and notifications during active developer typing, releasing them during natural pauses.
 50. **Agent Analytics Dashboard (`AgentAnalyticsDashboard`, Dialog `Ctrl+Shift+D`)**: Comprehensive dashboard tracking acceptance rate, token spend, time saved, rework rate, and task performance metrics.
 
+### 13. 🔄 Agent Sync — Interop with Other Coding Agents
+Axiomate reads and writes the native files of other coding agents, so your rules, memories, MCP servers, commands and conversations follow you between tools. Open the **Agent Sync** sidebar (`Alt+6`) to see what each agent has stored for the current project.
+
+| Agent | Memory / rules imported from | Memory exported to | MCP servers | Slash commands | Sessions |
+|---|---|---|---|---|---|
+| **Claude Code** | `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules/`, `~/.claude/CLAUDE.md`, auto memory (`~/.claude/projects/<project>/memory/`) | `CLAUDE.md` (managed block) | `.mcp.json`, `~/.claude.json` | `.claude/commands/` | ✅ `~/.claude/projects/*.jsonl` |
+| **OpenAI Codex** | `AGENTS.md`, `AGENTS.override.md`, `~/.codex/AGENTS.md` | `AGENTS.md` (managed block) | `~/.codex/config.toml` | `~/.codex/prompts/` | ✅ `~/.codex/sessions/**/rollout-*.jsonl` |
+| **Cursor** | `.cursor/rules/*.mdc`, `.cursorrules` | `.cursor/rules/axiomate-memory.mdc` | `.cursor/mcp.json` | `.cursor/commands/` | — |
+| **Google Antigravity** | `.agents/rules/` (and legacy `.agent/rules/`), `~/.gemini/GEMINI.md`, `~/.gemini/config/rules/` | `.agents/rules/axiomate-memory.md` (`trigger: always_on`) | `~/.gemini/antigravity/mcp_config.json` | `.agents/workflows/` | — |
+| **Gemini CLI** | `GEMINI.md`, `~/.gemini/GEMINI.md` (incl. saved memories) | `GEMINI.md` (managed block) | `.gemini/settings.json` | `.gemini/commands/*.toml` | — |
+| **Windsurf** | `.windsurf/rules/`, `.devin/rules/`, `.windsurfrules`, global rules | `.windsurf/rules/axiomate-memory.md` | `~/.codeium/windsurf/mcp_config.json` | `.windsurf/workflows/` | — |
+| **GitHub Copilot** | `.github/copilot-instructions.md`, `.github/instructions/` | `.github/copilot-instructions.md` (managed block) | `.vscode/mcp.json` | — | — |
+| **Cline / Roo Code / Kiro** | `.clinerules`, `memory-bank/`, `.roo/rules/`, `.kiro/steering/` | dedicated rule/steering file | Roo `.roo/mcp.json`, Kiro `.kiro/settings/mcp.json` | Cline & Roo workflows | — |
+
+- **Import memory** (`Agent Sync → Import memory & rules…`): previews every detected file and the memories it contains. Markdown files are split into one memory per section; frontmatter (`globs`, `alwaysApply`, `trigger`, `applyTo`) is preserved. Re-importing a file **replaces** its earlier memories instead of duplicating them.
+- **Project-scoped memory**: rules imported from a project apply only to that project, so one repository's `CLAUDE.md` never leaks into another project's agent context (the Memory tab's scope filter shows *This project + global*, *All projects* or *Global only*).
+- **Export memory**: writes your memories where each agent reads them. Shared files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `copilot-instructions.md`) only get a marker-delimited `<!-- axiomate:memory:start -->` block that is replaced on every export — your own content is untouched. A per-file preview shows exactly what will be written, and a file's own imported memories are never written back into it.
+- **MCP servers**: import servers configured in any of the agents above (added disabled until you opt in), or export Axiomate's servers into another agent's config (JSON configs are merged; Codex TOML is appended).
+- **Sessions**: continue a Claude Code or Codex conversation in Axiomate — prompts, replies, reasoning, tool calls and tool results are preserved.
+- **Commands**: Claude Code commands, Codex prompts, Antigravity/Windsurf workflows and Gemini CLI TOML commands are loaded automatically as `/slash` commands.
+
+### 14. 🗂 Per-Project Session Management
+- **Sessions sidebar** (`Alt+5`): sessions grouped under their projects — the open project first (in the accent colour), then every other known project — each heading showing the project's git branch and session count. Click a heading to collapse it; search covers names and messages across all projects. Opening a session from another project switches to that project. Pinning, rename, duplicate/fork, delete, *Copy to project*, and *Export as Markdown* transcripts.
+- **Branch in the agent panel**: the chat header shows the open project and its checked-out git branch (worktrees and detached HEADs included), updating within seconds when you switch branches outside the IDE.
+- **Session Manager** (`AI Agent → Multi-Agent Sessions → Session Manager`, or click the project name in the status bar): browse sessions of **all** known projects, search across every project, preview transcripts, copy a session into the current project, reopen a project, or forget a project.
+- **File → Open Recent Project** lists known projects with their session counts; switching projects restores its tabs and sessions.
+- Chat commands: `/new [name]`, `/rename <name>`, `/fork`, `/export`, `/sessions`.
+
+### 15. 🧩 Plugins
+- **Plugin Manager** (`Ctrl+Shift+X`): *Marketplace*, *Installed*, *Install from…* and *Commands* tabs.
+- **Built-in marketplace**: MCP servers (Filesystem, Git, GitHub, Playwright, Context7, Fetch, Knowledge-Graph Memory, Sequential Thinking, Time) and rule/workflow packs (Modern Java 21+, Secure Coding (OWASP), Commits & Pull Requests, Test-Driven Development, Code Review Assistant).
+- **Install from a folder, ZIP or URL** — including GitHub repository and sub-folder URLs (`https://github.com/owner/repo/tree/main/plugins/my-plugin`). **Claude Code plugins install directly**: `commands/` become slash commands, `agents/` become specialist commands, `skills/*/SKILL.md` become agent memories and `.mcp.json` servers are registered.
+- **Safe by default**: an install review shows every MCP server's exact launch command and asks for required tokens (masked); servers stay stopped unless you tick *Start MCP servers now*. Archives are extracted with path-traversal protection and size limits.
+- Enable/disable or uninstall at any time — memories, commands and MCP servers contributed by a plugin are removed cleanly.
+- Native plugin format (`axiomate-plugin.json`):
+  ```json
+  {
+    "id": "team-rules", "name": "Team Rules", "version": "1.0.0",
+    "memories": [{"title": "Logging", "content": "Use SLF4J placeholders", "type": "PROJECT_RULE"}],
+    "commands": [{"name": "review", "description": "Review code", "prompt": "Review $ARGUMENTS for bugs"}],
+    "mcpServers": [{"name": "docs", "command": "npx", "args": ["-y", "@upstash/context7-mcp"], "requiredEnv": []}]
+  }
+  ```
+
+### 16. 🎨 Modernized Workbench
+- **Activity bar + sidebar** with Explorer, Sessions, Agent Sync and Plugins views (click the active icon to collapse the sidebar).
+- **Command Palette** (`Ctrl+K` / `F1`): fuzzy search over every menu action, sessions, recent projects, sidebar views and slash commands.
+- **Slash commands** with autocomplete in the agent chat — type `/` (e.g. `/help`, `/review`, `/compact`, `/import-memory`).
+- **Theme-aware UI**: chat bubbles, consoles, status bar and the editor's syntax scheme follow the selected light or dark theme, including live theme switching.
+- Rounded chat bubbles, wrapping action chips, non-blocking toast notifications, and a clickable status bar (project, plugins, memories, session).
+
 ---
+
+### 17. 🖼 Vision Models (Images in Prompts)
+- **Attach images** with the **+** button under the prompt, by pasting a screenshot (Ctrl+V), by dropping image files onto the prompt or transcript, or by mentioning them with `@` (e.g. `@docs/mockup.png`). Thumbnails appear above the prompt; click to view, × to remove.
+- **Image preview tabs**: opening a PNG/JPEG/GIF/WebP/BMP from the Explorer shows the picture with an **Attach to agent prompt** button. "Ask AI Agent About Image" in the Explorer menu attaches it for you.
+- **Every provider path**: images go to Anthropic as base64 image blocks, to OpenAI-compatible servers (OpenAI, Ollama, LM Studio, vLLM, OpenRouter…) as `image_url` data URLs, and to Gemini as inline data.
+- **Vision detection**: Claude, GPT-4o/4.1/5, o-series, Gemini, LLaVA, Qwen-VL, Pixtral, Llama 3.2 Vision, Gemma 3, MiniCPM-V and others are recognised automatically. Override per model in **Settings → AI Providers → Edit Model → Vision**. A note under the prompt says whether the selected model will receive the images; text-only models get a note instead of the pixels.
+- **`view_image` tool**: the agent can look at screenshots, mockups and diagrams in the project on its own.
+- **Sessions keep their images**: pasted images are saved to `.axiomate/attachments/`, shown again when the session reloads, and the 6 most recent are resent on follow-up turns. Large images are scaled to 1568 px on the longest edge.
+
+### 18. ⚡ Streaming Responses
+- **Replies appear as they are written**: the agent chat shows the answer word by word, and the model's reasoning fills a live "Thinking…" entry before the answer starts. Text the model writes before calling a tool shows up as its own reply above the tool call and is saved with the session (it is not resent to the model on later turns).
+- **Providers**: Anthropic and every OpenAI-compatible server (OpenAI, DeepSeek, Ollama, LM Studio, vLLM, OpenRouter) stream over server-sent events, including reasoning (`reasoning_content`, Anthropic thinking, inline `<think>` tags) and tool calls. Gemini replies arrive in one piece.
+- **Same results as before**: streamed replies are assembled into exactly the message a non-streaming call returns, so tool calls, reasoning replay, token usage and truncation notes are unchanged. Servers that ignore `stream` or reject `stream_options` are handled automatically.
+- **Controls**: Esc or Stop ends the stream; the transcript only auto-scrolls while you are at the bottom. Turn streaming off in **Settings → General → Streaming**.
 
 ## 🚀 Quick Start
 
@@ -180,9 +245,9 @@ mvn compile exec:java
 ```bash
 mvn clean package -DskipTests
 ```
-Run the packaged application:
+Run the packaged application (the `-all` jar bundles every dependency):
 ```bash
-java -jar target/ai-agent-ide-1.0.0-SNAPSHOT.jar
+java -jar target/axiomate-agent-ide-1.0.0-SNAPSHOT-all.jar
 ```
 
 ### 3. Run Test Suite
@@ -244,6 +309,23 @@ src/main/java/com/github/axiomate/agentic/ide/
 │   ├── extensibility/                 # F42-F45: Custom Roles, Workflow Recorder, Tool Marketplace, Policy as Code
 │   ├── devexperience/                 # F46-F50: Voice & Sketch, Confidence Heatmap, Learning Mode, Focus Guardian, Analytics
 │   └── ui/                            # Interactive Swing dialogs for all 50 Agentic AI features
+├── interop/                           # Agent Sync: other coding agents' files
+│   ├── CodingAgent.java               # Claude Code, Codex, Cursor, Antigravity, Gemini CLI, Windsurf, Copilot, Cline, Roo, Kiro
+│   ├── CodingAgentCatalog.java        # Where each agent keeps memory/rules and where exports go
+│   ├── AgentMemoryInterop.java        # Detect, parse, import (idempotent) and export (managed blocks) memories
+│   ├── MarkdownDocument.java          # Frontmatter + section parser, managed block helpers
+│   ├── McpConfigInterop.java          # Import/export MCP servers (JSON configs, Codex TOML)
+│   ├── MiniToml.java                  # Minimal TOML reader for agent configs
+│   ├── AgentCommandInterop.java       # Claude/Codex/Cursor/Antigravity/Gemini commands & workflows
+│   ├── ExternalSessionImporter.java   # Claude Code & Codex JSONL transcripts → sessions
+│   └── SessionTranscriptExporter.java # Session → Markdown transcript
+├── plugins/
+│   ├── PluginManifest.java            # axiomate-plugin.json model (MCP servers, memories, commands)
+│   ├── PluginPackageReader.java       # Native + Claude Code plugins, safe ZIP extraction, GitHub URLs
+│   ├── PluginManager.java             # Install / enable / disable / uninstall, registry persistence
+│   ├── PluginCatalog.java             # Built-in marketplace
+│   ├── PluginHost.java                # Contribution target (memory, MCP, commands)
+│   └── SlashCommandRegistry.java      # /commands: built-ins, plugins and other agents
 ├── mcp/
 │   ├── McpTransport.java              # STDIO, SSE
 │   ├── McpServerConfig.java           # MCP server configuration data model
@@ -251,10 +333,18 @@ src/main/java/com/github/axiomate/agentic/ide/
 │   ├── McpTool.java                   # Adapter bridging MCP tool to AgentTool
 │   └── McpManager.java                # Singleton managing MCP servers and tool lifecycle
 ├── ui/
-│   ├── MainFrame.java                 # Main IDE layout, split panes, execution
+│   ├── MainFrame.java                 # Workbench: activity bar, sidebar views, splits, IdeActions
+│   ├── IdeActions.java                # Frame-level actions used by panels, menus and dialogs
+│   ├── dialogs/                       # Memory import/export, MCP interop, session manager & import,
+│   │                                  # plugin manager & install review, command palette
 │   ├── components/
 │   │   ├── EditorPanel.java           # RSyntaxTextArea tabbed editor with dirty flags
 │   │   ├── ProjectTreePanel.java      # Workspace file explorer tree with context menus
+│   │   ├── ActivityBar.java           # Vertical view switcher (Explorer, Sessions, Agent Sync, Plugins)
+│   │   ├── SessionsPanel.java         # Project sessions sidebar
+│   │   ├── AgentSyncPanel.java        # Other coding agents detected in the project
+│   │   ├── PluginsPanel.java          # Installed plugins sidebar
+│   │   ├── SlashCommandCompletion.java # "/" autocomplete in the agent chat
 │   │   ├── AIAgentPanel.java          # AI Agent dock: sessions, model chooser, token meter, feature chips
 │   │   ├── ProviderSettingsPanel.java # Configurable URLs, models, and task routing UI
 │   │   ├── MemoryPanel.java           # Agentic Memory browser, search, and import UI
@@ -266,7 +356,10 @@ src/main/java/com/github/axiomate/agentic/ide/
 │   ├── menu/
 │   │   └── AppMenuBar.java            # File, Edit, Agent, Agent Features, View, Run, Help menus
 │   └── util/
-│       └── UIUtils.java               # Themes, vector icons, pill buttons
+│       ├── UIUtils.java               # Themes, theme-aware palette, vector glyph icons
+│       ├── Toast.java                 # Non-blocking notifications
+│       ├── WrapLayout.java            # Wrapping FlowLayout
+│       └── ScrollablePanel.java       # Width-tracking scroll content
 └── util/
     └── ProjectManager.java            # Workspace directory & active file manager
 ```
