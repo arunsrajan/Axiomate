@@ -2,6 +2,7 @@ package com.github.axiomate.agentic.ide.agent.tools;
 
 import com.github.axiomate.agentic.ide.agent.AIAgentService;
 import com.github.axiomate.agentic.ide.agent.AgentManager;
+import com.github.axiomate.agentic.ide.agent.AnthropicSseChatModel;
 import com.github.axiomate.agentic.ide.agent.LangChainAgentService;
 import com.github.axiomate.agentic.ide.agent.UniversalChatModelFactory;
 import com.github.axiomate.agentic.ide.agent.router.AutonomousTaskRouter;
@@ -12,7 +13,6 @@ import com.github.axiomate.agentic.ide.config.IdeConfig;
 import com.github.axiomate.agentic.ide.config.ModelDefinition;
 import com.github.axiomate.agentic.ide.config.ProviderConfig;
 import com.github.axiomate.agentic.ide.util.ProjectManager;
-import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -206,10 +206,10 @@ class AutonomousCodeEditingAndMultiProviderTest {
 
         // 3. Verify UniversalChatModelFactory instantiates AnthropicChatModel for BOTH Anthropic providers
         ChatLanguageModel m1 = UniversalChatModelFactory.createChatModel(anthropicPersonal, "claude-3-7-sonnet", 0.2);
-        assertTrue(m1 instanceof AnthropicChatModel, "ANTHROPIC_PERSONAL must create AnthropicChatModel");
+        assertTrue(m1 instanceof AnthropicSseChatModel, "ANTHROPIC_PERSONAL must create the Anthropic client");
 
         ChatLanguageModel m2 = UniversalChatModelFactory.createChatModel(anthropicWorkProxy, "claude-3-5-sonnet", 0.2);
-        assertTrue(m2 instanceof AnthropicChatModel, "ANTHROPIC_WORK must create AnthropicChatModel");
+        assertTrue(m2 instanceof AnthropicSseChatModel, "ANTHROPIC_WORK must create the Anthropic client");
 
         // 4. Verify UniversalChatModelFactory instantiates GoogleAiGeminiChatModel for BOTH Gemini providers
         ChatLanguageModel g1 = UniversalChatModelFactory.createChatModel(geminiStandard, "gemini-2.0-flash", 0.2);
@@ -258,7 +258,7 @@ class AutonomousCodeEditingAndMultiProviderTest {
         ChatLanguageModel model = UniversalChatModelFactory.createChatModel(
                 customBedrock, "anthropic.claude-3-sonnet-20240229-v1:0", 0.5);
         assertNotNull(model);
-        assertTrue(model instanceof AnthropicChatModel, "Custom provider with ANTHROPIC api type must instantiate AnthropicChatModel");
+        assertTrue(model instanceof AnthropicSseChatModel, "Custom provider with ANTHROPIC api type must instantiate the Anthropic client");
     }
 
     @Test
@@ -294,7 +294,7 @@ class AutonomousCodeEditingAndMultiProviderTest {
         // 4. Verify model is created with custom URL and API key
         ChatLanguageModel chatModel = UniversalChatModelFactory.createChatModel(
                 customAnthropic, routed.modelId(), 0.2);
-        assertTrue(chatModel instanceof AnthropicChatModel);
+        assertTrue(chatModel instanceof AnthropicSseChatModel);
     }
 }
 

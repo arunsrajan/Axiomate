@@ -45,7 +45,7 @@ import java.util.regex.Pattern;
  * {@link ReasoningContext}, and sends it back with assistant turns that called tools. DeepSeek's thinking mode
  * requires that within a tool-using turn; without it the model loses its plan and repeats the same tool calls.
  */
-public class OpenAiCompatibleChatModel implements ChatLanguageModel {
+public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingChat {
 
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleChatModel.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -60,6 +60,8 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel {
     private final HttpClient http;
     /** Some servers reject reasoning_content in requests; after the first such error it is no longer sent. */
     private volatile boolean sendReasoning = true;
+    /** Some servers reject stream_options (usage in the last chunk); after the first such error it is not sent. */
+    private volatile boolean sendStreamOptions = true;
 
     public OpenAiCompatibleChatModel(String baseUrl, String apiKey, String modelName, Double temperature,
                                      Integer maxTokens, Duration timeout) {
@@ -88,14 +90,28 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel {
 
     @Override
     public Response<AiMessage> generate(List<ChatMessage> messages, List<ToolSpecification> toolSpecifications) {
+        return execute(includeReasoning -> send(buildRequest(messages, toolSpecifications, includeReasoning)));
+    }
+
+    @Override
+    public Response<AiMessage> generateStreaming(List<ChatMessage> messages, List<ToolSpecification> toolSpecifications,
+                                                 Sink sink) {
+        return execute(includeReasoning -> stream(buildRequest(messages, toolSpecifications, includeReasoning), sink));
+    }
+
+    private interface Call {
+        Response<AiMessage> run(boolean includeReasoning) throws IOException, InterruptedException;
+    }
+
+    private Response<AiMessage> execute(Call call) {
         try {
             try {
-                return send(buildRequest(messages, toolSpecifications, sendReasoning));
+                return call.run(sendReasoning);
             } catch (HttpError e) {
                 if (sendReasoning && e.status == 400 && e.body.toLowerCase().contains("reasoning")) {
                     log.info("Server rejected reasoning_content in the request; retrying without it");
                     sendReasoning = false;
-                    return send(buildRequest(messages, toolSpecifications, false));
+                    return call.run(false);
                 }
                 throw e;
             }
@@ -242,7 +258,7 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel {
     // Response
     // ------------------------------------------------------------------
 
-    private Response<AiMessage> send(ObjectNode body) throws IOException, InterruptedException {
+    private HttpRequest.Builder request(ObjectNode body) throws IOException {
         HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(baseUrl + "/chat/completions"))
                 .timeout(timeout)
                 .header("Content-Type", "application/json")
@@ -250,7 +266,165 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel {
         if (apiKey != null && !apiKey.isBlank()) {
             req.header("Authorization", "Bearer " + apiKey);
         }
-        HttpResponse<String> resp = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
+        return req;
+    }
+
+    /**
+     * Streams a completion (SSE). The chunks are assembled into the shape of a non-streaming reply and parsed by
+     * {@link #parseResponse}, so reasoning, tool calls and usage are handled exactly as in {@link #generate}.
+     */
+    private Response<AiMessage> stream(ObjectNode body, Sink sink) throws IOException, InterruptedException {
+        body.put("stream", true);
+        if (sendStreamOptions) body.putObject("stream_options").put("include_usage", true);
+        HttpResponse<java.io.InputStream> resp = http.send(request(body).header("Accept", "text/event-stream").build(),
+                HttpResponse.BodyHandlers.ofInputStream());
+        if (resp.statusCode() / 100 != 2) {
+            String error;
+            try (java.io.InputStream in = resp.body()) {
+                error = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            if (sendStreamOptions && resp.statusCode() == 400 && error.contains("stream_options")) {
+                log.info("Server rejected stream_options; streaming without usage reporting");
+                sendStreamOptions = false;
+                body.remove("stream_options");
+                return stream(body, sink);
+            }
+            throw new HttpError(resp.statusCode(), error);
+        }
+        String contentType = resp.headers().firstValue("Content-Type").orElse("");
+        if (!contentType.contains("event-stream")) {
+            // The server ignored "stream": parse the whole reply and hand the answer over at once
+            Response<AiMessage> whole;
+            try (java.io.InputStream in = resp.body()) {
+                whole = parseResponse(MAPPER.readTree(in));
+            }
+            String text = whole.content().text();
+            if (text != null && !text.isEmpty()) sink.onText(text);
+            return whole;
+        }
+        StreamAssembler assembler = new StreamAssembler(sink);
+        SseReader.read(resp.body(), sink::isCancelled, assembler::accept);
+        return parseResponse(assembler.toResponseJson());
+    }
+
+    /** Collects streamed chat.completion.chunk deltas and forwards answer text and reasoning to the sink. */
+    static final class StreamAssembler {
+        private final Sink sink;
+        private final StringBuilder content = new StringBuilder();
+        private final StringBuilder reasoning = new StringBuilder();
+        private final java.util.TreeMap<Integer, String[]> toolCalls = new java.util.TreeMap<>(); // id, name, args
+        private String finishReason;
+        private JsonNode usage;
+        private int textEmitted;
+        private int inlineThinkEmitted;
+
+        StreamAssembler(Sink sink) {
+            this.sink = sink;
+        }
+
+        void accept(String payload) {
+            JsonNode chunk;
+            try {
+                chunk = MAPPER.readTree(payload);
+            } catch (IOException e) {
+                log.debug("Skipping malformed stream chunk: {}", payload);
+                return;
+            }
+            if (chunk.hasNonNull("error")) {
+                JsonNode err = chunk.get("error");
+                throw new RuntimeException("Stream error: " + (err.has("message") ? err.get("message").asText() : err.toString()));
+            }
+            if (chunk.path("usage").isObject()) usage = chunk.get("usage");
+            JsonNode choice = chunk.path("choices").path(0);
+            if (choice.isMissingNode()) return;
+            JsonNode delta = choice.path("delta");
+            String r = firstText(delta, "reasoning_content", "reasoning");
+            if (r != null) {
+                reasoning.append(r);
+                sink.onReasoning(r);
+            }
+            if (delta.path("content").isTextual()) {
+                content.append(delta.path("content").asText());
+                emitContent();
+            }
+            int position = 0;
+            for (JsonNode tc : delta.path("tool_calls")) {
+                int index = tc.has("index") ? tc.get("index").asInt() : position;
+                position++;
+                String[] call = toolCalls.computeIfAbsent(index, k -> new String[]{null, "", ""});
+                if (tc.hasNonNull("id") && !tc.get("id").asText().isEmpty()) call[0] = tc.get("id").asText();
+                JsonNode fn = tc.path("function");
+                if (fn.path("name").isTextual() && call[1].isEmpty()) call[1] = fn.get("name").asText();
+                JsonNode args = fn.path("arguments");
+                if (args.isTextual()) call[2] += args.asText();
+                else if (args.isObject()) call[2] = args.toString();
+            }
+            if (choice.hasNonNull("finish_reason")) finishReason = choice.get("finish_reason").asText();
+        }
+
+        /**
+         * Sends new answer text to the sink. A reply that opens with {@code <think>} (local reasoning models) is
+         * reasoning until {@code </think>}; the tag text itself is never shown.
+         */
+        private void emitContent() {
+            String full = content.toString();
+            String lead = full.stripLeading();
+            String visible;
+            String think = "";
+            if (lead.startsWith("<think>")) {
+                int end = lead.indexOf("</think>");
+                if (end < 0) {
+                    // hold back a possible partial "</think>"
+                    think = lead.substring(7, Math.max(7, lead.length() - 8));
+                    visible = "";
+                } else {
+                    think = lead.substring(7, end);
+                    visible = lead.substring(end + 8).stripLeading();
+                }
+            } else if ("<think>".startsWith(lead)) {
+                visible = ""; // could still become "<think>"
+            } else {
+                visible = full;
+            }
+            if (think.length() > inlineThinkEmitted) {
+                sink.onReasoning(think.substring(inlineThinkEmitted));
+                inlineThinkEmitted = think.length();
+            }
+            if (visible.length() > textEmitted) {
+                sink.onText(visible.substring(textEmitted));
+                textEmitted = visible.length();
+            }
+        }
+
+        /** The assembled reply in the shape of a non-streaming chat.completion. */
+        JsonNode toResponseJson() {
+            ObjectNode root = MAPPER.createObjectNode();
+            ObjectNode choice = root.putArray("choices").addObject();
+            ObjectNode message = choice.putObject("message");
+            message.put("role", "assistant");
+            message.put("content", content.toString());
+            if (!reasoning.isEmpty()) message.put("reasoning_content", reasoning.toString());
+            if (!toolCalls.isEmpty()) {
+                ArrayNode calls = message.putArray("tool_calls");
+                int n = 0;
+                for (String[] call : toolCalls.values()) {
+                    ObjectNode c = calls.addObject();
+                    c.put("id", call[0] != null ? call[0] : "call_" + n);
+                    c.put("type", "function");
+                    ObjectNode fn = c.putObject("function");
+                    fn.put("name", call[1]);
+                    fn.put("arguments", call[2].isBlank() ? "{}" : call[2]);
+                    n++;
+                }
+            }
+            if (finishReason != null) choice.put("finish_reason", finishReason);
+            if (usage != null) root.set("usage", usage);
+            return root;
+        }
+    }
+
+    private Response<AiMessage> send(ObjectNode body) throws IOException, InterruptedException {
+        HttpResponse<String> resp = http.send(request(body).build(), HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() / 100 != 2) {
             throw new HttpError(resp.statusCode(), resp.body());
         }

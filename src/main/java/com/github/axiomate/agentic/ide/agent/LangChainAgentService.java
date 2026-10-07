@@ -274,7 +274,9 @@ public class LangChainAgentService implements AIAgentService {
                 while (iteration++ < maxIterations && !cancelled) {
                     listener.onThinking("Reasoning with " + targetModel + " (Step " + iteration + ")...");
 
-                    Response<AiMessage> response = chatModel.generate(messages, toolSpecs);
+                    StepStream stream = new StepStream(listener);
+                    Response<AiMessage> response = callModel(chatModel, messages, toolSpecs,
+                            config.isStreamingEnabled(), stream);
                     AiMessage aiMessage = response.content();
                     messages.add(aiMessage);
 
@@ -283,7 +285,9 @@ public class LangChainAgentService implements AIAgentService {
                     String thinkingContent = takeLastThinking();
                     if (thinkingContent != null) {
                         session.addMessage(new AgentMessage(AgentRole.THINKING, thinkingContent, null));
-                        listener.onThinking("💭 Model Reasoning:\n" + thinkingContent);
+                        if (!stream.reasoningStreamed) {
+                            listener.onThinking("💭 Model Reasoning:\n" + thinkingContent);
+                        }
                     }
 
                     // Track tokens from response if provided by provider
@@ -390,11 +394,11 @@ public class LangChainAgentService implements AIAgentService {
                             log.info("Post-generation context compression: {}", postComp.summary());
                         }
 
-                        // Emit the response as a token so the chat bubble is populated.
-                        // chatModel.generate() is synchronous (non-streaming), so onToken() is
-                        // the only way to push text into the streaming chat bubble in the UI.
-                        if (!finalResponse.isBlank()) {
-                            listener.onToken(finalResponse);
+                        // Send whatever the chat has not shown yet: the whole answer for non-streaming models,
+                        // only the appended notes (e.g. truncation warning) when the answer was streamed.
+                        String unsent = unstreamedPart(finalResponse, stream.text.toString());
+                        if (!unsent.isEmpty()) {
+                            listener.onToken(unsent);
                         }
 
                         SessionManager.getInstance().autoSaveCurrentProjectSessions();
@@ -579,6 +583,55 @@ public class LangChainAgentService implements AIAgentService {
             counts.merge(k, 1, Integer::sum);
             lastResults.put(k, result);
         }
+    }
+
+    /** Answer text and reasoning streamed during one model call, forwarded to the listener as it arrives. */
+    private final class StepStream implements StreamingChat.Sink {
+        private final AgentListener listener;
+        final StringBuilder text = new StringBuilder();
+        boolean reasoningStreamed;
+
+        StepStream(AgentListener listener) {
+            this.listener = listener;
+        }
+
+        @Override
+        public void onText(String delta) {
+            if (delta == null || delta.isEmpty()) return;
+            text.append(delta);
+            listener.onToken(delta);
+        }
+
+        @Override
+        public void onReasoning(String delta) {
+            if (delta == null || delta.isEmpty()) return;
+            reasoningStreamed = true;
+            listener.onReasoningToken(delta);
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled;
+        }
+    }
+
+    /** Streams when the model supports it and streaming is enabled; otherwise a normal blocking call. */
+    static Response<AiMessage> callModel(ChatLanguageModel model, List<ChatMessage> messages, List<ToolSpecification> tools,
+                                         boolean streaming, StreamingChat.Sink sink) {
+        if (streaming && model instanceof StreamingChat streamingModel) {
+            return streamingModel.generateStreaming(messages, tools, sink);
+        }
+        return model.generate(messages, tools);
+    }
+
+    /**
+     * The part of the final answer the chat has not received yet. When the stream does not match the final text
+     * exactly, nothing more is sent and the listener's onComplete carries the authoritative text.
+     */
+    static String unstreamedPart(String finalResponse, String streamed) {
+        if (streamed.isEmpty()) return finalResponse;
+        if (finalResponse.startsWith(streamed)) return finalResponse.substring(streamed.length());
+        return "";
     }
 
     /** Rebuilds an earlier user turn, with its images when they are still on disk and within the budget. */

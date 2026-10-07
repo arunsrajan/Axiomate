@@ -100,6 +100,9 @@ public class AIAgentPanel extends JPanel {
     private JPanel currentAssistantMessagePanel;
     private JTextArea currentAssistantTextArea;
     private StringBuilder currentStreamingBuffer;
+    /** Reasoning bubble being filled while the model streams its thinking. */
+    private ThinkingView liveThinking;
+    private StringBuilder liveThinkingBuffer;
     private boolean updatingSessionUi = false;
 
     public AIAgentPanel(Supplier<String> activeCodeSupplier, TerminalPanel terminalPanel) {
@@ -1192,16 +1195,29 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onToken(String token) {
                 SwingUtilities.invokeLater(() -> {
+                    boolean follow = isFollowingTranscript();
+                    endLiveThinking();
                     ensureAssistantBubble();
                     currentStreamingBuffer.append(token);
-                    currentAssistantTextArea.setText(currentStreamingBuffer.toString());
-                    scrollToBottom();
+                    currentAssistantTextArea.append(token);
+                    setAgentState("Responding…", UIUtils.ACCENT_COLOR, true);
+                    if (follow) scrollToBottom();
+                });
+            }
+
+            @Override
+            public void onReasoningToken(String token) {
+                SwingUtilities.invokeLater(() -> {
+                    boolean follow = isFollowingTranscript();
+                    appendLiveThinking(token);
+                    if (follow) scrollToBottom();
                 });
             }
 
             @Override
             public void onThinking(String thought) {
                 SwingUtilities.invokeLater(() -> {
+                    endLiveThinking();
                     setAgentState("Thinking...", UIUtils.WARNING_COLOR, true);
                     recordSessionMessageIfNew(new AgentMessage(AgentRole.THINKING, thought, null));
                     appendThinkingBubble(thought);
@@ -1212,6 +1228,11 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onToolCall(String toolName, String input) {
                 SwingUtilities.invokeLater(() -> {
+                    // Text streamed before a tool call stays in its own bubble; the next reply starts a new one
+                    endLiveThinking();
+                    currentAssistantMessagePanel = null;
+                    currentAssistantTextArea = null;
+                    currentStreamingBuffer = new StringBuilder();
                     setAgentState("Running tool: " + toolName, UIUtils.ACCENT_COLOR, true);
                     recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL_CALL, input, toolName));
                     appendToolRequestBubble(toolName, input);
@@ -1231,6 +1252,12 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onComplete(String fullResponse) {
                 SwingUtilities.invokeLater(() -> {
+                    endLiveThinking();
+                    // The final text is authoritative (e.g. a stream that differs from the assembled answer)
+                    if (currentAssistantTextArea != null && fullResponse != null && !fullResponse.isBlank()
+                            && !currentAssistantTextArea.getText().equals(fullResponse)) {
+                        currentAssistantTextArea.setText(fullResponse);
+                    }
                     if (currentAssistantMessagePanel != null && currentAssistantTextArea != null) {
                         currentAssistantMessagePanel = null;
                         currentAssistantTextArea = null;
@@ -1245,6 +1272,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onError(Throwable throwable) {
                 SwingUtilities.invokeLater(() -> {
+                    endLiveThinking();
                     setAgentState("Error", UIUtils.ERROR_COLOR, false);
                     appendAssistantBubble("⚠️ **Error occurred:** " + throwable.getMessage());
                     terminalPanel.appendAgentLog("ERROR", throwable.toString());
@@ -1256,6 +1284,7 @@ public class AIAgentPanel extends JPanel {
 
     private void cancelAgent() {
         AgentManager.getInstance().getActiveService().cancelCurrentTask();
+        endLiveThinking();
         setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);
     }
 
@@ -1572,10 +1601,51 @@ public class AIAgentPanel extends JPanel {
     /**
      * Renders model reasoning as Claude Code does: a muted "✻ Thinking" line, expandable to the full text.
      */
-    private void appendThinkingBubble(String thought) {
-        String display = thought.length() > 4000 ? thought.substring(0, 4000) + "\n… (full reasoning in Agent Logs)" : thought;
-        String firstLine = display.strip().split("\\R", 2)[0];
-        JLabel title = new JLabel("Thinking… " + (firstLine.length() > 90 ? firstLine.substring(0, 89) + "…" : firstLine));
+    /** A reasoning bubble's title line and text, so a streamed bubble can be filled in place. */
+    private record ThinkingView(JLabel title, JTextArea area) {
+    }
+
+    static final int MAX_THINKING_DISPLAY = 4000;
+
+    private static String thinkingTitle(String thought) {
+        String firstLine = thought.strip().split("\\R", 2)[0];
+        return "Thinking… " + (firstLine.length() > 90 ? firstLine.substring(0, 89) + "…" : firstLine);
+    }
+
+    private void appendLiveThinking(String delta) {
+        if (liveThinking == null) {
+            liveThinking = appendThinkingBubble("");
+            liveThinkingBuffer = new StringBuilder();
+            setAgentState("Thinking…", UIUtils.ACCENT_COLOR, true);
+        }
+        int before = liveThinkingBuffer.length();
+        liveThinkingBuffer.append(delta);
+        if (before < MAX_THINKING_DISPLAY) {
+            String shown = liveThinkingBuffer.length() > MAX_THINKING_DISPLAY
+                    ? delta.substring(0, MAX_THINKING_DISPLAY - before) + "\n… (full reasoning in Agent Logs)" : delta;
+            liveThinking.area().append(shown);
+        }
+        if (before < 200) liveThinking.title().setText(thinkingTitle(liveThinkingBuffer.toString()));
+    }
+
+    /** Finishes the streamed reasoning bubble and records the reasoning in the agent log. */
+    private void endLiveThinking() {
+        if (liveThinking == null) return;
+        terminalPanel.appendAgentLog("AGENT REASONING", liveThinkingBuffer.toString());
+        liveThinking = null;
+        liveThinkingBuffer = null;
+    }
+
+    /** True when the transcript is scrolled to (near) the bottom, so new streamed text should keep it there. */
+    private boolean isFollowingTranscript() {
+        JScrollBar bar = chatScrollPane.getVerticalScrollBar();
+        return bar.getValue() + bar.getVisibleAmount() >= bar.getMaximum() - 48;
+    }
+
+    private ThinkingView appendThinkingBubble(String thought) {
+        String display = thought.length() > MAX_THINKING_DISPLAY
+                ? thought.substring(0, MAX_THINKING_DISPLAY) + "\n… (full reasoning in Agent Logs)" : thought;
+        JLabel title = new JLabel(thinkingTitle(display));
         title.setFont(transcriptFont(Font.ITALIC, -1f));
         title.setForeground(UIUtils.mutedForeground());
 
@@ -1600,6 +1670,7 @@ public class AIAgentPanel extends JPanel {
         card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.SPARK, 14, UIUtils.mutedForeground()), body), BorderLayout.CENTER);
         card.setVisible(showThinkingCheck.isSelected());
         addCard(card, 2);
+        return new ThinkingView(title, area);
     }
 
     private void appendAssistantBubble(String text) {

@@ -26,6 +26,7 @@ public class SettingsDialog extends JDialog {
 
     private final JSlider tempSlider;
     private final JSpinner maxStepsSpinner;
+    private final JCheckBox streamingCheck;
     private final JTextArea systemPromptArea;
     private final JComboBox<String> themeCombo;
     private final JSpinner fontSizeSpinner;
@@ -87,6 +88,14 @@ public class SettingsDialog extends JDialog {
         maxStepsSpinner.setToolTipText("How many model/tool-call steps the agent may take before it stops and summarizes (default "
                 + IdeConfig.DEFAULT_MAX_AGENT_ITERATIONS + ")");
         tempPanel.add(maxStepsSpinner, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.3;
+        tempPanel.add(new JLabel("Streaming:"), gbc);
+        gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 0.7;
+        streamingCheck = new JCheckBox("Stream replies as they are generated", config.isStreamingEnabled());
+        streamingCheck.setToolTipText("Anthropic and OpenAI-compatible providers (OpenAI, DeepSeek, Ollama, LM Studio, vLLM, "
+                + "OpenRouter) stream; Gemini replies arrive in one piece");
+        tempPanel.add(streamingCheck, gbc);
         generalPanel.add(tempPanel);
         generalPanel.add(Box.createVerticalStrut(10));
 
@@ -142,6 +151,7 @@ public class SettingsDialog extends JDialog {
         // 2. Apply editor & appearance settings
         config.setTemperature(tempSlider.getValue() / 100.0);
         config.setMaxAgentIterations((Integer) maxStepsSpinner.getValue());
+        config.setStreamingEnabled(streamingCheck.isSelected());
         config.setSystemPrompt(systemPromptArea.getText().trim());
 
         String newTheme = (String) themeCombo.getSelectedItem();

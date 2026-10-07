@@ -223,6 +223,12 @@ Axiomate reads and writes the native files of other coding agents, so your rules
 - **`view_image` tool**: the agent can look at screenshots, mockups and diagrams in the project on its own.
 - **Sessions keep their images**: pasted images are saved to `.axiomate/attachments/`, shown again when the session reloads, and the 6 most recent are resent on follow-up turns. Large images are scaled to 1568 px on the longest edge.
 
+### 18. ⚡ Streaming Responses
+- **Replies appear as they are written**: the agent chat shows the answer word by word, and the model's reasoning fills a live "Thinking…" entry before the answer starts. Text the model writes before calling a tool shows up as its own reply above the tool call.
+- **Providers**: Anthropic and every OpenAI-compatible server (OpenAI, DeepSeek, Ollama, LM Studio, vLLM, OpenRouter) stream over server-sent events, including reasoning (`reasoning_content`, Anthropic thinking, inline `<think>` tags) and tool calls. Gemini replies arrive in one piece.
+- **Same results as before**: streamed replies are assembled into exactly the message a non-streaming call returns, so tool calls, reasoning replay, token usage and truncation notes are unchanged. Servers that ignore `stream` or reject `stream_options` are handled automatically.
+- **Controls**: Esc or Stop ends the stream; the transcript only auto-scrolls while you are at the bottom. Turn streaming off in **Settings → General → Streaming**.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

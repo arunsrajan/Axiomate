@@ -26,6 +26,8 @@ public class IdeConfig {
 
     // File Mentions (@)
     private boolean fileMentionsEnabled = true;
+    /** Show replies in the agent chat as they are generated (providers that support streaming). */
+    private boolean streamingEnabled = true;
     private String mentionTriggerChar = "@";
 
     private double temperature = 0.2;
@@ -207,6 +209,14 @@ public class IdeConfig {
 
     public void setAutoCompressionThreshold(double autoCompressionThreshold) {
         this.autoCompressionThreshold = Math.max(0.5, Math.min(0.99, autoCompressionThreshold));
+    }
+
+    public boolean isStreamingEnabled() {
+        return streamingEnabled;
+    }
+
+    public void setStreamingEnabled(boolean streamingEnabled) {
+        this.streamingEnabled = streamingEnabled;
     }
 
     public boolean isFileMentionsEnabled() {

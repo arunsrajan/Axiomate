@@ -80,20 +80,24 @@ public class UniversalChatModelFactory {
 
         return switch (normalizedType) {
             case "ANTHROPIC" -> {
+                int maxOutput = resolveMaxOutputTokens(config, targetModel, DEFAULT_ANTHROPIC_MAX_OUTPUT);
                 AnthropicChatModel.AnthropicChatModelBuilder builder = AnthropicChatModel.builder()
                         .apiKey(apiKey)
                         .modelName(targetModel)
                         .temperature(temperature)
-                        .maxTokens(resolveMaxOutputTokens(config, targetModel, DEFAULT_ANTHROPIC_MAX_OUTPUT))
+                        .maxTokens(maxOutput)
                         .timeout(REQUEST_TIMEOUT);
+                String formattedUrl = null;
                 if (baseUrl != null && !baseUrl.isBlank()) {
-                    String formattedUrl = baseUrl.trim();
+                    formattedUrl = baseUrl.trim();
                     if (!formattedUrl.endsWith("/")) {
                         formattedUrl = formattedUrl + "/";
                     }
                     builder.baseUrl(formattedUrl);
                 }
-                yield builder.build();
+                // Same model, plus streaming over server-sent events for the agent chat
+                yield new AnthropicSseChatModel(builder.build(), formattedUrl, apiKey, targetModel, temperature,
+                        maxOutput, REQUEST_TIMEOUT);
             }
             case "GEMINI" -> {
                 GoogleAiGeminiChatModel.GoogleAiGeminiChatModelBuilder builder = GoogleAiGeminiChatModel.builder()
