@@ -241,16 +241,34 @@ public class ProjectTreePanel extends JPanel {
         popup.show(tree, e.getX(), e.getY());
     }
 
-    private void deleteRecursively(File file) {
-        if (file.isDirectory()) {
-            File[] children = file.listFiles();
-            if (children != null) {
-                for (File child : children) {
-                    deleteRecursively(child);
-                }
+    /**
+     * Deletes a file or folder. A symbolic link is removed itself; what it points to is never touched (following
+     * it deleted the contents of the linked folder, possibly outside the project).
+     */
+    static void deleteRecursively(File file) {
+        java.nio.file.Path path = file.toPath();
+        try {
+            if (java.nio.file.Files.isSymbolicLink(path) || !java.nio.file.Files.isDirectory(path)) {
+                java.nio.file.Files.deleteIfExists(path);
+                return;
             }
+            java.nio.file.Files.walkFileTree(path, new java.nio.file.SimpleFileVisitor<>() { // does not follow links
+                @Override
+                public java.nio.file.FileVisitResult visitFile(java.nio.file.Path f, java.nio.file.attribute.BasicFileAttributes a)
+                        throws IOException {
+                    java.nio.file.Files.delete(f);
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public java.nio.file.FileVisitResult postVisitDirectory(java.nio.file.Path d, IOException e) throws IOException {
+                    java.nio.file.Files.delete(d);
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException e) {
+            log.warn("Could not delete {}: {}", file, e.getMessage());
         }
-        file.delete();
     }
 
     public static class FileNode {

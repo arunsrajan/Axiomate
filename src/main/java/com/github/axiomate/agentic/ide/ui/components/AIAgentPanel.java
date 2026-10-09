@@ -104,6 +104,8 @@ public class AIAgentPanel extends JPanel {
     private JPanel currentAssistantMessagePanel;
     private JTextArea currentAssistantTextArea;
     private StringBuilder currentStreamingBuffer;
+    /** Incremented per prompt and on Stop; events of an older task are ignored. Changed on the event thread only. */
+    private int taskGeneration;
     /** Reasoning bubble being filled while the model streams its thinking. */
     private ThinkingView liveThinking;
     private StringBuilder liveThinkingBuffer;
@@ -1223,10 +1225,24 @@ public class AIAgentPanel extends JPanel {
 
         // Services that save the conversation themselves must not get every step saved a second time
         boolean serviceRecords = agentService.recordsSessionMessages();
+        final int generation = ++taskGeneration;
+        AgentSession taskSession = SessionManager.getInstance().getActiveSession();
+        final String taskSessionId = taskSession != null ? taskSession.getId() : null;
         agentService.sendMessage(prompt, contextCode, activeFilePath, images, new AgentListener() {
+            /** Still the latest task (not stopped or superseded). */
+            private boolean current() {
+                return generation == taskGeneration;
+            }
+
+            /** Its session is the one on screen: after switching sessions its output must not land in another. */
+            private boolean visible() {
+                return current() && java.util.Objects.equals(taskSessionId, displayedSessionId);
+            }
+
             @Override
             public void onToken(String token) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     boolean follow = isFollowingTranscript();
                     endLiveThinking();
                     ensureAssistantBubble();
@@ -1240,6 +1256,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onReasoningToken(String token) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     boolean follow = isFollowingTranscript();
                     appendLiveThinking(token);
                     if (follow) scrollToBottom();
@@ -1249,6 +1266,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onThinking(String thought) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     endLiveThinking();
                     setAgentState("Thinking...", UIUtils.WARNING_COLOR, true);
                     if (!serviceRecords) recordSessionMessageIfNew(new AgentMessage(AgentRole.THINKING, thought, null));
@@ -1260,6 +1278,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onToolCall(String toolName, String input) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     // Text streamed before a tool call stays in its own bubble; the next reply starts a new one
                     endLiveThinking();
                     currentAssistantMessagePanel = null;
@@ -1275,6 +1294,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onToolResult(String toolName, String output) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     if (!serviceRecords) recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL, output, toolName));
                     appendToolResultBubble(toolName, output);
                     terminalPanel.appendAgentLog("TOOL RESULT: " + toolName, output);
@@ -1284,9 +1304,10 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onComplete(String fullResponse) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!current()) return;
                     endLiveThinking();
                     // The final text is authoritative (e.g. a stream that differs from the assembled answer)
-                    if (currentAssistantTextArea != null && fullResponse != null && !fullResponse.isBlank()
+                    if (visible() && currentAssistantTextArea != null && fullResponse != null && !fullResponse.isBlank()
                             && !currentAssistantTextArea.getText().equals(fullResponse)) {
                         currentAssistantTextArea.setText(fullResponse);
                     }
@@ -1304,9 +1325,10 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onError(Throwable throwable) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!current()) return;
                     endLiveThinking();
                     setAgentState("Error", UIUtils.ERROR_COLOR, false);
-                    appendAssistantBubble("⚠️ **Error occurred:** " + throwable.getMessage());
+                    if (visible()) appendAssistantBubble("⚠️ **Error occurred:** " + throwable.getMessage());
                     terminalPanel.appendAgentLog("ERROR", throwable.toString());
                     updateTokenDisplay();
                 });
@@ -1315,6 +1337,7 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void cancelAgent() {
+        taskGeneration++; // whatever the stopped task still sends is ignored
         AgentManager.getInstance().getActiveService().cancelCurrentTask();
         endLiveThinking();
         setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);

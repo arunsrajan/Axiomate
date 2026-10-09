@@ -28,6 +28,14 @@ public class TerminalPanel extends JPanel {
     private final JTextArea buildArea;
     private final JTextField commandInput;
     private final MemoryPanel memoryPanel;
+    /** Command running in the terminal tab, if any (Ctrl+C or Stop ends it). */
+    private volatile Process runningProcess;
+    /** Set from submit until the command ends, so a quick second Enter cannot start another one. */
+    private final java.util.concurrent.atomic.AtomicBoolean commandActive = new java.util.concurrent.atomic.AtomicBoolean();
+    /** Folder later commands run in; "cd" changes it, switching project resets it. */
+    private volatile File terminalDir;
+    /** Older output is trimmed so a chatty command cannot grow the console without limit. */
+    static final int MAX_CONSOLE_CHARS = 500_000;
 
     public TerminalPanel() {
         setLayout(new BorderLayout());
@@ -48,15 +56,29 @@ public class TerminalPanel extends JPanel {
         commandInput = new JTextField();
         commandInput.setFont(new Font("Monospaced", Font.PLAIN, 13));
         commandInput.addActionListener(e -> executeTerminalInput());
+        commandInput.setToolTipText("Enter runs the command · Ctrl+C stops the running command");
+        commandInput.getInputMap().put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_C,
+                java.awt.event.InputEvent.CTRL_DOWN_MASK), "terminal-stop");
+        commandInput.getActionMap().put("terminal-stop", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (runningProcess != null) stopRunningCommand();
+                else commandInput.copy(); // nothing running: keep Ctrl+C as copy
+            }
+        });
 
         JButton runBtn = new JButton("Run");
         runBtn.addActionListener(e -> executeTerminalInput());
+        JButton stopBtn = new JButton("Stop");
+        stopBtn.setToolTipText("Stop the running command (Ctrl+C)");
+        stopBtn.addActionListener(e -> stopRunningCommand());
 
         JButton clearTermBtn = new JButton("Clear");
         clearTermBtn.addActionListener(e -> terminalArea.setText(""));
 
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         btnPanel.add(runBtn);
+        btnPanel.add(stopBtn);
         btnPanel.add(clearTermBtn);
 
         termInputPanel.add(promptLabel, BorderLayout.WEST);
@@ -103,6 +125,8 @@ public class TerminalPanel extends JPanel {
         tabbedPane.addTab("Build & Run", buildTab);
 
         add(tabbedPane, BorderLayout.CENTER);
+        // A new project starts the terminal in its own folder, not where a "cd" in the previous one left it
+        ProjectManager.getInstance().addProjectChangeListener(dir -> terminalDir = null);
 
         appendTerminal("Axiomate AI Agent IDE Terminal ready. Current directory: " +
                 ProjectManager.getInstance().getCurrentProjectDirectory().getAbsolutePath() + "\n");
@@ -135,8 +159,33 @@ public class TerminalPanel extends JPanel {
     public void appendTerminal(String text) {
         SwingUtilities.invokeLater(() -> {
             terminalArea.append(text);
+            int excess = terminalArea.getDocument().getLength() - MAX_CONSOLE_CHARS;
+            if (excess > 0) terminalArea.replaceRange("", 0, excess);
             terminalArea.setCaretPosition(terminalArea.getDocument().getLength());
         });
+    }
+
+    /** Stops the command running in the terminal, including the processes it started. */
+    public void stopRunningCommand() {
+        Process p = runningProcess;
+        if (p == null) return;
+        p.descendants().forEach(ProcessHandle::destroyForcibly);
+        p.destroyForcibly();
+        appendTerminal("^C\n");
+    }
+
+    /** "cd dir" on its own changes the folder later commands run in (each command runs in a fresh shell). */
+    static File resolveCd(String cmd, File current) {
+        // "cd x && make" and friends run as one shell command; only a bare cd is remembered.
+        if (cmd.matches(".*(&&|\\|\\||;|\\||&|>|<|\\$\\(|`).*")) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^cd(?:\\s+(.+?))?\\s*$").matcher(cmd);
+        if (!m.matches()) return null;
+        String target = m.group(1) == null ? System.getProperty("user.home")
+                : m.group(1).replaceFirst("(?i)^/d\\s+", "").replaceAll("^[\"']|[\"']$", "");
+        if (target.equals("~")) target = System.getProperty("user.home");
+        else if (target.startsWith("~/")) target = System.getProperty("user.home") + target.substring(1);
+        java.nio.file.Path p = java.nio.file.Path.of(target);
+        return (p.isAbsolute() ? p : current.toPath().resolve(p)).normalize().toFile();
     }
 
     public void appendAgentLog(String title, String message) {
@@ -158,13 +207,40 @@ public class TerminalPanel extends JPanel {
     private void executeTerminalInput() {
         String cmd = commandInput.getText().trim();
         if (cmd.isEmpty()) return;
+        if (runCommand(cmd)) commandInput.setText("");
+    }
 
-        commandInput.setText("");
+    /**
+     * Runs a command in the terminal tab (from the input line or a menu, e.g. Run → mvn test).
+     *
+     * @return false when another command is still running
+     */
+    public boolean runCommand(String cmd) {
+        if (commandActive.get()) {
+            appendTerminal("A command is still running. Press Ctrl+C or Stop to end it first.\n");
+            return false;
+        }
+        SwingUtilities.invokeLater(() -> tabbedPane.setSelectedIndex(0));
         appendTerminal("\n$ " + cmd + "\n");
 
-        new Thread(() -> {
+        File dir = currentTerminalDir();
+        File cdTarget = resolveCd(cmd, dir);
+        if (cdTarget != null) {
+            if (cdTarget.isDirectory()) {
+                terminalDir = cdTarget;
+                appendTerminal(cdTarget.getAbsolutePath() + "\n");
+            } else {
+                appendTerminal("cd: no such directory: " + cdTarget + "\n");
+            }
+            return true;
+        }
+
+        if (!commandActive.compareAndSet(false, true)) {
+            appendTerminal("A command is still running. Press Ctrl+C or Stop to end it first.\n");
+            return false;
+        }
+        Thread runner = new Thread(() -> {
             try {
-                File dir = ProjectManager.getInstance().getCurrentProjectDirectory();
                 boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
                 ProcessBuilder pb = isWindows
                         ? new ProcessBuilder("cmd.exe", "/c", cmd)
@@ -173,7 +249,10 @@ public class TerminalPanel extends JPanel {
                 pb.redirectErrorStream(true);
 
                 Process process = pb.start();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                runningProcess = process;
+                process.getOutputStream().close(); // no interactive input: prompts fail instead of hanging forever
+                java.nio.charset.Charset charset = isWindows ? nativeCharset() : StandardCharsets.UTF_8;
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), charset))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         appendTerminal(line + "\n");
@@ -183,8 +262,28 @@ public class TerminalPanel extends JPanel {
                 appendTerminal("[Process finished with exit code " + exit + "]\n");
             } catch (Exception e) {
                 appendTerminal("Error executing command: " + e.getMessage() + "\n");
+            } finally {
+                runningProcess = null;
+                commandActive.set(false);
             }
-        }).start();
+        }, "axiomate-terminal");
+        runner.setDaemon(true); // never keeps the IDE from exiting
+        runner.start();
+        return true;
+    }
+
+    private File currentTerminalDir() {
+        File dir = terminalDir;
+        return dir != null && dir.isDirectory() ? dir : ProjectManager.getInstance().getCurrentProjectDirectory();
+    }
+
+    private static java.nio.charset.Charset nativeCharset() {
+        try {
+            String enc = System.getProperty("native.encoding");
+            return enc != null ? java.nio.charset.Charset.forName(enc) : StandardCharsets.UTF_8;
+        } catch (Exception e) {
+            return StandardCharsets.UTF_8;
+        }
     }
 }
 

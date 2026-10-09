@@ -73,7 +73,7 @@ public class MainFrame extends JFrame implements IdeActions {
 
     public MainFrame() {
         super("Axiomate AI Agent IDE");
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE); // windowClosing asks about unsaved files first
         setSize(1440, 900);
         setMinimumSize(new Dimension(900, 600));
         setLocationRelativeTo(null);
@@ -341,8 +341,12 @@ public class MainFrame extends JFrame implements IdeActions {
         return openedCount > 0;
     }
 
-    public void openProjectDirectory(File newDir) {
-        if (newDir == null || !newDir.exists() || !newDir.isDirectory()) return;
+    /**
+     * @return false when the switch was cancelled (unsaved files, or a running agent the user keeps running)
+     */
+    public boolean openProjectDirectory(File newDir) {
+        if (newDir == null || !newDir.exists() || !newDir.isDirectory()) return false;
+        if (!confirmLeaveProject()) return false;
 
         File oldDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         if (oldDir != null) {
@@ -362,9 +366,35 @@ public class MainFrame extends JFrame implements IdeActions {
         }
         // Record the project right away so it shows up in Open Recent and the Session Manager
         saveCurrentProjectState();
+        return true;
+    }
+
+    /**
+     * Before leaving the open project: unsaved files are saved or discarded (or the user cancels), and a task the
+     * agent is still running for this project is stopped (its session belongs to this project).
+     */
+    private boolean confirmLeaveProject() {
+        var agent = com.github.axiomate.agentic.ide.agent.AgentManager.getInstance().getActiveService();
+        if (agent.isBusy()) {
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "The agent is still working on a task in this project.\nStop it and continue?",
+                    "Agent is running", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (choice != JOptionPane.OK_OPTION) return false;
+            agent.cancelCurrentTask();
+        }
+        return editorPanel.confirmCloseAll();
+    }
+
+    /** Quits after offering to save unsaved files (window close button and File → Exit). */
+    public void requestExit() {
+        if (!confirmLeaveProject()) return;
+        saveCurrentProjectState();
+        dispose();
+        System.exit(0);
     }
 
     public void closeProjectDirectory() {
+        if (!confirmLeaveProject()) return;
         File currentDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         if (currentDir != null) {
             SessionManager.getInstance().saveSessionsForProject(currentDir);
@@ -397,7 +427,7 @@ public class MainFrame extends JFrame implements IdeActions {
 
             @Override
             public void windowClosing(java.awt.event.WindowEvent e) {
-                saveCurrentProjectState();
+                requestExit();
             }
         });
         Runtime.getRuntime().addShutdownHook(new Thread(this::saveCurrentProjectState));
@@ -440,22 +470,14 @@ public class MainFrame extends JFrame implements IdeActions {
             try {
                 File dir = activeFile.getParentFile();
                 if (fileName.endsWith(".java")) {
-                    ProcessBuilder compilePb = new ProcessBuilder("javac", activeFile.getAbsolutePath());
-                    compilePb.directory(dir);
-                    compilePb.redirectErrorStream(true);
-                    Process cp = compilePb.start();
-                    readProcessOutput(cp);
-                    int compExit = cp.waitFor();
-                    if (compExit != 0) {
-                        terminalPanel.appendBuildOutput("[Compilation Failed with exit code " + compExit + "]\n");
-                        return;
-                    }
-
-                    String className = fileName.substring(0, fileName.lastIndexOf('.'));
-                    ProcessBuilder runPb = new ProcessBuilder("java", className);
-                    runPb.directory(dir);
+                    // The source-file launcher compiles in memory: it handles "package" declarations (running
+                    // "java ClassName" in the file's folder did not) and leaves no .class files among the sources
+                    File projectDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+                    ProcessBuilder runPb = new ProcessBuilder("java", activeFile.getAbsolutePath());
+                    runPb.directory(projectDir != null ? projectDir : dir);
                     runPb.redirectErrorStream(true);
                     Process rp = runPb.start();
+                    rp.getOutputStream().close(); // no console input here: a program reading stdin must not hang
                     readProcessOutput(rp);
                     int runExit = rp.waitFor();
                     terminalPanel.appendBuildOutput("[Program exited with code " + runExit + "]\n");
@@ -464,6 +486,7 @@ public class MainFrame extends JFrame implements IdeActions {
                     pb.directory(dir);
                     pb.redirectErrorStream(true);
                     Process p = pb.start();
+                    p.getOutputStream().close();
                     readProcessOutput(p);
                     p.waitFor();
                 } else {
@@ -563,7 +586,7 @@ public class MainFrame extends JFrame implements IdeActions {
         File current = ProjectManager.getInstance().getCurrentProjectDirectory();
         if (dir != null && dir.isDirectory() && (current == null
                 || !ProjectStateManager.normalizePath(dir).equals(ProjectStateManager.normalizePath(current)))) {
-            openProjectDirectory(dir);
+            if (!openProjectDirectory(dir)) return; // the user cancelled the switch
             SessionManager sm = SessionManager.getInstance();
             if (sm.findSession(session.getId()) != null) {
                 sm.switchSession(session.getId());

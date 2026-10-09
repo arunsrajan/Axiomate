@@ -115,7 +115,7 @@ public class AppMenuBar extends JMenuBar {
         closeProjectItem.addActionListener(e -> {
             if (mainFrame instanceof com.github.axiomate.agentic.ide.ui.MainFrame mf) {
                 mf.closeProjectDirectory();
-            } else {
+            } else if (editorPanel.confirmCloseAll()) {
                 editorPanel.closeAllTabs();
             }
         });
@@ -136,9 +136,10 @@ public class AppMenuBar extends JMenuBar {
         exitItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Q, InputEvent.CTRL_DOWN_MASK));
         exitItem.addActionListener(e -> {
             if (mainFrame instanceof com.github.axiomate.agentic.ide.ui.MainFrame mf) {
-                mf.saveCurrentProjectState();
+                mf.requestExit(); // asks about unsaved files
+            } else {
+                System.exit(0);
             }
-            System.exit(0);
         });
 
         fileMenu.add(newFileItem);
@@ -560,28 +561,8 @@ public class AppMenuBar extends JMenuBar {
     }
 
     private void runCommandInTerminal(String cmd, TerminalPanel terminalPanel) {
-        new Thread(() -> {
-            try {
-                File dir = ProjectManager.getInstance().getCurrentProjectDirectory();
-                boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
-                ProcessBuilder pb = isWindows
-                        ? new ProcessBuilder("cmd.exe", "/c", cmd)
-                        : new ProcessBuilder("bash", "-c", cmd);
-                pb.directory(dir);
-                pb.redirectErrorStream(true);
-                Process p = pb.start();
-
-                try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        terminalPanel.appendTerminal(line + "\n");
-                    }
-                }
-                p.waitFor();
-            } catch (Exception ex) {
-                terminalPanel.appendTerminal("Command failed: " + ex.getMessage() + "\n");
-            }
-        }).start();
+        // Same runner as typing it in the terminal: stoppable, no hanging prompts, correct console encoding
+        terminalPanel.runCommand(cmd);
     }
 
     private void showShortcutsDialog(JFrame parent) {
