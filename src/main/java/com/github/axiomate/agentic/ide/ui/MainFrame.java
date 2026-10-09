@@ -221,6 +221,7 @@ public class MainFrame extends JFrame implements IdeActions {
 
         setContentPane(contentPane);
         installGlobalShortcuts();
+        installDestructiveActionConfirmation();
 
         // Project changes rescope memory, reload the other agents' commands and update the title
         ProjectManager.getInstance().addProjectChangeListener(dir -> {
@@ -235,6 +236,36 @@ public class MainFrame extends JFrame implements IdeActions {
         MemoryManager.getInstance().setActiveProject(dir);
         reloadAgentCommands();
         updateTitle();
+    }
+
+    /**
+     * Destructive agent actions (force push, hard reset, recursive delete, dropping tables, deleting files) ask the
+     * user first. Without this the gate has no one to ask and refuses every such action.
+     */
+    private void installDestructiveActionConfirmation() {
+        com.github.axiomate.agentic.ide.features.security.IrreversibleActionGate.getInstance().setConfirmationHandler(
+                (operation, subject, warning) -> {
+                    java.util.concurrent.atomic.AtomicBoolean approved = new java.util.concurrent.atomic.AtomicBoolean();
+                    Runnable ask = () -> approved.set(JOptionPane.showConfirmDialog(this,
+                            "<html><b>The agent wants to run a destructive action.</b><br><br>" + escapeHtml(warning)
+                                    + "<br><br><code>" + escapeHtml(subject) + "</code><br><br>Allow it?</html>",
+                            "Confirm " + operation.replace('_', ' ').toLowerCase(), JOptionPane.YES_NO_OPTION,
+                            JOptionPane.WARNING_MESSAGE) == JOptionPane.YES_OPTION);
+                    if (SwingUtilities.isEventDispatchThread()) {
+                        ask.run();
+                    } else {
+                        try {
+                            SwingUtilities.invokeAndWait(ask);
+                        } catch (Exception e) {
+                            return false;
+                        }
+                    }
+                    return approved.get();
+                });
+    }
+
+    private static String escapeHtml(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void installGlobalShortcuts() {

@@ -303,6 +303,7 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingCh
             return whole;
         }
         StreamAssembler assembler = new StreamAssembler(sink);
+        sink.onStreamOpened(resp.body());
         SseReader.read(resp.body(), sink::isCancelled, assembler::accept);
         return parseResponse(assembler.toResponseJson());
     }
@@ -406,15 +407,13 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingCh
             if (!reasoning.isEmpty()) message.put("reasoning_content", reasoning.toString());
             if (!toolCalls.isEmpty()) {
                 ArrayNode calls = message.putArray("tool_calls");
-                int n = 0;
                 for (String[] call : toolCalls.values()) {
                     ObjectNode c = calls.addObject();
-                    c.put("id", call[0] != null ? call[0] : "call_" + n);
+                    c.put("id", call[0] != null ? call[0] : newCallId());
                     c.put("type", "function");
                     ObjectNode fn = c.putObject("function");
                     fn.put("name", call[1]);
                     fn.put("arguments", call[2].isBlank() ? "{}" : call[2]);
-                    n++;
                 }
             }
             if (finishReason != null) choice.put("finish_reason", finishReason);
@@ -432,6 +431,12 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingCh
     }
 
     static Response<AiMessage> parseResponse(JsonNode root) {
+        if (root.hasNonNull("error") && root.path("choices").isEmpty()) {
+            // Some gateways answer HTTP 200 with an error object instead of choices
+            JsonNode err = root.get("error");
+            throw new RuntimeException("Provider error: " + (err.isTextual() ? err.asText()
+                    : err.has("message") ? err.get("message").asText() : err.toString()));
+        }
         JsonNode choice = root.path("choices").path(0);
         JsonNode msg = choice.path("message");
 
@@ -443,14 +448,20 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingCh
             String inline = m.group(1).strip();
             reasoning = reasoning == null ? inline : reasoning + "\n" + inline;
             content = content.substring(m.end());
+        } else if (content.stripLeading().startsWith("<think>")) {
+            // Cut off before </think> (output token limit): it is all reasoning, there is no answer yet
+            String inline = content.stripLeading().substring(7).strip();
+            reasoning = reasoning == null ? inline : reasoning + "\n" + inline;
+            content = "";
         }
 
         List<ToolExecutionRequest> calls = new ArrayList<>();
         for (JsonNode tc : msg.path("tool_calls")) {
             JsonNode fn = tc.path("function");
             JsonNode args = fn.path("arguments");
+            String id = tc.path("id").asText("");
             calls.add(ToolExecutionRequest.builder()
-                    .id(tc.path("id").asText("call_" + calls.size()))
+                    .id(id.isBlank() ? newCallId() : id)
                     .name(fn.path("name").asText())
                     .arguments(args.isTextual() ? args.asText() : args.toString())
                     .build());
@@ -474,6 +485,11 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingCh
         TokenUsage tokenUsage = usage.isMissingNode() ? null
                 : new TokenUsage(usage.path("prompt_tokens").asInt(0), usage.path("completion_tokens").asInt(0));
         return Response.from(ai, tokenUsage, finishReason(choice.path("finish_reason").asText(null)));
+    }
+
+    /** Ids for servers that omit them; they must stay unique across the conversation. */
+    static String newCallId() {
+        return "call_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
     }
 
     static FinishReason finishReason(String reason) {

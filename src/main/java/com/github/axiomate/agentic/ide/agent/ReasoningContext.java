@@ -19,19 +19,23 @@ public final class ReasoningContext {
 
     public static final ThreadLocal<String> LAST_REASONING = new ThreadLocal<>();
 
-    private static final Map<AiMessage, String> REPLAY = Collections.synchronizedMap(new IdentityHashMap<>());
+    /**
+     * Per thread: an agent task writes and reads its own entries on its own thread, and a task that ends (or is
+     * stopped) while another runs must not clear the other task's entries.
+     */
+    private static final ThreadLocal<Map<AiMessage, String>> REPLAY = ThreadLocal.withInitial(IdentityHashMap::new);
 
     private ReasoningContext() {
     }
 
     public static void rememberForReplay(AiMessage message, String reasoning) {
         if (message != null && reasoning != null && !reasoning.isBlank()) {
-            REPLAY.put(message, reasoning);
+            REPLAY.get().put(message, reasoning);
         }
     }
 
     public static String replayFor(AiMessage message) {
-        return message == null ? null : REPLAY.get(message);
+        return message == null ? null : REPLAY.get().get(message);
     }
 
     /** Reads and clears the reasoning of the last model call. */
@@ -46,7 +50,7 @@ public final class ReasoningContext {
 
     /** Called when an agent task ends so replay entries don't accumulate. */
     public static void clear() {
-        REPLAY.clear();
+        REPLAY.remove();
         LAST_REASONING.remove();
         dev.langchain4j.model.anthropic.internal.mapper.AnthropicMapper.clearThinkingReplay();
     }

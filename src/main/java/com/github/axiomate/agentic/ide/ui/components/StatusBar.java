@@ -169,7 +169,7 @@ public class StatusBar extends JPanel {
                 TokenTracker tracker = session.getTokenTracker();
                 lastTokenPct = tracker.getUsagePercentage();
                 tokenStatusLabel.setText(String.format("Tokens: %,d / %,d (%.1f%%)",
-                        tracker.getTotalTokens(), tracker.getMaxContextTokens(), lastTokenPct));
+                        tracker.getContextTokens(), tracker.getMaxContextTokens(), lastTokenPct));
                 colorTokens();
                 int count = SessionManager.getInstance().getSessions().size();
                 modelLabel.setText(String.format("%s · %s/%s%s", session.getName(), session.getProviderId(),

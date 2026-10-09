@@ -50,10 +50,43 @@ public class LangChainAgentService implements AIAgentService {
     private static final int MAX_REASONING_ECHO_CHARS = 8_000;
 
     private final List<AgentTool> tools = new CopyOnWriteArrayList<>();
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    /** One thread per task, so a task that is still winding down after Stop never delays the next one. */
+    private final ExecutorService executor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "axiomate-agent");
+        t.setDaemon(true);
+        return t;
+    });
     private final ObjectMapper mapper = new ObjectMapper();
-    private Future<?> activeTask;
-    private volatile boolean cancelled = false;
+    private volatile Future<?> activeTask;
+    /** Control of the latest task. Each task has its own, so starting a new task never revives a stopped one. */
+    private volatile TaskControl activeControl = new TaskControl();
+
+    /** Stop flag of one task plus the stream it is reading, which Stop closes (socket reads ignore interrupts). */
+    static final class TaskControl {
+        private final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        private volatile java.io.Closeable openStream;
+
+        boolean get() {
+            return cancelled.get();
+        }
+
+        void cancel() {
+            cancelled.set(true);
+            java.io.Closeable c = openStream;
+            if (c != null) {
+                try {
+                    c.close();
+                } catch (Exception ignored) {
+                    // already closed
+                }
+            }
+        }
+
+        void streamOpened(java.io.Closeable stream) {
+            openStream = stream;
+            if (cancelled.get()) cancel();
+        }
+    }
 
     public LangChainAgentService() {
     }
@@ -81,7 +114,7 @@ public class LangChainAgentService implements AIAgentService {
 
     @Override
     public void cancelCurrentTask() {
-        cancelled = true;
+        activeControl.cancel();
         if (activeTask != null) {
             activeTask.cancel(true);
         }
@@ -96,14 +129,19 @@ public class LangChainAgentService implements AIAgentService {
     public void sendMessage(String prompt, String contextCode, String activeFilePath, List<ImageAttachment> images,
                             AgentListener listener) {
         List<ImageAttachment> attached = images != null ? List.copyOf(images) : List.of();
-        cancelled = false;
+        TaskControl cancel = new TaskControl();
+        activeControl = cancel;
         activeTask = executor.submit(() -> {
+            AgentSession session = null;
             String activeProviderName = "Unknown";
             String activeTargetModel = "default";
             String activeEndpointUrl = "default";
             try {
                 IdeConfig config = ConfigManager.getInstance().getConfig();
-                AgentSession session = SessionManager.getInstance().getActiveSession();
+                session = SessionManager.getInstance().getActiveSession();
+                if (session == null) {
+                    throw new IllegalStateException("No active agent session");
+                }
 
                 // Feature 33: Prompt-injection shield validation
                 var shieldResult = com.github.axiomate.agentic.ide.features.security.PromptInjectionShield.getInstance()
@@ -142,7 +180,8 @@ public class LangChainAgentService implements AIAgentService {
                 String providerId = routed.providerId();
                 String targetModel = routed.modelId();
 
-                if (!routed.rationale().startsWith("Default")) {
+                // Only worth a note when routing picked something other than the session's own model
+                if (!Objects.equals(providerId, session.getProviderId()) || !Objects.equals(targetModel, session.getModelId())) {
                     listener.onThinking("🎯 " + routed.rationale());
                 }
 
@@ -197,6 +236,13 @@ public class LangChainAgentService implements AIAgentService {
 
                 if (!memoryContext.isBlank()) {
                     systemPromptBuilder.append("\n\n").append(memoryContext);
+                }
+
+                // Earlier turns that context compression condensed into a summary
+                for (AgentMessage m : session.getMessages()) {
+                    if (m.getRole() == AgentRole.SYSTEM && !m.getContent().isBlank()) {
+                        systemPromptBuilder.append("\n\n## Earlier in this conversation\n").append(m.getContent().strip());
+                    }
                 }
 
                 // Host Environment & Shell Execution Policy
@@ -276,12 +322,15 @@ public class LangChainAgentService implements AIAgentService {
                 boolean finished = false;
                 int iteration = 0;
                 int continuations = 0;
-                while (iteration++ < maxIterations && !cancelled) {
+                while (iteration++ < maxIterations && !cancel.get()) {
                     listener.onThinking("Reasoning with " + targetModel + " (Step " + iteration + ")...");
 
-                    StepStream stream = new StepStream(listener);
+                    StepStream stream = new StepStream(listener, cancel);
                     Response<AiMessage> response = callModel(chatModel, messages, toolSpecs,
                             config.isStreamingEnabled(), stream);
+                    if (cancel.get()) {
+                        break; // stopped while the model was answering: report nothing more
+                    }
                     AiMessage aiMessage = response.content();
                     messages.add(aiMessage);
 
@@ -296,17 +345,15 @@ public class LangChainAgentService implements AIAgentService {
                     }
 
                     // Track tokens from response if provided by provider
-                    if (response.tokenUsage() != null) {
-                        session.getTokenTracker().recordUsage(
-                                response.tokenUsage().inputTokenCount(),
-                                response.tokenUsage().outputTokenCount()
-                        );
+                    if (response.tokenUsage() != null && response.tokenUsage().inputTokenCount() != null
+                            && response.tokenUsage().inputTokenCount() > 0) {
+                        Integer out = response.tokenUsage().outputTokenCount();
+                        session.getTokenTracker().recordProviderUsage(response.tokenUsage().inputTokenCount(),
+                                out != null ? out : 0);
                     } else {
-                        // Heuristic fallback
-                        session.getTokenTracker().recordUsage(
-                                TokenTracker.estimateTokens(prompt),
-                                TokenTracker.estimateTokens(aiMessage.text() != null ? aiMessage.text() : "")
-                        );
+                        // No usage reported: estimate the whole conversation that was sent, plus the reply
+                        session.getTokenTracker().recordProviderUsage(estimateTokens(messages.subList(0, messages.size() - 1)),
+                                TokenTracker.estimateTokens(aiMessage.text() != null ? aiMessage.text() : ""));
                     }
 
                     SessionManager.getInstance().notifyListeners();
@@ -340,7 +387,7 @@ public class LangChainAgentService implements AIAgentService {
                             }
                         }
                         for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
-                            if (cancelled) break;
+                            if (cancel.get()) break;
 
                             String toolName = req.name();
                             String arguments = normalizeArguments(req.arguments());
@@ -380,7 +427,7 @@ public class LangChainAgentService implements AIAgentService {
                         }
                         // Images a tool loaded (view_image) go to the model as a user turn after the tool results
                         List<ImageAttachment> viewed = VisionSupport.drainQueued();
-                        if (!viewed.isEmpty() && !cancelled) {
+                        if (!viewed.isEmpty() && !cancel.get()) {
                             messages.add(UserMessage.from(VisionSupport.toContents(
                                     "Image(s) loaded by view_image: " + VisionSupport.describe(viewed), viewed)));
                         }
@@ -401,7 +448,7 @@ public class LangChainAgentService implements AIAgentService {
 
                         // Store in session (actual response only, without thinking)
                         session.addMessage(new AgentMessage(AgentRole.ASSISTANT, finalResponse));
-                        MemoryManager.getInstance().recordEpisode(prompt, "Completed via " + providerId + ":" + targetModel);
+                        MemoryManager.getInstance().recordEpisode(safePrompt, "Completed via " + providerId + ":" + targetModel);
 
                         // Post-generation check for 95% limit
                         ContextCompressor.CompressionResult postComp = ContextCompressor.compressIfExceeded(
@@ -429,7 +476,7 @@ public class LangChainAgentService implements AIAgentService {
                     }
                 }
 
-                if (!finished && !cancelled) {
+                if (!finished && !cancel.get()) {
                     // Step limit reached: ask the model to wrap up instead of ending with a bare notice
                     listener.onThinking("⏸ Reached the step limit (" + maxIterations + "). Asking the model for a summary...");
                     String summary = null;
@@ -453,12 +500,17 @@ public class LangChainAgentService implements AIAgentService {
                 }
 
             } catch (Exception e) {
+                if (cancel.get()) {
+                    // Stop interrupts the request in flight; that is not an error to report
+                    log.info("Agent task stopped by the user");
+                    return;
+                }
                 log.error("Failed to execute LangChainAgent task", e);
-                // Record assistant error message in session to avoid leaving an unanswered trailing USER message
+                // Record assistant error message in the task's session so it does not end on an unanswered prompt
                 try {
-                    AgentSession currentSession = SessionManager.getInstance().getActiveSession();
-                    if (currentSession != null) {
-                        currentSession.addMessage(new AgentMessage(AgentRole.ASSISTANT, "⚠️ Error: " + e.getMessage()));
+                    if (session != null) {
+                        session.addMessage(new AgentMessage(AgentRole.ASSISTANT, "⚠️ Error: " + e.getMessage()));
+                        SessionManager.getInstance().autoSaveCurrentProjectSessions();
                     }
                 } catch (Exception ignored) {
                 }
@@ -505,12 +557,33 @@ public class LangChainAgentService implements AIAgentService {
         try {
             JsonNode node = mapper.readTree(rawArguments);
             if (node.has("input")) {
-                return node.path("input").asText();
+                JsonNode input = node.get("input");
+                // Models sometimes send the tool's JSON as an object instead of a string
+                return input.isTextual() ? input.asText() : input.isNull() ? "{}" : input.toString();
             }
             return rawArguments;
         } catch (Exception e) {
             return rawArguments;
         }
+    }
+
+    /** Rough token count of messages, for providers that report no usage. */
+    static long estimateTokens(List<ChatMessage> messages) {
+        long total = 0;
+        for (ChatMessage m : messages) {
+            if (m instanceof SystemMessage sm) total += TokenTracker.estimateTokens(sm.text());
+            else if (m instanceof UserMessage um) {
+                for (dev.langchain4j.data.message.Content c : um.contents()) {
+                    if (c instanceof dev.langchain4j.data.message.TextContent tc) total += TokenTracker.estimateTokens(tc.text());
+                }
+            } else if (m instanceof AiMessage am) {
+                total += TokenTracker.estimateTokens(am.text());
+                if (am.hasToolExecutionRequests()) {
+                    for (ToolExecutionRequest r : am.toolExecutionRequests()) total += TokenTracker.estimateTokens(r.arguments());
+                }
+            } else if (m instanceof ToolExecutionResultMessage tr) total += TokenTracker.estimateTokens(tr.text());
+        }
+        return total;
     }
 
     private AgentTool findTool(String name) {
@@ -602,32 +675,39 @@ public class LangChainAgentService implements AIAgentService {
     }
 
     /** Answer text and reasoning streamed during one model call, forwarded to the listener as it arrives. */
-    private final class StepStream implements StreamingChat.Sink {
+    private static final class StepStream implements StreamingChat.Sink {
         private final AgentListener listener;
+        private final TaskControl cancel;
         final StringBuilder text = new StringBuilder();
         boolean reasoningStreamed;
 
-        StepStream(AgentListener listener) {
+        StepStream(AgentListener listener, TaskControl cancel) {
             this.listener = listener;
+            this.cancel = cancel;
         }
 
         @Override
         public void onText(String delta) {
-            if (delta == null || delta.isEmpty()) return;
+            if (delta == null || delta.isEmpty() || cancel.get()) return;
             text.append(delta);
             listener.onToken(delta);
         }
 
         @Override
         public void onReasoning(String delta) {
-            if (delta == null || delta.isEmpty()) return;
+            if (delta == null || delta.isEmpty() || cancel.get()) return;
             reasoningStreamed = true;
             listener.onReasoningToken(delta);
         }
 
         @Override
         public boolean isCancelled() {
-            return cancelled;
+            return cancel.get();
+        }
+
+        @Override
+        public void onStreamOpened(java.io.Closeable stream) {
+            cancel.streamOpened(stream);
         }
     }
 

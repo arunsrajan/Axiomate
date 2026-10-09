@@ -34,7 +34,7 @@ public class ContextCompressor {
             return new CompressionResult(false, 0, "Message history too brief to compress.");
         }
 
-        long tokensBefore = session.getTokenTracker().getTotalTokens();
+        long tokensBefore = session.getTokenTracker().getContextTokens();
         log.warn("Token usage reached {}% on session '{}'. Triggering 95% context compression...",
                 String.format("%.1f", session.getTokenTracker().getUsagePercentage()), session.getName());
 

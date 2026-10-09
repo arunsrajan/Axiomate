@@ -6,13 +6,9 @@ import com.github.axiomate.agentic.ide.util.ProjectManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Tool allowing the AI Agent to execute PowerShell commands and scripts.
@@ -33,6 +29,7 @@ public class PowerShellTool implements AgentTool {
         return """
             powershell: Execute PowerShell commands, scripts, and cmdlets in the project directory.
             Preferred command execution tool on Windows environments.
+            Commands time out after 120 seconds unless "timeout_seconds" (max 900) is given; stdin is closed.
             Arguments JSON schema:
             {
               "command": "PowerShell command or script (e.g. Get-ChildItem, Select-String, Test-Path, mvn test)"
@@ -43,8 +40,9 @@ public class PowerShellTool implements AgentTool {
     @Override
     public String execute(String arguments) throws Exception {
         String command;
+        JsonNode json = null;
         if (arguments.trim().startsWith("{")) {
-            JsonNode json = mapper.readTree(arguments);
+            json = mapper.readTree(arguments);
             command = json.path("command").asText();
             if (command.isBlank() && json.has("script")) {
                 command = json.path("script").asText();
@@ -58,52 +56,31 @@ public class PowerShellTool implements AgentTool {
         }
 
         File workingDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        String blocked = ProcessRunner.guard("powershell", command, workingDir);
+        if (blocked != null) return blocked;
+
         String psExecutable = findPowerShellExecutable();
-
         log.info("Executing PowerShell using [{}]: '{}'", psExecutable, command);
-
-        List<String> commandList = new ArrayList<>();
-        commandList.add(psExecutable);
-        commandList.add("-NoProfile");
-        commandList.add("-NonInteractive");
-        commandList.add("-ExecutionPolicy");
-        commandList.add("Bypass");
-        commandList.add("-Command");
-        commandList.add(command);
-
-        ProcessBuilder pb = new ProcessBuilder(commandList);
-        pb.directory(workingDir);
-        pb.redirectErrorStream(true);
-
-        Process process;
         try {
-            process = pb.start();
+            ProcessRunner.Result result = ProcessRunner.run(
+                    List.of(psExecutable, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command),
+                    workingDir, ProcessRunner.timeoutFrom(json), nativeCharset());
+            return result.describe("PowerShell command");
         } catch (java.io.IOException e) {
             // Missing executable: report it to the agent instead of failing the step
             return "ERROR: PowerShell is not available on this machine ('" + psExecutable + "' could not be started: "
                     + e.getMessage() + "). Use the 'bash' or 'terminal' tool instead.";
         }
-        StringBuilder output = new StringBuilder();
+    }
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-                if (output.length() > 25000) {
-                    output.append("\n[OUTPUT TRUNCATED]");
-                    break;
-                }
-            }
+    /** Console output of Windows tools uses the system code page, not UTF-8. */
+    static java.nio.charset.Charset nativeCharset() {
+        try {
+            String enc = System.getProperty("native.encoding");
+            return enc != null ? java.nio.charset.Charset.forName(enc) : StandardCharsets.UTF_8;
+        } catch (Exception e) {
+            return StandardCharsets.UTF_8;
         }
-
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            return "ERROR: PowerShell command timed out after 60 seconds.\nPartial output:\n" + output;
-        }
-
-        int exitCode = process.exitValue();
-        return "Exit code: " + exitCode + "\nOutput:\n" + (output.isEmpty() ? "(No output)" : output.toString());
     }
 
     public static String findPowerShellExecutable() {

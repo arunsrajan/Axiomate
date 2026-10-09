@@ -44,7 +44,7 @@ public class AutonomousCodeEditorTool implements AgentTool {
                { "action": "replace_lines", "filePath": "src/App.java", "startLine": 10, "endLine": 15, "replacement": "new code" }
             2. 'insert_at_line':
                { "action": "insert_at_line", "filePath": "src/App.java", "line": 20, "content": "code to insert" }
-            3. 'replace_content':
+            3. 'replace_content' (target must appear exactly once unless "replace_all": true):
                { "action": "replace_content", "filePath": "src/App.java", "target": "old snippet", "replacement": "new snippet" }
             4. 'write_file':
                { "action": "write_file", "filePath": "src/App.java", "content": "full content" }
@@ -92,6 +92,14 @@ public class AutonomousCodeEditorTool implements AgentTool {
         com.github.axiomate.agentic.ide.features.security.AuditTrailService.getInstance()
                 .recordEvent("AGENT", "CODE_EDITOR", targetFile.getPath(), "Action: " + action);
 
+        try {
+            return dispatch(action, targetFile, json);
+        } catch (NotUtf8Exception e) {
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    private String dispatch(String action, File targetFile, JsonNode json) throws IOException {
         return switch (action) {
             case "read_file" -> handleReadFile(targetFile, json);
             case "replace_lines" -> handleReplaceLines(targetFile, json);
@@ -112,12 +120,66 @@ public class AutonomousCodeEditorTool implements AgentTool {
         return ProjectManager.getInstance().getActiveFile();
     }
 
+    /**
+     * A text file split into lines, remembering its line separator and whether it ends with one, so line edits
+     * write the file back exactly as it was apart from the edited lines.
+     */
+    record TextLines(List<String> lines, String separator, boolean trailingNewline) {
+
+        static TextLines parse(String content) {
+            String sep = content.contains("\r\n") ? "\r\n" : "\n";
+            boolean trailing = content.endsWith("\n");
+            String body = trailing ? content.substring(0, content.length() - (content.endsWith("\r\n") ? 2 : 1)) : content;
+            List<String> lines = new ArrayList<>(content.isEmpty() ? List.of() : List.of(body.split("\r?\n", -1)));
+            return new TextLines(lines, sep, trailing);
+        }
+
+        String join() {
+            if (lines.isEmpty()) return "";
+            return String.join(separator, lines) + (trailingNewline ? separator : "");
+        }
+    }
+
+    static final class NotUtf8Exception extends IOException {
+        NotUtf8Exception(String message) {
+            super(message);
+        }
+    }
+
+    /** Reads a file that is about to be edited; refuses non-UTF-8 files rather than corrupting them. */
+    private static String readForEdit(File file) throws IOException {
+        byte[] bytes = Files.readAllBytes(file.toPath());
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+        } catch (java.nio.charset.CharacterCodingException e) {
+            throw new NotUtf8Exception(file.getName() + " is not UTF-8 text, so it is not edited here (it would be corrupted). "
+                    + "Use the shell to change it, or convert it to UTF-8 first.");
+        }
+    }
+
+    /** Lines of new code from the model; one trailing newline is not an extra empty line. */
+    private static String[] newLines(String text) {
+        String t = text.endsWith("\r\n") ? text.substring(0, text.length() - 2)
+                : text.endsWith("\n") ? text.substring(0, text.length() - 1) : text;
+        return t.split("\r?\n", -1);
+    }
+
+    /** Credentials the agent is about to write are masked; text already in the file is left alone. */
+    private static String sanitizeNew(String text) {
+        return com.github.axiomate.agentic.ide.features.security.SecretLeakGuard.getInstance().scanAndSanitize(text).sanitizedText();
+    }
+
     private String handleReadFile(File targetFile, JsonNode json) throws IOException {
         if (!targetFile.exists()) {
             return "ERROR: File not found: " + targetFile.getAbsolutePath();
         }
 
-        List<String> lines = Files.readAllLines(targetFile.toPath(), StandardCharsets.UTF_8);
+        // Lenient decoding for reading: a stray non-UTF-8 byte must not make the whole file unreadable
+        String content = new String(Files.readAllBytes(targetFile.toPath()), StandardCharsets.UTF_8);
+        List<String> lines = TextLines.parse(content).lines();
         int startLine = json.path("startLine").asInt(1);
         int endLine = json.path("endLine").asInt(lines.size());
 
@@ -137,33 +199,24 @@ public class AutonomousCodeEditorTool implements AgentTool {
             return "ERROR: File not found: " + targetFile.getAbsolutePath();
         }
 
-        List<String> lines = new ArrayList<>(Files.readAllLines(targetFile.toPath(), StandardCharsets.UTF_8));
+        TextLines text = TextLines.parse(readForEdit(targetFile));
+        List<String> lines = text.lines();
         int startLine = json.path("startLine").asInt(-1);
         int endLine = json.path("endLine").asInt(-1);
-        String replacement = json.path("replacement").asText("");
+        String replacement = sanitizeNew(json.path("replacement").asText(""));
 
         if (startLine < 1 || endLine < startLine || startLine > lines.size()) {
             return String.format("ERROR: Invalid line range [%d, %d] for file with %d lines.", startLine, endLine, lines.size());
         }
 
         endLine = Math.min(lines.size(), endLine);
+        lines.subList(startLine - 1, endLine).clear();
+        String[] added = replacement.isEmpty() ? new String[0] : newLines(replacement);
+        lines.addAll(startLine - 1, List.of(added));
 
-        // Remove old range
-        for (int i = 0; i <= (endLine - startLine); i++) {
-            lines.remove(startLine - 1);
-        }
-
-        // Insert new lines
-        String[] newLines = replacement.split("\r?\n", -1);
-        for (int i = newLines.length - 1; i >= 0; i--) {
-            lines.add(startLine - 1, newLines[i]);
-        }
-
-        String updated = String.join("\n", lines);
-        saveAndNotify(targetFile, updated);
-
+        saveAndNotify(targetFile, text.join());
         return String.format("SUCCESS: Replaced lines %d-%d in %s with %d lines of new code.",
-                startLine, endLine, targetFile.getName(), newLines.length);
+                startLine, endLine, targetFile.getName(), added.length);
     }
 
     private String handleInsertAtLine(File targetFile, JsonNode json) throws IOException {
@@ -171,22 +224,21 @@ public class AutonomousCodeEditorTool implements AgentTool {
             return "ERROR: File not found: " + targetFile.getAbsolutePath();
         }
 
-        List<String> lines = new ArrayList<>(Files.readAllLines(targetFile.toPath(), StandardCharsets.UTF_8));
+        TextLines text = TextLines.parse(readForEdit(targetFile));
+        List<String> lines = text.lines();
         int line = json.path("line").asInt(lines.size() + 1);
-        String content = json.path("content").asText("");
+        String content = sanitizeNew(json.path("content").asText(""));
 
         int insertIndex = Math.max(0, Math.min(lines.size(), line - 1));
-        String[] newLines = content.split("\r?\n", -1);
-
-        for (int i = newLines.length - 1; i >= 0; i--) {
-            lines.add(insertIndex, newLines[i]);
+        String[] added = newLines(content);
+        lines.addAll(insertIndex, List.of(added));
+        if (lines.size() == added.length && !content.isEmpty()) {
+            text = new TextLines(lines, text.separator(), true); // a new file's first lines end with a newline
         }
 
-        String updated = String.join("\n", lines);
-        saveAndNotify(targetFile, updated);
-
+        saveAndNotify(targetFile, text.join());
         return String.format("SUCCESS: Inserted %d lines at line %d in %s.",
-                newLines.length, line, targetFile.getName());
+                added.length, insertIndex + 1, targetFile.getName());
     }
 
     private String handleReplaceContent(File targetFile, JsonNode json) throws IOException {
@@ -195,26 +247,46 @@ public class AutonomousCodeEditorTool implements AgentTool {
         }
 
         String target = json.path("target").asText("");
-        String replacement = json.path("replacement").asText("");
+        String replacement = sanitizeNew(json.path("replacement").asText(""));
+        boolean replaceAll = json.path("replace_all").asBoolean(false);
 
         if (target.isEmpty()) {
             return "ERROR: 'target' snippet cannot be empty for replace_content action.";
         }
 
-        String existing = Files.readString(targetFile.toPath(), StandardCharsets.UTF_8);
-        if (!existing.contains(target)) {
-            return "ERROR: 'target' snippet not found in " + targetFile.getName();
+        String existing = readForEdit(targetFile);
+        if (existing.contains("\r\n")) {
+            // Models write "\n"; match and write in the file's own line endings
+            target = target.replace("\r\n", "\n").replace("\n", "\r\n");
+            replacement = replacement.replace("\r\n", "\n").replace("\n", "\r\n");
+        }
+        int count = countOccurrences(existing, target);
+        if (count == 0) {
+            return "ERROR: 'target' snippet not found in " + targetFile.getName()
+                    + ". Read the file again and copy the snippet exactly, including indentation.";
+        }
+        if (count > 1 && !replaceAll) {
+            return "ERROR: 'target' snippet appears " + count + " times in " + targetFile.getName()
+                    + ". Include more surrounding lines so it is unique, or pass \"replace_all\": true to change every occurrence.";
         }
 
-        String updated = existing.replace(target, replacement);
+        String updated = replaceAll ? existing.replace(target, replacement)
+                : existing.substring(0, existing.indexOf(target)) + replacement
+                  + existing.substring(existing.indexOf(target) + target.length());
         saveAndNotify(targetFile, updated);
 
-        return String.format("SUCCESS: Replaced target snippet in %s (Modified %d chars).",
-                targetFile.getName(), updated.length());
+        return String.format("SUCCESS: Replaced target snippet in %s (%d occurrence(s)).",
+                targetFile.getName(), replaceAll ? count : 1);
+    }
+
+    static int countOccurrences(String text, String snippet) {
+        int count = 0;
+        for (int i = text.indexOf(snippet); i >= 0; i = text.indexOf(snippet, i + snippet.length())) count++;
+        return count;
     }
 
     private String handleWriteFile(File targetFile, JsonNode json) throws IOException {
-        String content = json.path("content").asText("");
+        String content = sanitizeNew(json.path("content").asText(""));
         if (targetFile.getParentFile() != null && !targetFile.getParentFile().exists()) {
             targetFile.getParentFile().mkdirs();
         }
@@ -231,7 +303,8 @@ public class AutonomousCodeEditorTool implements AgentTool {
             return "ERROR: File not found: " + targetFile.getAbsolutePath();
         }
 
-        List<String> lines = new ArrayList<>(Files.readAllLines(targetFile.toPath(), StandardCharsets.UTF_8));
+        TextLines text = TextLines.parse(readForEdit(targetFile));
+        List<String> lines = text.lines();
         int startLine = json.path("startLine").asInt(-1);
         int endLine = json.path("endLine").asInt(-1);
 
@@ -241,25 +314,16 @@ public class AutonomousCodeEditorTool implements AgentTool {
 
         endLine = Math.min(lines.size(), endLine);
         int count = endLine - startLine + 1;
+        lines.subList(startLine - 1, endLine).clear();
 
-        for (int i = 0; i < count; i++) {
-            lines.remove(startLine - 1);
-        }
-
-        String updated = String.join("\n", lines);
-        saveAndNotify(targetFile, updated);
-
+        saveAndNotify(targetFile, text.join());
         return String.format("SUCCESS: Deleted %d lines (%d-%d) in %s.", count, startLine, endLine, targetFile.getName());
     }
 
     private void saveAndNotify(File file, String content) throws IOException {
-        // Feature 32: Secret-leak guard check and sanitize before saving to disk
-        var leakResult = com.github.axiomate.agentic.ide.features.security.SecretLeakGuard.getInstance().scanAndSanitize(content);
-        String safeContent = leakResult.sanitizedText();
-
-        Files.writeString(file.toPath(), safeContent, StandardCharsets.UTF_8);
-        log.info("Saved file {}: {} characters", file.getAbsolutePath(), safeContent.length());
-        ProjectManager.getInstance().notifyFileModified(file, safeContent);
+        Files.writeString(file.toPath(), content, StandardCharsets.UTF_8);
+        log.info("Saved file {}: {} characters", file.getAbsolutePath(), content.length());
+        ProjectManager.getInstance().notifyFileModified(file, content);
     }
 }
 

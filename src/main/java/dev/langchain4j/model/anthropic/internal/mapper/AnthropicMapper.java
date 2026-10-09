@@ -62,15 +62,15 @@ public class AnthropicMapper {
      * Reasoning blocks of assistant turns that called tools, keyed by the AiMessage instance (identity), so they
      * can be sent back with that turn. Cleared by the agent when a task ends.
      */
-    private static final Map<AiMessage, List<AnthropicMessageContent>> THINKING_REPLAY =
-            Collections.synchronizedMap(new IdentityHashMap<>());
+    private static final ThreadLocal<Map<AiMessage, List<AnthropicMessageContent>>> THINKING_REPLAY =
+            ThreadLocal.withInitial(IdentityHashMap::new); // per agent task thread, see ReasoningContext
 
     public static void clearThinkingReplay() {
-        THINKING_REPLAY.clear();
+        THINKING_REPLAY.remove();
     }
 
     static int thinkingReplaySize() {
-        return THINKING_REPLAY.size();
+        return THINKING_REPLAY.get().size();
     }
 
     public AnthropicMapper() {
@@ -220,7 +220,7 @@ public class AnthropicMapper {
     private static List<AnthropicMessageContent> toAnthropicMessageContents(AiMessage aiMessage) {
         List<AnthropicMessageContent> contents = new ArrayList<>();
         // Reasoning comes first in the turn, exactly as the model produced it
-        List<AnthropicMessageContent> thinking = THINKING_REPLAY.get(aiMessage);
+        List<AnthropicMessageContent> thinking = THINKING_REPLAY.get().get(aiMessage);
         if (thinking != null) {
             contents.addAll(thinking);
         }
@@ -337,7 +337,7 @@ public class AnthropicMapper {
                 }
             }
             if (!blocks.isEmpty()) {
-                THINKING_REPLAY.put(result, blocks);
+                THINKING_REPLAY.get().put(result, blocks);
             }
         }
         return result;

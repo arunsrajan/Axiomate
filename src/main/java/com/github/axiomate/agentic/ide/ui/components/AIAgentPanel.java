@@ -809,7 +809,7 @@ public class AIAgentPanel extends JPanel {
         int roundedPct = (int) Math.round(pct);
 
         tokenUsageLabel.setText(String.format("Tokens: %,d / %,d (%.1f%%)",
-                tracker.getTotalTokens(), tracker.getMaxContextTokens(), pct));
+                tracker.getContextTokens(), tracker.getMaxContextTokens(), pct));
 
         tokenProgressBar.setValue(Math.min(100, roundedPct));
         tokenProgressBar.setString(String.format("%.1f%%", pct));

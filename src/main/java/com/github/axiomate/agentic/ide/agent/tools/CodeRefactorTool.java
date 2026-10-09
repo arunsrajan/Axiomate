@@ -7,7 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -58,21 +57,25 @@ public class CodeRefactorTool implements AgentTool {
         if (!targetFile.exists()) {
             return "ERROR: Target file does not exist: " + targetFile.getAbsolutePath();
         }
-
-        String existing = Files.readString(targetFile.toPath());
-        String updated;
-        if (targetCode.isBlank()) {
-            updated = replacementCode;
-        } else {
-            if (!existing.contains(targetCode)) {
-                return "ERROR: targetCode snippet not found in " + targetFile.getName();
-            }
-            updated = existing.replace(targetCode, replacementCode);
+        if (targetCode.isBlank() && replacementCode.isBlank()) {
+            return "ERROR: Provide replacementCode (and targetCode to change part of the file). Nothing was changed.";
         }
 
-        Files.writeString(targetFile.toPath(), updated);
-        log.info("Refactored file {}", targetFile.getAbsolutePath());
-        return "SUCCESS: Successfully refactored " + targetFile.getName() + " (" + updated.length() + " chars)";
+        // Same rules and safeguards as code_editor: project-only paths, unique snippet match, the file's own line
+        // endings, no credentials written, open editor tabs updated
+        com.fasterxml.jackson.databind.node.ObjectNode edit = mapper.createObjectNode();
+        edit.put("filePath", targetFile.getAbsolutePath());
+        if (targetCode.isBlank()) {
+            edit.put("action", "write_file");
+            edit.put("content", replacementCode);
+        } else {
+            edit.put("action", "replace_content");
+            edit.put("target", targetCode);
+            edit.put("replacement", replacementCode);
+        }
+        String result = new AutonomousCodeEditorTool().execute(edit.toString());
+        if (result.startsWith("SUCCESS")) log.info("Refactored file {}", targetFile.getAbsolutePath());
+        return result;
     }
 }
 

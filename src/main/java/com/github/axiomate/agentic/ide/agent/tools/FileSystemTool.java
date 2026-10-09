@@ -80,15 +80,42 @@ public class FileSystemTool implements AgentTool {
         if (com.github.axiomate.agentic.ide.agent.vision.VisionSupport.isImageFile(path.toFile())) {
             return "This is an image file. Use the view_image tool to look at it: " + path.toAbsolutePath();
         }
-        return Files.readString(path);
+        long size = Files.size(path);
+        byte[] bytes;
+        try (var in = Files.newInputStream(path)) {
+            bytes = in.readNBytes((int) Math.min(size, MAX_READ_BYTES));
+        }
+        for (int i = 0; i < Math.min(bytes.length, 8_000); i++) {
+            if (bytes[i] == 0) {
+                return "ERROR: " + path.getFileName() + " is a binary file (" + size + " bytes) and cannot be shown as text.";
+            }
+        }
+        // Lenient decoding: a stray non-UTF-8 byte must not make the whole file unreadable
+        String text = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        if (size > MAX_READ_BYTES) {
+            text += "\n\n[TRUNCATED: showing the first " + MAX_READ_BYTES + " of " + size + " bytes. "
+                    + "Use code_editor read_file with startLine/endLine, or the shell, for the rest.]";
+        }
+        return text;
     }
 
+    /** Larger files are cut so one read cannot flood the conversation. */
+    static final int MAX_READ_BYTES = 200_000;
+
     private String writeFile(Path path, String content) throws IOException {
+        // Same rules as code_editor: stay inside the project and never write credentials
+        var sandbox = com.github.axiomate.agentic.ide.features.security.ExecutionSandbox.getInstance().validatePathAccess(path.toFile());
+        if (!sandbox.allowed()) {
+            return "ERROR: " + sandbox.violationReason();
+        }
+        content = com.github.axiomate.agentic.ide.features.security.SecretLeakGuard.getInstance().scanAndSanitize(content).sanitizedText();
         if (path.getParent() != null && !Files.exists(path.getParent())) {
             Files.createDirectories(path.getParent());
         }
-        Files.writeString(path, content);
+        Files.writeString(path, content, java.nio.charset.StandardCharsets.UTF_8);
         log.info("AI Agent wrote {} bytes to {}", content.length(), path);
+        // Open editor tabs show the new text instead of keeping (and later saving over it with) the old one
+        ProjectManager.getInstance().notifyFileModified(path.toFile(), content);
         return "SUCCESS: Wrote " + content.length() + " characters to " + path.toAbsolutePath();
     }
 
