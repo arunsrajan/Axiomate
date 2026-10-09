@@ -34,7 +34,7 @@ public class UniversalChatModelFactory {
      */
     static int resolveMaxOutputTokens(ProviderConfig config, String modelName, int fallback) {
         if (config != null && modelName != null) {
-            var model = config.findModel(modelName);
+            var model = config.findExactModel(modelName); // another model's limit could exceed this one's
             if (model != null && model.getMaxOutputTokens() > 0) {
                 return model.getMaxOutputTokens();
             }

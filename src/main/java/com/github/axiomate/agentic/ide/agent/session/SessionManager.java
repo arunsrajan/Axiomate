@@ -33,7 +33,8 @@ public class SessionManager {
     private final ObjectMapper objectMapper;
     private final List<AgentSession> sessions = new CopyOnWriteArrayList<>();
     private AgentSession activeSession;
-    private final List<Runnable> sessionChangeListeners = new ArrayList<>();
+    /** Notified from the UI and from agent threads, so it must tolerate concurrent use. */
+    private final List<Runnable> sessionChangeListeners = new CopyOnWriteArrayList<>();
     private File currentProjectDirectory;
 
     private SessionManager() {
@@ -57,7 +58,7 @@ public class SessionManager {
         int maxCtx = 128_000;
         ProviderConfig provCfg = config.getProvider(provider);
         if (provCfg != null) {
-            ModelDefinition m = provCfg.findModel(model);
+            ModelDefinition m = provCfg.findExactModel(model);
             if (m != null) maxCtx = m.getMaxContextTokens();
         }
 
@@ -85,6 +86,7 @@ public class SessionManager {
         }
 
         AgentSession defaultSession = new AgentSession(name, provider, model, autoRoute, maxCtx);
+        stampProject(defaultSession, currentProjectDirectory);
         sessions.clear();
         sessions.add(defaultSession);
         activeSession = defaultSession;
@@ -110,7 +112,7 @@ public class SessionManager {
         int maxCtx = 128_000;
         ProviderConfig provCfg = config.getProvider(providerId);
         if (provCfg != null) {
-            ModelDefinition m = provCfg.findModel(modelId);
+            ModelDefinition m = provCfg.findExactModel(modelId);
             if (m != null) maxCtx = m.getMaxContextTokens();
         }
 
@@ -219,7 +221,7 @@ public class SessionManager {
                 }
                 File localFile = dotAxiomate.resolve("sessions.json").toFile();
                 SessionExportData data = new SessionExportData(activeId, list);
-                objectMapper.writeValue(localFile, data);
+                com.github.axiomate.agentic.ide.config.AtomicFiles.writeJson(objectMapper, localFile.toPath(), data, false);
                 log.debug("Wrote project-local session state to {}", localFile);
             }
         } catch (Exception e) {
@@ -286,7 +288,8 @@ public class SessionManager {
 
         sessions.clear();
         if (!loaded.isEmpty()) {
-            loaded.forEach(s -> stampProject(s, projectDir));
+            // Sessions saved for this folder belong to it, even if the folder was moved or cloned since
+            loaded.forEach(s -> s.setProjectPath(projectDir.getAbsolutePath()));
             sessions.addAll(loaded);
             AgentSession matched = null;
             if (savedActiveId != null && !savedActiveId.isBlank()) {
@@ -477,7 +480,7 @@ public class SessionManager {
             SessionExportData data = objectMapper.readValue(sourceFile, SessionExportData.class);
             if (data.getSessions() != null) {
                 importedList = data.getSessions();
-                importedActiveId = data.getActiveSessionId();
+                importedActiveId = data.getActiveSessionId() != null ? data.getActiveSessionId() : "";
             }
         } catch (Exception ex) {
             // Try fallback as List<AgentSession> directly
@@ -491,7 +494,13 @@ public class SessionManager {
         if (!append) {
             sessions.clear();
         }
-        sessions.addAll(importedList);
+        for (AgentSession imported : importedList) {
+            // Re-importing the same file replaces sessions instead of duplicating their ids
+            sessions.removeIf(existing -> existing.getId().equals(imported.getId()));
+            // Imported sessions now belong to this project, wherever they were exported from
+            imported.setProjectPath(currentProjectDirectory != null ? currentProjectDirectory.getAbsolutePath() : null);
+            sessions.add(imported);
+        }
 
         if (!importedActiveId.isBlank()) {
             for (AgentSession s : sessions) {

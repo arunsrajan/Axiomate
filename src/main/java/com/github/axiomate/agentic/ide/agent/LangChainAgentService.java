@@ -103,6 +103,11 @@ public class LangChainAgentService implements AIAgentService {
     }
 
     @Override
+    public void unregisterTool(String name) {
+        tools.removeIf(t -> t.getName().equalsIgnoreCase(name));
+    }
+
+    @Override
     public boolean recordsSessionMessages() {
         return true;
     }

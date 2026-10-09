@@ -436,6 +436,12 @@ public class UIUtils {
     /**
      * Stroke-based glyph icon; a null color follows the current theme's foreground.
      */
+    /** Runs on the Swing event thread: directly when already on it, otherwise queued. */
+    public static void onEdt(Runnable r) {
+        if (SwingUtilities.isEventDispatchThread()) r.run();
+        else SwingUtilities.invokeLater(r);
+    }
+
     public static Icon glyph(Glyph glyph, int size, Color color) {
         return new Icon() {
             @Override

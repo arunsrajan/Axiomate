@@ -63,10 +63,7 @@ public final class VisionSupport {
      * model id.
      */
     public static boolean supportsVision(ProviderConfig provider, String modelId) {
-        ModelDefinition def = provider != null && modelId != null ? provider.findModel(modelId) : null;
-        if (def != null && !def.getId().equalsIgnoreCase(modelId)) {
-            def = null; // findModel falls back to the first model; its settings don't apply to this one
-        }
+        ModelDefinition def = provider != null ? provider.findExactModel(modelId) : null;
         if (def != null && def.getVision() != null) return def.getVision();
         if (def != null && def.getTags() != null
                 && def.getTags().stream().anyMatch(t -> t != null && t.equalsIgnoreCase("vision"))) {

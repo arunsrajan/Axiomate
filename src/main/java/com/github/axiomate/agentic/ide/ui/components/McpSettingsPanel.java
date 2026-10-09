@@ -144,7 +144,8 @@ public class McpSettingsPanel extends JPanel {
         add(split, BorderLayout.CENTER);
 
         // Refresh on manager updates
-        McpManager.getInstance().addChangeListener(this::refreshServerList);
+        // Servers connect on background threads; the list may only be refreshed on the event thread
+        McpManager.getInstance().addChangeListener(() -> UIUtils.onEdt(this::refreshServerList));
         refreshServerList();
     }
 

@@ -560,13 +560,14 @@ public class AIAgentPanel extends JPanel {
         add(inputPanel, BorderLayout.SOUTH);
 
         // Register session and configuration change listeners
-        SessionManager.getInstance().addSessionChangeListener(() -> {
+        // The agent notifies from its own thread; Swing may only be touched on the event thread
+        SessionManager.getInstance().addSessionChangeListener(() -> UIUtils.onEdt(() -> {
             refreshSessionUi();
             AgentSession active = SessionManager.getInstance().getActiveSession();
             if (active != null && !active.getId().equals(displayedSessionId)) {
                 reloadChatFromSession();
             }
-        });
+        }));
         ConfigManager.getInstance().addListener(updatedCfg -> refreshSessionUi());
         ProjectManager.getInstance().addProjectChangeListener(dir -> SwingUtilities.invokeLater(this::updateProjectBranch));
         SessionManager.getInstance().addSessionChangeListener(() -> SwingUtilities.invokeLater(this::updateProjectBranch));
@@ -635,7 +636,7 @@ public class AIAgentPanel extends JPanel {
 
             ProviderConfig prov = config.getProvider(session.getProviderId());
             if (prov != null) {
-                ModelDefinition md = prov.findModel(model);
+                ModelDefinition md = prov.findExactModel(model);
                 if (md != null) {
                     session.getTokenTracker().setMaxContextTokens(md.getMaxContextTokens());
                 }
@@ -790,8 +791,9 @@ public class AIAgentPanel extends JPanel {
             for (ModelDefinition m : prov.getModels()) {
                 modelCombo.addItem(m.getId());
             }
-            if (prov.findModel(session.getModelId()) == null && prov.getDefaultModel() != null) {
-                session.setModelId(prov.getDefaultModel());
+            if (prov.findExactModel(session.getModelId()) == null && !session.getModelId().isBlank()) {
+                // e.g. an imported session's model that is not configured: show it rather than switch models
+                modelCombo.addItem(session.getModelId());
             }
             modelCombo.setSelectedItem(session.getModelId());
         }

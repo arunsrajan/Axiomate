@@ -35,5 +35,9 @@ public interface AIAgentService {
     List<AgentTool> getRegisteredTools();
 
     void registerTool(AgentTool tool);
+
+    /** Removes a tool, e.g. when its MCP server is disconnected or removed. */
+    default void unregisterTool(String name) {
+    }
 }
 

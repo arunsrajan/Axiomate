@@ -249,6 +249,15 @@ class AgentLoopFixesTest {
     }
 
     @Test
+    @DisplayName("An unlisted model's max_tokens is not taken from another model")
+    void unlistedModelMaxOutput() {
+        ProviderConfig p = new ProviderConfig("P", "ANTHROPIC", "P", null, "claude-opus-4-1",
+                new ArrayList<>(List.of(new ModelDefinition("claude-opus-4-1", "Opus", 200_000, 32_000, List.of()))));
+        assertEquals(32_000, UniversalChatModelFactory.resolveMaxOutputTokens(p, "claude-opus-4-1", 8_192));
+        assertEquals(8_192, UniversalChatModelFactory.resolveMaxOutputTokens(p, "claude-haiku-4-5", 8_192));
+    }
+
+    @Test
     @DisplayName("Task classification matches whole words")
     void classifierUsesWholeWords() {
         assertEquals(TaskType.GENERAL, AutonomousTaskRouter.classifyTask("Show the latest release notes"));

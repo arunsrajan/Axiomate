@@ -23,6 +23,11 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
 
     private static final Logger log = LoggerFactory.getLogger(JsonAgentMemoryStore.class);
 
+    private static final java.util.Set<String> STOPWORDS = java.util.Set.of(
+            "the", "and", "for", "with", "this", "that", "from", "into", "what", "how", "why", "can", "you", "please",
+            "are", "was", "were", "will", "should", "could", "would", "about", "then", "than", "there", "here",
+            "its", "it's", "not", "all", "any", "but", "have", "has", "had", "make", "use", "using", "add", "get");
+
     private final ObjectMapper mapper;
     private final List<MemoryItem> memories = new CopyOnWriteArrayList<>();
     private final Path storagePath;
@@ -50,7 +55,9 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
                 memories.addAll(loaded);
                 log.info("Loaded {} memory items from {}", memories.size(), storagePath);
             } catch (Exception e) {
-                log.error("Failed to load agent memories from {}", storagePath, e);
+                // Keep the unreadable file: the defaults saved below must not destroy the user's memories
+                Path backup = com.github.axiomate.agentic.ide.config.AtomicFiles.backupUnreadable(storagePath);
+                log.error("Failed to load agent memories from {}; kept a copy at {}", storagePath, backup, e);
             }
         }
 
@@ -156,7 +163,12 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
             return candidates.stream().limit(limit).collect(Collectors.toList());
         }
 
-        String[] queryTokens = query.toLowerCase().split("\\W+");
+        // Short words and stopwords ("a", "the", "to") match nearly every memory; leave them out of the score
+        String[] queryTokens = java.util.Arrays.stream(query.toLowerCase().split("\\W+"))
+                .filter(t -> t.length() >= 3 && !STOPWORDS.contains(t))
+                .distinct()
+                .toArray(String[]::new);
+        if (queryTokens.length == 0) return List.of();
 
         record ScoredMemory(MemoryItem item, double score) {}
 
@@ -284,7 +296,7 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
             if (storagePath.getParent() != null && !Files.exists(storagePath.getParent())) {
                 Files.createDirectories(storagePath.getParent());
             }
-            mapper.writeValue(storagePath.toFile(), memories);
+            com.github.axiomate.agentic.ide.config.AtomicFiles.writeJson(mapper, storagePath, new ArrayList<>(memories), false);
             log.debug("Saved {} memories to {}", memories.size(), storagePath);
         } catch (IOException e) {
             log.error("Failed to save memories to {}", storagePath, e);

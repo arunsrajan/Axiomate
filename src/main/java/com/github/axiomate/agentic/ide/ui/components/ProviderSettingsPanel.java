@@ -457,7 +457,7 @@ public class ProviderSettingsPanel extends JPanel {
             if (def != null && !def.toString().trim().isBlank()) {
                 String defModel = def.toString().trim();
                 prov.setDefaultModel(defModel);
-                if (prov.findModel(defModel) == null) {
+                if (prov.findExactModel(defModel) == null) { // a typed-in default model gets a definition
                     prov.getModels().add(0, new ModelDefinition(defModel, defModel, 128_000, 4_096, List.of("custom")));
                 }
             }

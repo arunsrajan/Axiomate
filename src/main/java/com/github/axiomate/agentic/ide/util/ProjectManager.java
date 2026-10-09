@@ -18,16 +18,17 @@ public class ProjectManager {
     private static final Logger log = LoggerFactory.getLogger(ProjectManager.class);
     private static ProjectManager instance;
 
-    private File currentProjectDirectory;
-    private File activeFile;
+    // Read and notified from agent threads as well as the UI
+    private volatile File currentProjectDirectory;
+    private volatile File activeFile;
 
     public interface FileContentListener {
         void onFileModified(File file, String newContent);
     }
 
-    private final List<Consumer<File>> projectChangeListeners = new ArrayList<>();
-    private final List<Consumer<File>> activeFileChangeListeners = new ArrayList<>();
-    private final List<FileContentListener> fileContentListeners = new ArrayList<>();
+    private final List<Consumer<File>> projectChangeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final List<Consumer<File>> activeFileChangeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final List<FileContentListener> fileContentListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     private ProjectManager() {
         String workingDir = System.getProperty("user.dir");

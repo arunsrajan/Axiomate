@@ -159,18 +159,23 @@ public class PluginManager {
             throw new IOException("Download failed: HTTP " + resp.statusCode() + " for " + resolved.archiveUri());
         }
         Path tmp = Files.createTempDirectory("axiomate-plugin-dl-");
-        try (InputStream in = new LimitedInputStream(resp.body(), MAX_DOWNLOAD_BYTES)) {
-            PluginPackageReader.extractZip(in, tmp);
-        }
-        Path root = tmp;
-        if (resolved.subPath() != null) {
-            Path top = singleChildDir(tmp);
-            root = (top != null ? top : tmp).resolve(resolved.subPath()).normalize();
-            if (!root.startsWith(tmp) || !Files.isDirectory(root)) {
-                throw new IOException("Folder '" + resolved.subPath() + "' not found in the downloaded archive");
+        try {
+            try (InputStream in = new LimitedInputStream(resp.body(), MAX_DOWNLOAD_BYTES)) {
+                PluginPackageReader.extractZip(in, tmp);
             }
+            Path root = tmp;
+            if (resolved.subPath() != null) {
+                Path top = singleChildDir(tmp);
+                root = (top != null ? top : tmp).resolve(resolved.subPath()).normalize();
+                if (!root.startsWith(tmp) || !Files.isDirectory(root)) {
+                    throw new IOException("Folder '" + resolved.subPath() + "' not found in the downloaded archive");
+                }
+            }
+            return PluginPackageReader.read(root);
+        } catch (IOException | RuntimeException e) {
+            deleteTree(tmp); // a failed download must not leave its files in the temp folder
+            throw e;
         }
-        return PluginPackageReader.read(root);
     }
 
     /**

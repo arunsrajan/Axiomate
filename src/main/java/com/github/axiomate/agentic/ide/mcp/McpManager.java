@@ -29,7 +29,7 @@ public class McpManager {
     private final List<McpServerConfig> serverConfigs = new CopyOnWriteArrayList<>();
     private final Map<String, McpClient> activeClients = new ConcurrentHashMap<>();
     private final Map<String, List<McpTool>> serverTools = new ConcurrentHashMap<>();
-    private final List<Runnable> changeListeners = new ArrayList<>();
+    private final List<Runnable> changeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     private McpManager() {
         this.mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
@@ -60,7 +60,9 @@ public class McpManager {
                 serverConfigs.addAll(loaded);
                 log.info("Loaded {} MCP server configurations from {}", serverConfigs.size(), configPath);
             } catch (Exception e) {
-                log.error("Failed to load MCP server config from {}", configPath, e);
+                // Keep the unreadable file: the defaults saved below must not replace the user's servers
+                Path backup = com.github.axiomate.agentic.ide.config.AtomicFiles.backupUnreadable(configPath);
+                log.error("Failed to load MCP server config from {}; kept a copy at {}", configPath, backup, e);
             }
         }
 
@@ -98,7 +100,8 @@ public class McpManager {
             if (configPath.getParent() != null && !Files.exists(configPath.getParent())) {
                 Files.createDirectories(configPath.getParent());
             }
-            mapper.writeValue(configPath.toFile(), serverConfigs);
+            // May hold tokens in server env vars: owner-only, never half-written
+            com.github.axiomate.agentic.ide.config.AtomicFiles.writeJson(mapper, configPath, new ArrayList<>(serverConfigs), true);
             log.info("Saved MCP server configs to {}", configPath);
         } catch (IOException e) {
             log.error("Failed to save MCP configs", e);
@@ -139,8 +142,8 @@ public class McpManager {
 
     public void connectServer(McpServerConfig cfg) {
         disconnectServer(cfg.getName());
+        McpClient client = new McpClient(cfg);
         try {
-            McpClient client = new McpClient(cfg);
             client.connect();
             activeClients.put(cfg.getName(), client);
 
@@ -149,14 +152,16 @@ public class McpManager {
             for (McpClient.McpToolDefinition def : tools) {
                 McpTool mcpTool = new McpTool(cfg.getName(), def.name(), def.description(), def.inputSchema(), client);
                 wrappedTools.add(mcpTool);
-                // Register with agent tool manager
-                AgentManager.getInstance().getActiveService().registerTool(mcpTool);
+                // Register with every agent service, not just the one active right now (often the demo service)
+                AgentManager.getInstance().registerTool(mcpTool);
             }
             serverTools.put(cfg.getName(), wrappedTools);
             log.info("MCP server '{}' connected: discovered {} tools", cfg.getName(), tools.size());
             notifyListeners();
         } catch (Exception e) {
             log.error("Failed to connect to MCP server '{}'", cfg.getName(), e);
+            activeClients.remove(cfg.getName(), client);
+            client.close(); // don't leave the server process running
         }
     }
 
@@ -165,7 +170,11 @@ public class McpManager {
         if (client != null) {
             client.close();
         }
-        serverTools.remove(name);
+        // Its tools go too: calling one would quietly start the disconnected server again
+        List<McpTool> tools = serverTools.remove(name);
+        if (tools != null) {
+            for (McpTool t : tools) AgentManager.getInstance().unregisterTool(t.getName());
+        }
         notifyListeners();
     }
 

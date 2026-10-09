@@ -24,7 +24,18 @@ public class McpTool implements AgentTool {
 
     @Override
     public String getName() {
-        return "mcp_" + serverName + "_" + toolName;
+        return toolName(serverName, toolName);
+    }
+
+    /**
+     * Model APIs only accept tool names matching [a-zA-Z0-9_-]{1,64}; a server named "my server" or "github.com"
+     * otherwise made every request fail. Long names are shortened with a hash to stay unique.
+     */
+    static String toolName(String server, String tool) {
+        String name = ("mcp_" + server + "_" + tool).replaceAll("[^A-Za-z0-9_-]", "_");
+        if (name.length() <= 64) return name;
+        String hash = Integer.toHexString(name.hashCode());
+        return name.substring(0, 63 - hash.length()) + "_" + hash;
     }
 
     @Override
