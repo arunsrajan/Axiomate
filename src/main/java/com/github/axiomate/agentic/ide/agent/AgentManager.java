@@ -60,6 +60,11 @@ public class AgentManager {
         log.info("Registered tool: {}", tool.getName());
     }
 
+    public void unregisterTool(String name) {
+        mockService.unregisterTool(name);
+        langChainService.unregisterTool(name);
+    }
+
     public void updateActiveService(IdeConfig config) {
         String provider = config.getAiProvider();
         if (!"MOCK".equalsIgnoreCase(provider)) {

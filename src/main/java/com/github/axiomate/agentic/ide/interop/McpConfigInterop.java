@@ -247,9 +247,13 @@ public class McpConfigInterop {
             String existing = Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8) : "";
             Object parsed = existing.isBlank() ? null : MiniToml.parse(existing).get("mcp_servers");
             Set<String> present = parsed instanceof Map<?, ?> m ? new HashSet<>(stringKeys(m)) : Set.of();
-            StringBuilder sb = new StringBuilder(existing.stripTrailing());
+            String kept = existing;
             for (McpServerConfig s : servers) {
-                if (present.contains(s.getName())) {
+                if (present.contains(s.getName()) && overwrite) kept = removeTomlServer(kept, s.getName());
+            }
+            StringBuilder sb = new StringBuilder(kept.stripTrailing());
+            for (McpServerConfig s : servers) {
+                if (present.contains(s.getName()) && !overwrite) {
                     skipped.add(s.getName());
                     continue;
                 }
@@ -257,7 +261,7 @@ public class McpConfigInterop {
                 sb.append(toToml(s));
                 written.add(s.getName());
             }
-            Files.writeString(file, sb.append('\n').toString(), StandardCharsets.UTF_8);
+            writeAtomically(file, sb.append('\n').toString());
         } else {
             ObjectNode root = Files.exists(file) && Files.size(file) > 0
                     ? (ObjectNode) mapper.readTree(file.toFile())
@@ -274,10 +278,39 @@ public class McpConfigInterop {
                 serversNode.set(s.getName(), toJson(s, target.format()));
                 written.add(s.getName());
             }
-            mapper.writeValue(file.toFile(), root);
+            writeAtomically(file, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root) + "\n");
         }
         log.info("Exported {} MCP server(s) to {} ({} skipped)", written.size(), file, skipped.size());
         return new ExportResult(file, written, skipped);
+    }
+
+    /** Another agent's config: a crash mid-write must not leave it half-written. */
+    private static void writeAtomically(Path file, String content) throws IOException {
+        Path tmp = Files.createTempFile(file.toAbsolutePath().getParent(), "." + file.getFileName() + ".", ".tmp");
+        try {
+            Files.writeString(tmp, content, StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
+    /** Removes a server's [mcp_servers.name] table and its sub-tables ([mcp_servers.name.env]) from Codex TOML. */
+    static String removeTomlServer(String toml, String name) {
+        java.util.regex.Pattern own = java.util.regex.Pattern.compile(
+                "^\\s*\\[\\s*mcp_servers\\.(?:\"" + java.util.regex.Pattern.quote(name) + "\"|" + java.util.regex.Pattern.quote(name) + ")(?:\\.[^\\]]*)?\\s*]\\s*$");
+        StringBuilder out = new StringBuilder();
+        boolean skipping = false;
+        for (String line : toml.split("\n", -1)) {
+            String t = line.strip();
+            if (t.startsWith("[")) skipping = own.matcher(line).matches();
+            if (!skipping) out.append(line).append('\n');
+        }
+        return out.toString().replaceAll("\n{3,}", "\n\n");
     }
 
     private ObjectNode toJson(McpServerConfig s, Format format) {

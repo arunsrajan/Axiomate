@@ -6,13 +6,9 @@ import com.github.axiomate.agentic.ide.util.ProjectManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Tool allowing the AI Agent to execute Bash commands and shell scripts.
@@ -33,6 +29,7 @@ public class BashTool implements AgentTool {
         return """
             bash: Execute bash commands or scripts in the project working directory.
             Preferred command execution tool on Linux, Unix, and macOS environments.
+            Commands time out after 120 seconds unless "timeout_seconds" (max 900) is given; stdin is closed.
             Arguments JSON schema:
             {
               "command": "bash command or script (e.g. ls -la, git status, ./gradlew build, mvn test)"
@@ -43,8 +40,9 @@ public class BashTool implements AgentTool {
     @Override
     public String execute(String arguments) throws Exception {
         String command;
+        JsonNode json = null;
         if (arguments.trim().startsWith("{")) {
-            JsonNode json = mapper.readTree(arguments);
+            json = mapper.readTree(arguments);
             command = json.path("command").asText();
             if (command.isBlank() && json.has("script")) {
                 command = json.path("script").asText();
@@ -58,50 +56,27 @@ public class BashTool implements AgentTool {
         }
 
         File workingDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+        String blocked = ProcessRunner.guard("bash", command, workingDir);
+        if (blocked != null) return blocked;
+
         String bashExecutable = findBashExecutable();
-
         log.info("Executing bash command using [{}]: '{}'", bashExecutable, command);
-
-        List<String> commandList = new ArrayList<>();
-        commandList.add(bashExecutable);
-        commandList.add("-c");
-        commandList.add(command);
-
-        ProcessBuilder pb = new ProcessBuilder(commandList);
-        pb.directory(workingDir);
-        pb.redirectErrorStream(true);
-
-        Process process;
+        int timeout = ProcessRunner.timeoutFrom(json);
+        ProcessRunner.Result result;
         try {
-            process = pb.start();
-        } catch (Exception ex) {
+            result = ProcessRunner.run(List.of(bashExecutable, "-c", command), workingDir, timeout, StandardCharsets.UTF_8);
+        } catch (java.io.IOException ex) {
+            if ("bash".equals(bashExecutable)) {
+                return "ERROR: bash is not available on this machine (" + ex.getMessage() + ").";
+            }
             log.warn("Failed to start with {}, attempting fallback to 'bash' in PATH", bashExecutable, ex);
-            pb = new ProcessBuilder("bash", "-c", command);
-            pb.directory(workingDir);
-            pb.redirectErrorStream(true);
-            process = pb.start();
-        }
-
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-                if (output.length() > 25000) {
-                    output.append("\n[OUTPUT TRUNCATED]");
-                    break;
-                }
+            try {
+                result = ProcessRunner.run(List.of("bash", "-c", command), workingDir, timeout, StandardCharsets.UTF_8);
+            } catch (java.io.IOException again) {
+                return "ERROR: bash is not available on this machine (" + again.getMessage() + ").";
             }
         }
-
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            return "ERROR: Bash command timed out after 60 seconds.\nPartial output:\n" + output;
-        }
-
-        int exitCode = process.exitValue();
-        return "Exit code: " + exitCode + "\nOutput:\n" + (output.isEmpty() ? "(No output)" : output.toString());
+        return result.describe("Bash command");
     }
 
     public static String findBashExecutable() {

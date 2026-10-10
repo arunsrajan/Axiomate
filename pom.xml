@@ -119,13 +119,40 @@
             <!-- Tests run against a throwaway home and working folder under target/, so they never read or write
                  the developer's real ~/.axiomate-ide (config, sessions, memory, plugins), ~/.claude or ~/.codex,
                  nor the repository's own .axiomate/ folder. -->
+            <!-- Each run starts from an empty throwaway home: without `mvn clean`, sessions, config and memories
+                 saved by the previous run would be loaded again and leak into this run's tests. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.3.2</version>
+                <executions>
+                    <execution>
+                        <id>fresh-test-home</id>
+                        <phase>process-test-classes</phase>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                        <configuration>
+                            <excludeDefaultDirectories>true</excludeDefaultDirectories>
+                            <filesets>
+                                <fileset>
+                                    <directory>${project.build.directory}/test-home</directory>
+                                </fileset>
+                                <fileset>
+                                    <directory>${project.build.directory}/test-work</directory>
+                                </fileset>
+                            </filesets>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
                     <workingDirectory>${project.build.directory}/test-work</workingDirectory>
-                    <argLine>-Duser.home=${project.build.directory}/test-home</argLine>
+                    <argLine>-Duser.home=${project.build.directory}/test-home -Djdk.net.unixdomain.tmpdir=${project.build.directory}</argLine>
                 </configuration>
             </plugin>
 

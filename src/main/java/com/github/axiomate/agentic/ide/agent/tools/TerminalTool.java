@@ -6,13 +6,10 @@ import com.github.axiomate.agentic.ide.util.ProjectManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Tool allowing the AI Agent to execute shell / terminal commands in the project directory,
@@ -33,6 +30,7 @@ public class TerminalTool implements AgentTool {
         return """
             terminal: Execute a shell command in the project root directory.
             Automatically selects PowerShell on Windows and Bash on Linux/macOS.
+            Commands time out after 120 seconds unless "timeout_seconds" (max 900) is given; stdin is closed.
             Arguments JSON schema:
             {
               "command": "command to run (e.g. dir, mvn test, javac HelloWorld.java, git status)",
@@ -45,9 +43,10 @@ public class TerminalTool implements AgentTool {
     public String execute(String arguments) throws Exception {
         String command;
         String shell = "default";
+        JsonNode json = null;
 
         if (arguments.trim().startsWith("{")) {
-            JsonNode json = mapper.readTree(arguments);
+            json = mapper.readTree(arguments);
             command = json.path("command").asText();
             if (json.has("shell")) {
                 shell = json.path("shell").asText("default").toLowerCase();
@@ -68,74 +67,34 @@ public class TerminalTool implements AgentTool {
             return "ERROR: " + sandboxCheck.violationReason();
         }
 
-        // Feature 35: Irreversible-action gate
-        if (!com.github.axiomate.agentic.ide.features.security.IrreversibleActionGate.getInstance().checkAndConfirm(command, workingDir.getPath())) {
-            return "BLOCKED: Irreversible command execution requires explicit confirmation.";
-        }
-
-        // Feature 36: Full audit trail logging
-        com.github.axiomate.agentic.ide.features.security.AuditTrailService.getInstance()
-                .recordEvent("AGENT", "TERMINAL_COMMAND", workingDir.getPath(), "Command: " + command);
+        // Feature 35 + 36: confirmation for destructive commands, audit trail
+        String blocked = ProcessRunner.guard("terminal", command, workingDir);
+        if (blocked != null) return blocked;
 
         log.info("Agent executing terminal command [{}] in {}: '{}'", shell, workingDir, command);
 
         List<String> commandList = new ArrayList<>();
         boolean isWindows = com.github.axiomate.agentic.ide.util.OSUtils.isWindows();
-
-        if ("powershell".equals(shell) || ("default".equals(shell) && isWindows)) {
-            commandList.add(PowerShellTool.findPowerShellExecutable());
-            commandList.add("-NoProfile");
-            commandList.add("-NonInteractive");
-            commandList.add("-ExecutionPolicy");
-            commandList.add("Bypass");
-            commandList.add("-Command");
-            commandList.add(command);
-        } else if ("bash".equals(shell) || ("default".equals(shell) && !isWindows)) {
-            commandList.add(BashTool.findBashExecutable());
-            commandList.add("-c");
-            commandList.add(command);
+        boolean windowsShell;
+        if ("powershell".equals(shell) || (!"bash".equals(shell) && !"cmd".equals(shell) && isWindows)) {
+            commandList.addAll(List.of(PowerShellTool.findPowerShellExecutable(), "-NoProfile", "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass", "-Command", command));
+            windowsShell = true;
         } else if ("cmd".equals(shell)) {
-            commandList.add("cmd.exe");
-            commandList.add("/c");
-            commandList.add(command);
+            commandList.addAll(List.of("cmd.exe", "/c", command));
+            windowsShell = true;
         } else {
-            if (isWindows) {
-                commandList.add(PowerShellTool.findPowerShellExecutable());
-                commandList.add("-Command");
-                commandList.add(command);
-            } else {
-                commandList.add("bash");
-                commandList.add("-c");
-                commandList.add(command);
-            }
+            commandList.addAll(List.of(BashTool.findBashExecutable(), "-c", command));
+            windowsShell = false;
         }
 
-        ProcessBuilder pb = new ProcessBuilder(commandList);
-        pb.directory(workingDir);
-        pb.redirectErrorStream(true);
-
-        Process process = pb.start();
-        StringBuilder output = new StringBuilder();
-
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-                if (output.length() > 25000) {
-                    output.append("\n[OUTPUT TRUNCATED]");
-                    break;
-                }
-            }
+        try {
+            ProcessRunner.Result result = ProcessRunner.run(commandList, workingDir, ProcessRunner.timeoutFrom(json),
+                    windowsShell ? PowerShellTool.nativeCharset() : StandardCharsets.UTF_8);
+            return result.describe("Command");
+        } catch (java.io.IOException e) {
+            return "ERROR: Could not start " + commandList.get(0) + ": " + e.getMessage();
         }
-
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            return "ERROR: Command timed out after 60 seconds.\nPartial output:\n" + output;
-        }
-
-        int exitCode = process.exitValue();
-        return "Exit code: " + exitCode + "\nOutput:\n" + (output.isEmpty() ? "(No output)" : output.toString());
     }
 }
 

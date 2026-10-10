@@ -123,6 +123,20 @@ public class ProviderConfig {
         this.defaultModel = defaultModel;
     }
 
+    /**
+     * The model with exactly this id, or null. Use this for a model's own limits and capabilities:
+     * {@link #findModel} falls back to the first model, whose settings don't apply to another model.
+     */
+    public ModelDefinition findExactModel(String modelId) {
+        if (modelId == null) return null;
+        for (ModelDefinition m : models) {
+            if (m.getId().equalsIgnoreCase(modelId)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
     public ModelDefinition findModel(String modelId) {
         for (ModelDefinition m : models) {
             if (m.getId().equalsIgnoreCase(modelId)) {

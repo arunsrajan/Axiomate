@@ -53,7 +53,11 @@ public class ProjectStateManager {
                 log.info("Loaded workspace project state from {}", stateFilePath);
                 return state;
             } catch (Exception e) {
-                log.error("Failed to read workspace state from {}, creating default", stateFilePath, e);
+                // Keep the unreadable file: starting fresh must not destroy every project's sessions
+                Path backup = AtomicFiles.backupUnreadable(stateFilePath);
+                log.warn("Could not read workspace state from {} ({}); kept a copy at {} and starting fresh",
+                        stateFilePath, AtomicFiles.readFailureReason(e), backup);
+                log.debug("Workspace state read failure", e);
             }
         }
         WorkspaceState state = new WorkspaceState();
@@ -67,7 +71,7 @@ public class ProjectStateManager {
             if (stateFilePath.getParent() != null && !Files.exists(stateFilePath.getParent())) {
                 Files.createDirectories(stateFilePath.getParent());
             }
-            objectMapper.writeValue(stateFilePath.toFile(), workspaceState);
+            AtomicFiles.writeJson(objectMapper, stateFilePath, workspaceState, false);
             log.info("Saved workspace project state to {}", stateFilePath);
         } catch (IOException e) {
             log.error("Failed to write workspace state to {}", stateFilePath, e);

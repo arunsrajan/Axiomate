@@ -167,8 +167,8 @@ public class SessionsPanel extends JPanel {
             List<AgentSession> sessions = new ArrayList<>(SessionManager.getInstance().getSessionsForProject(dir));
             if (sessions.isEmpty()) continue;
             for (AgentSession sess : sessions) {
-                // sessions saved before folders were recorded still need to know where they belong
-                if (sess.getProjectPath() == null || sess.getProjectPath().isBlank()) sess.setProjectPath(dir.getAbsolutePath());
+                // saved under this project, so they open it (also for old sessions or a moved/cloned folder)
+                sess.setProjectPath(dir.getAbsolutePath());
             }
             String name = p.getProjectName() != null && !p.getProjectName().isBlank() ? p.getProjectName() : dir.getName();
             groups.add(new ProjectGroup(p.getProjectPath(), dir, name, GitBranch.of(dir), sortSessions(sessions), false));

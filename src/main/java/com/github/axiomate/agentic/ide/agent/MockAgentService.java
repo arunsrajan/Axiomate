@@ -30,7 +30,10 @@ public class MockAgentService implements AIAgentService {
     private final List<AgentTool> tools = new CopyOnWriteArrayList<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private Future<?> activeTask;
-    private volatile boolean cancelled = false;
+    /** Stop flag of the latest task; each task reads its own through {@link #taskCancel}. */
+    private volatile java.util.concurrent.atomic.AtomicBoolean currentCancel = new java.util.concurrent.atomic.AtomicBoolean();
+    private final ThreadLocal<java.util.concurrent.atomic.AtomicBoolean> taskCancel =
+            ThreadLocal.withInitial(java.util.concurrent.atomic.AtomicBoolean::new);
 
     public MockAgentService() {
     }
@@ -47,13 +50,18 @@ public class MockAgentService implements AIAgentService {
     }
 
     @Override
+    public void unregisterTool(String name) {
+        tools.removeIf(t -> t.getName().equalsIgnoreCase(name));
+    }
+
+    @Override
     public boolean isBusy() {
         return activeTask != null && !activeTask.isDone();
     }
 
     @Override
     public void cancelCurrentTask() {
-        cancelled = true;
+        currentCancel.set(true);
         if (activeTask != null) {
             activeTask.cancel(true);
         }
@@ -61,8 +69,10 @@ public class MockAgentService implements AIAgentService {
 
     @Override
     public void sendMessage(String prompt, String contextCode, String activeFilePath, AgentListener listener) {
-        cancelled = false;
+        java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        currentCancel = cancel;
         activeTask = executor.submit(() -> {
+            taskCancel.set(cancel);
             try {
                 AgentSession session = SessionManager.getInstance().getActiveSession();
                 IdeConfig config = ConfigManager.getInstance().getConfig();
@@ -100,7 +110,8 @@ public class MockAgentService implements AIAgentService {
                 // 2. Task-Based Model & Provider Routing display
                 AutonomousTaskRouter.RoutedModel routed = AutonomousTaskRouter.route(
                         safePrompt, session.getProviderId(), session.getModelId(), session.isAutoRoutingEnabled());
-                if (!routed.rationale().startsWith("Default")) {
+                if (!java.util.Objects.equals(routed.providerId(), session.getProviderId())
+                        || !java.util.Objects.equals(routed.modelId(), session.getModelId())) {
                     listener.onThinking("🎯 " + routed.rationale());
                 }
 
@@ -117,7 +128,7 @@ public class MockAgentService implements AIAgentService {
                     sleep(200);
                 }
 
-                if (cancelled) return;
+                if (cancelled()) return;
 
                 String lower = prompt.toLowerCase();
 
@@ -152,14 +163,17 @@ public class MockAgentService implements AIAgentService {
                     handleGeneralCoding(prompt, contextCode, activeFilePath, memoryContext, listener);
                 }
 
-                MemoryManager.getInstance().recordEpisode(prompt, "Completed with tool calling & agent reasoning.");
+                MemoryManager.getInstance().recordEpisode(safePrompt, "Completed with tool calling & agent reasoning.");
 
             } catch (InterruptedException e) {
+                // Stopped by the user; the chat already shows it, so report nothing more
                 log.info("Agent task interrupted / cancelled");
-                listener.onThinking("Task stopped by user.");
             } catch (Exception e) {
+                if (cancelled()) return;
                 log.error("Agent error", e);
                 listener.onError(e);
+            } finally {
+                taskCancel.remove();
             }
         });
     }
@@ -512,7 +526,7 @@ public class MockAgentService implements AIAgentService {
         String[] words = fullText.split("(?<=\\s)|(?<=\\n)");
         StringBuilder current = new StringBuilder();
         for (String word : words) {
-            if (cancelled) return;
+            if (cancelled()) return;
             current.append(word);
             listener.onToken(word);
             Thread.sleep(12);
@@ -535,6 +549,10 @@ public class MockAgentService implements AIAgentService {
                 .recordTaskOutcome("GENERAL", true, 15.0, 0.002, null);
 
         listener.onComplete(current.toString());
+    }
+
+    private boolean cancelled() {
+        return taskCancel.get().get();
     }
 
     private void sleep(long millis) throws InterruptedException {

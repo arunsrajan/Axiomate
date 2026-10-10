@@ -104,6 +104,8 @@ public class AIAgentPanel extends JPanel {
     private JPanel currentAssistantMessagePanel;
     private JTextArea currentAssistantTextArea;
     private StringBuilder currentStreamingBuffer;
+    /** Incremented per prompt and on Stop; events of an older task are ignored. Changed on the event thread only. */
+    private int taskGeneration;
     /** Reasoning bubble being filled while the model streams its thinking. */
     private ThinkingView liveThinking;
     private StringBuilder liveThinkingBuffer;
@@ -560,14 +562,15 @@ public class AIAgentPanel extends JPanel {
         add(inputPanel, BorderLayout.SOUTH);
 
         // Register session and configuration change listeners
-        SessionManager.getInstance().addSessionChangeListener(() -> {
+        // The agent notifies from its own thread; Swing may only be touched on the event thread
+        SessionManager.getInstance().addSessionChangeListener(() -> UIUtils.onEdt(() -> {
             refreshSessionUi();
             AgentSession active = SessionManager.getInstance().getActiveSession();
             if (active != null && !active.getId().equals(displayedSessionId)) {
                 reloadChatFromSession();
             }
-        });
-        ConfigManager.getInstance().addListener(updatedCfg -> refreshSessionUi());
+        }));
+        ConfigManager.getInstance().addListener(updatedCfg -> UIUtils.onEdt(this::refreshSessionUi));
         ProjectManager.getInstance().addProjectChangeListener(dir -> SwingUtilities.invokeLater(this::updateProjectBranch));
         SessionManager.getInstance().addSessionChangeListener(() -> SwingUtilities.invokeLater(this::updateProjectBranch));
         // Branch switches made outside the IDE (terminal, other tools) show up within a few seconds
@@ -635,7 +638,7 @@ public class AIAgentPanel extends JPanel {
 
             ProviderConfig prov = config.getProvider(session.getProviderId());
             if (prov != null) {
-                ModelDefinition md = prov.findModel(model);
+                ModelDefinition md = prov.findExactModel(model);
                 if (md != null) {
                     session.getTokenTracker().setMaxContextTokens(md.getMaxContextTokens());
                 }
@@ -769,7 +772,17 @@ public class AIAgentPanel extends JPanel {
 
     private void syncControlsToSession(AgentSession session) {
         if (session == null) return;
+        // Refilling the combos auto-selects their first item; those events must not rewrite the session's model
+        boolean wasUpdating = updatingSessionUi;
+        updatingSessionUi = true;
+        try {
+            syncControls(session);
+        } finally {
+            updatingSessionUi = wasUpdating;
+        }
+    }
 
+    private void syncControls(AgentSession session) {
         IdeConfig config = ConfigManager.getInstance().getConfig();
         if (config.getProvider(session.getProviderId()) == null && !config.getProviders().isEmpty()) {
             String fallbackId = config.getProviders().containsKey(config.getActiveProviderId())
@@ -790,8 +803,9 @@ public class AIAgentPanel extends JPanel {
             for (ModelDefinition m : prov.getModels()) {
                 modelCombo.addItem(m.getId());
             }
-            if (prov.findModel(session.getModelId()) == null && prov.getDefaultModel() != null) {
-                session.setModelId(prov.getDefaultModel());
+            if (prov.findExactModel(session.getModelId()) == null && !session.getModelId().isBlank()) {
+                // e.g. an imported session's model that is not configured: show it rather than switch models
+                modelCombo.addItem(session.getModelId());
             }
             modelCombo.setSelectedItem(session.getModelId());
         }
@@ -809,7 +823,7 @@ public class AIAgentPanel extends JPanel {
         int roundedPct = (int) Math.round(pct);
 
         tokenUsageLabel.setText(String.format("Tokens: %,d / %,d (%.1f%%)",
-                tracker.getTotalTokens(), tracker.getMaxContextTokens(), pct));
+                tracker.getContextTokens(), tracker.getMaxContextTokens(), pct));
 
         tokenProgressBar.setValue(Math.min(100, roundedPct));
         tokenProgressBar.setString(String.format("%.1f%%", pct));
@@ -1221,10 +1235,24 @@ public class AIAgentPanel extends JPanel {
 
         // Services that save the conversation themselves must not get every step saved a second time
         boolean serviceRecords = agentService.recordsSessionMessages();
+        final int generation = ++taskGeneration;
+        AgentSession taskSession = SessionManager.getInstance().getActiveSession();
+        final String taskSessionId = taskSession != null ? taskSession.getId() : null;
         agentService.sendMessage(prompt, contextCode, activeFilePath, images, new AgentListener() {
+            /** Still the latest task (not stopped or superseded). */
+            private boolean current() {
+                return generation == taskGeneration;
+            }
+
+            /** Its session is the one on screen: after switching sessions its output must not land in another. */
+            private boolean visible() {
+                return current() && java.util.Objects.equals(taskSessionId, displayedSessionId);
+            }
+
             @Override
             public void onToken(String token) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     boolean follow = isFollowingTranscript();
                     endLiveThinking();
                     ensureAssistantBubble();
@@ -1238,6 +1266,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onReasoningToken(String token) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     boolean follow = isFollowingTranscript();
                     appendLiveThinking(token);
                     if (follow) scrollToBottom();
@@ -1247,6 +1276,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onThinking(String thought) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     endLiveThinking();
                     setAgentState("Thinking...", UIUtils.WARNING_COLOR, true);
                     if (!serviceRecords) recordSessionMessageIfNew(new AgentMessage(AgentRole.THINKING, thought, null));
@@ -1258,6 +1288,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onToolCall(String toolName, String input) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     // Text streamed before a tool call stays in its own bubble; the next reply starts a new one
                     endLiveThinking();
                     currentAssistantMessagePanel = null;
@@ -1273,6 +1304,7 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onToolResult(String toolName, String output) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!visible()) return;
                     if (!serviceRecords) recordSessionMessageIfNew(new AgentMessage(AgentRole.TOOL, output, toolName));
                     appendToolResultBubble(toolName, output);
                     terminalPanel.appendAgentLog("TOOL RESULT: " + toolName, output);
@@ -1282,9 +1314,10 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onComplete(String fullResponse) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!current()) return;
                     endLiveThinking();
                     // The final text is authoritative (e.g. a stream that differs from the assembled answer)
-                    if (currentAssistantTextArea != null && fullResponse != null && !fullResponse.isBlank()
+                    if (visible() && currentAssistantTextArea != null && fullResponse != null && !fullResponse.isBlank()
                             && !currentAssistantTextArea.getText().equals(fullResponse)) {
                         currentAssistantTextArea.setText(fullResponse);
                     }
@@ -1302,9 +1335,10 @@ public class AIAgentPanel extends JPanel {
             @Override
             public void onError(Throwable throwable) {
                 SwingUtilities.invokeLater(() -> {
+                    if (!current()) return;
                     endLiveThinking();
                     setAgentState("Error", UIUtils.ERROR_COLOR, false);
-                    appendAssistantBubble("⚠️ **Error occurred:** " + throwable.getMessage());
+                    if (visible()) appendAssistantBubble("⚠️ **Error occurred:** " + throwable.getMessage());
                     terminalPanel.appendAgentLog("ERROR", throwable.toString());
                     updateTokenDisplay();
                 });
@@ -1313,6 +1347,7 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void cancelAgent() {
+        taskGeneration++; // whatever the stopped task still sends is ignored
         AgentManager.getInstance().getActiveService().cancelCurrentTask();
         endLiveThinking();
         setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);

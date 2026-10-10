@@ -113,6 +113,7 @@ public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
                 return fromWholeMessage(message, sink);
             }
             Assembler assembler = new Assembler(sink);
+            sink.onStreamOpened(resp.body());
             SseReader.read(resp.body(), sink::isCancelled, assembler::accept);
             return assembler.toResponse();
         } catch (IOException e) {

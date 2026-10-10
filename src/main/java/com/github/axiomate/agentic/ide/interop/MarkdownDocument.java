@@ -218,13 +218,20 @@ public final class MarkdownDocument {
      * An empty {@code blockBody} removes the block entirely.
      */
     public static String upsertManagedBlock(String existing, String blockBody) {
-        String base = existing == null ? "" : existing.replace("\r\n", "\n");
-        boolean remove = blockBody == null || blockBody.isBlank();
-        String block = remove ? "" : MANAGED_START + "\n" + blockBody.strip() + "\n" + MANAGED_END + "\n";
+        // Work in \n and write back in the file's own line endings (a Windows CLAUDE.md stays CRLF)
+        boolean crlf = existing != null && existing.contains("\r\n");
+        String result = upsertLf(existing == null ? "" : existing.replace("\r\n", "\n"), blockBody);
+        return crlf ? result.replace("\n", "\r\n") : result;
+    }
 
-        if (hasManagedBlock(base)) {
-            int start = base.indexOf(MANAGED_START);
-            int end = base.indexOf(MANAGED_END, start) + MANAGED_END.length();
+    private static String upsertLf(String base, String blockBody) {
+        boolean remove = blockBody == null || blockBody.isBlank();
+        String block = remove ? "" : MANAGED_START + "\n" + blockBody.strip().replace("\r\n", "\n") + "\n" + MANAGED_END + "\n";
+
+        int start = base.indexOf(MANAGED_START);
+        int endMarker = start < 0 ? -1 : base.indexOf(MANAGED_END, start);
+        if (start >= 0 && endMarker >= 0) { // only a start marker followed by an end marker is our block
+            int end = endMarker + MANAGED_END.length();
             String before = base.substring(0, start);
             String after = base.substring(end);
             if (after.startsWith("\n")) after = after.substring(1);

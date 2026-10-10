@@ -113,6 +113,20 @@ public class MemoryManager {
                 List.of("episode", "task-history")
         );
         addMemory(item);
+        pruneEpisodes();
+    }
+
+    /** Task episodes are kept for recent history only; without a cap every finished task added one forever. */
+    static final int MAX_TASK_EPISODES = 200;
+
+    private void pruneEpisodes() {
+        List<MemoryItem> episodes = memoryStore.getAllMemories().stream()
+                .filter(m -> m.getType() == MemoryType.EPISODIC && m.getTags().contains("task-history"))
+                .sorted(java.util.Comparator.comparing(m -> m.getTimestamp() == null ? "" : m.getTimestamp()))
+                .toList();
+        for (int i = 0; i < episodes.size() - MAX_TASK_EPISODES; i++) {
+            memoryStore.removeMemory(episodes.get(i).getId());
+        }
     }
 }
 

@@ -29,5 +29,9 @@ public interface StreamingChat {
         default boolean isCancelled() {
             return false;
         }
+
+        /** The response stream being read, so a stop can close it (blocking socket reads ignore interrupts). */
+        default void onStreamOpened(java.io.Closeable stream) {
+        }
     }
 }

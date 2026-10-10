@@ -17,27 +17,29 @@ public class AutonomousTaskRouter {
 
     public record RoutedModel(TaskType taskType, String providerId, String modelId, String rationale) {}
 
+    // Whole words only: substrings misfire ("latest" is not a test task, "prefix" not a bug fix, "trunk" not a command)
+    private static final java.util.regex.Pattern TESTS = java.util.regex.Pattern.compile(
+            "\\b(tests?|testing|testcases?|junit\\d*|asserts?|assertions?|mocks?|mocking|mockito)\\b");
+    private static final java.util.regex.Pattern REFACTOR = java.util.regex.Pattern.compile(
+            "\\b(refactor\\w*|moderni[sz]\\w*|clean[- ]?code|optimi[sz]\\w*|architect\\w*)\\b");
+    private static final java.util.regex.Pattern EXPLAIN = java.util.regex.Pattern.compile(
+            "\\b(explain\\w*|what does|walk ?through|how does|overview)\\b");
+    private static final java.util.regex.Pattern DEBUG = java.util.regex.Pattern.compile(
+            "\\b(bugs?|buggy|fix|fixes|fixing|errors?|\\w*exceptions?|diagnos\\w*|crash\\w*|stack ?trace)\\b");
+    private static final java.util.regex.Pattern TERMINAL = java.util.regex.Pattern.compile(
+            "\\b(run|runs|running|terminal|commands?|mcp|mvn|gradle|npm|shell|bash)\\b");
+
     public static TaskType classifyTask(String prompt) {
         if (prompt == null || prompt.isBlank()) {
             return TaskType.GENERAL;
         }
 
-        String lower = prompt.toLowerCase();
-        if (lower.contains("test") || lower.contains("junit") || lower.contains("assert") || lower.contains("mock")) {
-            return TaskType.GENERATE_TESTS;
-        }
-        if (lower.contains("refactor") || lower.contains("modernize") || lower.contains("clean code") || lower.contains("optimize") || lower.contains("architect")) {
-            return TaskType.REFACTOR;
-        }
-        if (lower.contains("explain") || lower.contains("what does") || lower.contains("walkthrough") || lower.contains("how does") || lower.contains("overview")) {
-            return TaskType.EXPLAIN;
-        }
-        if (lower.contains("bug") || lower.contains("fix") || lower.contains("error") || lower.contains("exception") || lower.contains("diagnose")) {
-            return TaskType.DEBUG_FIX;
-        }
-        if (lower.contains("run") || lower.contains("terminal") || lower.contains("command") || lower.contains("mcp") || lower.contains("mvn")) {
-            return TaskType.TERMINAL_TOOL;
-        }
+        String lower = prompt.toLowerCase(java.util.Locale.ROOT);
+        if (TESTS.matcher(lower).find()) return TaskType.GENERATE_TESTS;
+        if (REFACTOR.matcher(lower).find()) return TaskType.REFACTOR;
+        if (EXPLAIN.matcher(lower).find()) return TaskType.EXPLAIN;
+        if (DEBUG.matcher(lower).find()) return TaskType.DEBUG_FIX;
+        if (TERMINAL.matcher(lower).find()) return TaskType.TERMINAL_TOOL;
         return TaskType.GENERAL;
     }
 

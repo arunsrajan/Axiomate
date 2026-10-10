@@ -37,6 +37,8 @@ public class EditorPanel extends JPanel {
     private final Map<Component, File> tabFileMap = new HashMap<>();
     private final Map<Component, RSyntaxTextArea> tabEditorMap = new HashMap<>();
     private final Map<Component, Boolean> dirtyMap = new HashMap<>();
+    /** Encoding each file was read with, so it is saved back the same way (UTF-8 unless the file is not). */
+    private final Map<Component, java.nio.charset.Charset> charsetMap = new HashMap<>();
     private java.util.function.Consumer<File> imageAttachHandler = f -> { };
 
     public EditorPanel() {
@@ -81,9 +83,12 @@ public class EditorPanel extends JPanel {
             for (int i = 0; i < tabbedPane.getTabCount(); i++) {
                 Component c = tabbedPane.getComponentAt(i);
                 File openFile = tabFileMap.get(c);
-                if (openFile != null && openFile.getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath())) {
+                if (openFile != null && sameFile(openFile, file)) {
                     RSyntaxTextArea area = tabEditorMap.get(c);
                     if (area != null && !area.getText().equals(newContent)) {
+                        if (Boolean.TRUE.equals(dirtyMap.get(c)) && !confirmReload(file)) {
+                            return; // keep the user's unsaved edits; saving them will replace the agent's version
+                        }
                         int pos = Math.min(area.getCaretPosition(), newContent.length());
                         area.setText(newContent);
                         area.setCaretPosition(pos);
@@ -95,6 +100,30 @@ public class EditorPanel extends JPanel {
         });
     }
 
+    /** Whether the agent's version replaces unsaved edits in the editor. */
+    private boolean confirmReload(File file) {
+        if (GraphicsEnvironment.isHeadless()) return false;
+        return JOptionPane.showConfirmDialog(this,
+                file.getName() + " was changed by the agent, and you have unsaved edits in it.\n\n"
+                        + "Load the agent's version and discard your edits?",
+                "File changed", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.YES_OPTION;
+    }
+
+    /**
+     * Whether two paths are the same file: by identity when both exist (so "src/../A.java" matches "A.java"),
+     * otherwise by normalized path, ignoring case only where the file system does.
+     */
+    static boolean sameFile(File a, File b) {
+        try {
+            if (a.exists() && b.exists()) return Files.isSameFile(a.toPath(), b.toPath());
+        } catch (IOException ignored) {
+            // fall through to path comparison
+        }
+        String pa = a.toPath().toAbsolutePath().normalize().toString();
+        String pb = b.toPath().toAbsolutePath().normalize().toString();
+        return com.github.axiomate.agentic.ide.util.OSUtils.isWindows() ? pa.equalsIgnoreCase(pb) : pa.equals(pb);
+    }
+
     public void openFile(File file) {
         if (file == null || !file.exists() || file.isDirectory()) {
             return;
@@ -103,7 +132,7 @@ public class EditorPanel extends JPanel {
         for (int i = 0; i < tabbedPane.getTabCount(); i++) {
             Component c = tabbedPane.getComponentAt(i);
             File open = tabFileMap.get(c);
-            if (open != null && open.equals(file)) {
+            if (open != null && sameFile(open, file)) {
                 tabbedPane.setSelectedIndex(i);
                 return;
             }
@@ -116,8 +145,22 @@ public class EditorPanel extends JPanel {
         }
 
         try {
-            String content = Files.readString(file.toPath());
-            createTab(file.getName(), content, file);
+            byte[] bytes = Files.readAllBytes(file.toPath());
+            for (int i = 0; i < Math.min(bytes.length, 8_000); i++) {
+                if (bytes[i] == 0) {
+                    log.info("Not opening binary file {}", file);
+                    if (!GraphicsEnvironment.isHeadless()) {
+                        JOptionPane.showMessageDialog(this, file.getName() + " is a binary file and cannot be edited as text.",
+                                "Binary file", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                    return;
+                }
+            }
+            java.nio.charset.Charset charset = detectCharset(bytes);
+            createTab(file.getName(), new String(bytes, charset), file);
+            for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+                if (file.equals(tabFileMap.get(tabbedPane.getComponentAt(i)))) charsetMap.put(tabbedPane.getComponentAt(i), charset);
+            }
             ProjectManager.getInstance().setActiveFile(file);
         } catch (IOException e) {
             log.error("Failed to read file: {}", file.getAbsolutePath(), e);
@@ -170,6 +213,19 @@ public class EditorPanel extends JPanel {
         int index = tabbedPane.indexOfComponent(view);
         tabbedPane.setTabComponentAt(index, createTabHeader(file.getName(), view));
         tabbedPane.setSelectedComponent(view);
+    }
+
+    /** UTF-8 when the bytes are valid UTF-8; otherwise Latin-1, which reads and writes every byte back unchanged. */
+    static java.nio.charset.Charset detectCharset(byte[] bytes) {
+        try {
+            java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(bytes));
+            return java.nio.charset.StandardCharsets.UTF_8;
+        } catch (java.nio.charset.CharacterCodingException e) {
+            return java.nio.charset.StandardCharsets.ISO_8859_1;
+        }
     }
 
     public void newFile(String title, String initialContent) {
@@ -281,6 +337,7 @@ public class EditorPanel extends JPanel {
         tabFileMap.remove(tabComponent);
         tabEditorMap.remove(tabComponent);
         dirtyMap.remove(tabComponent);
+        charsetMap.remove(tabComponent);
         tabbedPane.remove(tabComponent);
     }
 
@@ -321,7 +378,8 @@ public class EditorPanel extends JPanel {
         }
 
         try {
-            Files.writeString(file.toPath(), editor.getText());
+            Files.writeString(file.toPath(), editor.getText(),
+                    charsetMap.getOrDefault(tabComponent, java.nio.charset.StandardCharsets.UTF_8));
             markDirty(tabComponent, false);
             ProjectManager.getInstance().setActiveFile(file);
             log.info("Saved file {}", file.getAbsolutePath());
@@ -360,7 +418,7 @@ public class EditorPanel extends JPanel {
         for (int i = 0; i < tabbedPane.getTabCount(); i++) {
             Component c = tabbedPane.getComponentAt(i);
             File open = tabFileMap.get(c);
-            if (open != null && open.getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath())) {
+            if (open != null && sameFile(open, file)) {
                 tabbedPane.setSelectedIndex(i);
                 ProjectManager.getInstance().setActiveFile(open);
                 return true;
@@ -369,11 +427,47 @@ public class EditorPanel extends JPanel {
         return false;
     }
 
+    /** Files open in tabs with unsaved edits. */
+    public List<String> getUnsavedFileNames() {
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            Component c = tabbedPane.getComponentAt(i);
+            if (Boolean.TRUE.equals(dirtyMap.get(c))) {
+                File f = tabFileMap.get(c);
+                names.add(f != null ? f.getName() : tabbedPane.getTitleAt(i));
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Before tabs are closed in bulk (switching project, closing it, quitting): offers to save unsaved edits.
+     *
+     * @return false when the user cancels, or a save fails, so nothing should be closed
+     */
+    public boolean confirmCloseAll() {
+        List<String> unsaved = getUnsavedFileNames();
+        if (unsaved.isEmpty() || GraphicsEnvironment.isHeadless()) return true;
+        Object[] options = {"Save All", "Don't Save", "Cancel"};
+        int choice = JOptionPane.showOptionDialog(this,
+                "These files have unsaved changes:\n  " + String.join("\n  ", unsaved) + "\n\nSave them first?",
+                "Unsaved Changes", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[0]);
+        if (choice == 0) {
+            for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+                Component c = tabbedPane.getComponentAt(i);
+                if (Boolean.TRUE.equals(dirtyMap.get(c)) && !saveTab(c)) return false;
+            }
+            return true;
+        }
+        return choice == 1;
+    }
+
     public void closeAllTabs() {
         tabbedPane.removeAll();
         tabFileMap.clear();
         tabEditorMap.clear();
         dirtyMap.clear();
+        charsetMap.clear();
         ProjectManager.getInstance().setActiveFile(null);
     }
 

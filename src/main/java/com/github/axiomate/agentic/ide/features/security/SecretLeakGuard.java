@@ -17,14 +17,20 @@ public class SecretLeakGuard {
     private static final Logger log = LoggerFactory.getLogger(SecretLeakGuard.class);
     private static SecretLeakGuard instance;
 
+    /**
+     * Token-shaped secrets must start at a token boundary: without it "task-scheduler-configuration" matched the
+     * OpenAI pattern ("sk-scheduler-...") and ordinary identifiers were masked in prompts and files.
+     */
+    private static final String START = "(?<![A-Za-z0-9_-])";
+
     private static final List<SecretPattern> SECRET_PATTERNS = List.of(
-            new SecretPattern("OPENAI_KEY", Pattern.compile("(?i)sk-(?:proj-)?[a-zA-Z0-9_\\-]{20,}")),
-            new SecretPattern("ANTHROPIC_KEY", Pattern.compile("(?i)sk-ant-[a-zA-Z0-9_-]{20,}")),
-            new SecretPattern("AWS_ACCESS_KEY", Pattern.compile("(?i)AKIA[0-9A-Z]{16}")),
-            new SecretPattern("GITHUB_PAT", Pattern.compile("(?i)ghp_[a-zA-Z0-9]{36}")),
+            new SecretPattern("ANTHROPIC_KEY", Pattern.compile(START + "sk-ant-[a-zA-Z0-9_-]{20,}")),
+            new SecretPattern("OPENAI_KEY", Pattern.compile(START + "sk-(?!ant-)(?:proj-)?[a-zA-Z0-9_\\-]{20,}")),
+            new SecretPattern("AWS_ACCESS_KEY", Pattern.compile(START + "AKIA[0-9A-Z]{16}(?![A-Za-z0-9])")),
+            new SecretPattern("GITHUB_PAT", Pattern.compile(START + "gh[pousr]_[a-zA-Z0-9]{36,}")),
             new SecretPattern("GENERIC_API_KEY", Pattern.compile("(?i)(?:api_key|apikey|secret_key|private_key)\\s*[:=]\\s*['\"][a-zA-Z0-9_\\-]{16,}['\"]")),
             new SecretPattern("RSA_PRIVATE_KEY", Pattern.compile("-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-            new SecretPattern("JWT_TOKEN", Pattern.compile("ey[A-Za-z0-9_-]{10,}\\.ey[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"))
+            new SecretPattern("JWT_TOKEN", Pattern.compile(START + "ey[A-Za-z0-9_-]{10,}\\.ey[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"))
     );
 
     private record SecretPattern(String type, Pattern pattern) {}

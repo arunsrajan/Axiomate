@@ -30,7 +30,7 @@ public class ConfigManager {
     private final ObjectMapper objectMapper;
     private final Path configPath;
     private IdeConfig config;
-    private final List<Consumer<IdeConfig>> listeners = new ArrayList<>();
+    private final List<Consumer<IdeConfig>> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public static Path getAppDirectory() {
         String userHome = System.getProperty("user.home", ".");
@@ -105,10 +105,11 @@ public class ConfigManager {
         return defaultConfig;
     }
 
-    public void saveConfig(IdeConfig newConfig) {
+    public synchronized void saveConfig(IdeConfig newConfig) {
         this.config = newConfig;
         try {
-            objectMapper.writeValue(configPath.toFile(), config);
+            // Holds API keys: owner-only, and never left half-written
+            AtomicFiles.writeJson(objectMapper, configPath, config, true);
             log.info("Saved IDE config to {}", configPath);
             notifyListeners();
         } catch (IOException e) {
