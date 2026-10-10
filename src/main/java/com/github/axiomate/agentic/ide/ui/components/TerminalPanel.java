@@ -28,6 +28,7 @@ public class TerminalPanel extends JPanel {
     private final JTextArea buildArea;
     private final JTextField commandInput;
     private final MemoryPanel memoryPanel;
+    private final SearchPanel searchPanel;
     /** Command running in the terminal tab, if any (Ctrl+C or Stop ends it). */
     private volatile Process runningProcess;
     /** Set from submit until the command ends, so a quick second Enter cannot start another one. */
@@ -123,6 +124,8 @@ public class TerminalPanel extends JPanel {
         tabbedPane.addTab("Agentic AI Memory", memoryPanel);
         tabbedPane.addTab("Agent Logs & Tool Traces", agentTab);
         tabbedPane.addTab("Build & Run", buildTab);
+        searchPanel = new SearchPanel();
+        tabbedPane.addTab("Search", searchPanel);
 
         add(tabbedPane, BorderLayout.CENTER);
         // A new project starts the terminal in its own folder, not where a "cd" in the previous one left it
@@ -154,6 +157,16 @@ public class TerminalPanel extends JPanel {
 
     public void selectMemoryTab() {
         tabbedPane.setSelectedIndex(1);
+    }
+
+    public SearchPanel getSearchPanel() {
+        return searchPanel;
+    }
+
+    /** Find in Files: shows the Search tab and searches {@code initialQuery} when one is given. */
+    public void showSearch(String initialQuery) {
+        tabbedPane.setSelectedComponent(searchPanel);
+        searchPanel.focusSearch(initialQuery);
     }
 
     public void appendTerminal(String text) {

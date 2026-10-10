@@ -40,10 +40,12 @@ public class EditorPanel extends JPanel {
     /** Encoding each file was read with, so it is saved back the same way (UTF-8 unless the file is not). */
     private final Map<Component, java.nio.charset.Charset> charsetMap = new HashMap<>();
     private java.util.function.Consumer<File> imageAttachHandler = f -> { };
+    private final FindReplaceBar findBar;
 
     public EditorPanel() {
         setLayout(new BorderLayout());
         tabbedPane = new JTabbedPane(JTabbedPane.TOP, JTabbedPane.SCROLL_TAB_LAYOUT);
+        findBar = new FindReplaceBar(this::getActiveEditor);
 
         tabbedPane.addChangeListener(e -> {
             Component selected = tabbedPane.getSelectedComponent();
@@ -53,8 +55,10 @@ public class EditorPanel extends JPanel {
             } else {
                 ProjectManager.getInstance().setActiveFile(null);
             }
+            findBar.refresh();
         });
 
+        add(findBar, BorderLayout.NORTH);
         add(tabbedPane, BorderLayout.CENTER);
         ProjectManager.getInstance().addFileContentListener(this::reloadOrUpdateFile);
         UIUtils.addThemeListener(() -> tabEditorMap.values().forEach(this::applyEditorTheme));
@@ -388,6 +392,85 @@ public class EditorPanel extends JPanel {
             log.error("Failed to save file: {}", file.getAbsolutePath(), e);
             JOptionPane.showMessageDialog(this, "Save failed: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             return false;
+        }
+    }
+
+    /** Opens the find bar (Ctrl+F) or the find-and-replace bar (Ctrl+H) for the active editor. */
+    public void showFindBar(boolean replace) {
+        if (getActiveEditor() != null) findBar.open(replace);
+    }
+
+    public FindReplaceBar getFindBar() {
+        return findBar;
+    }
+
+    /** F3: the next match of the find bar's query, opening the bar first if it is closed. */
+    public void findNext() {
+        if (!findBar.isVisible()) showFindBar(false);
+        else findBar.findNext();
+    }
+
+    public void findPrevious() {
+        if (!findBar.isVisible()) showFindBar(false);
+        else findBar.findPrevious();
+    }
+
+    /**
+     * Moves the active editor's caret to a 1-based line (clamped to the file) and 0-based column.
+     *
+     * @return false when no text editor is active
+     */
+    public boolean goToLine(int line, int column) {
+        RSyntaxTextArea ed = getActiveEditor();
+        if (ed == null) return false;
+        try {
+            int l = Math.max(1, Math.min(line, ed.getLineCount())) - 1;
+            int start = ed.getLineStartOffset(l);
+            int end = ed.getLineEndOffset(l);
+            int lineLength = Math.max(0, end - start - (l < ed.getLineCount() - 1 ? 1 : 0));
+            ed.setCaretPosition(start + Math.max(0, Math.min(column, lineLength)));
+            centerCaret(ed);
+            ed.requestFocusInWindow();
+            return true;
+        } catch (javax.swing.text.BadLocationException e) {
+            return false;
+        }
+    }
+
+    /** Opens {@code file} and selects {@code length} characters at the 1-based line and 0-based column. */
+    public void openFileAt(File file, int line, int column, int length) {
+        openFile(file);
+        File active = getActiveFile();
+        if (file == null || active == null || !sameFile(file, active)) return;
+        if (goToLine(line, column) && length > 0) {
+            RSyntaxTextArea ed = getActiveEditor();
+            ed.moveCaretPosition(Math.min(ed.getDocument().getLength(), ed.getCaretPosition() + length));
+        }
+    }
+
+    /** Parses "42" or "42:7" (line, 1-based column) into {line, column0}; null when it is neither. */
+    public static int[] parseLineColumn(String text) {
+        if (text == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\s*(\\d+)\\s*(?:[:,]\\s*(\\d+)\\s*)?").matcher(text);
+        if (!m.matches()) return null;
+        try {
+            int line = Integer.parseInt(m.group(1));
+            int col = m.group(2) != null ? Math.max(0, Integer.parseInt(m.group(2)) - 1) : 0;
+            return line < 1 ? null : new int[]{line, col};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static void centerCaret(RSyntaxTextArea ed) {
+        if (!(SwingUtilities.getAncestorOfClass(JViewport.class, ed) instanceof JViewport vp)) return;
+        try {
+            Rectangle r = ed.modelToView2D(ed.getCaretPosition()).getBounds();
+            int y = Math.max(0, r.y - (vp.getExtentSize().height - r.height) / 2);
+            int maxY = Math.max(0, ed.getHeight() - vp.getExtentSize().height);
+            vp.setViewPosition(new Point(vp.getViewPosition().x, Math.min(y, maxY)));
+        } catch (Exception ignored) {
+            // not laid out yet: the caret is still placed
         }
     }
 

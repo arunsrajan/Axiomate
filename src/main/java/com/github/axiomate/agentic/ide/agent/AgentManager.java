@@ -40,6 +40,7 @@ public class AgentManager {
         registerTool(refactorTool);
         registerTool(memoryTool);
         registerTool(new ViewImageTool());
+        registerTool(new SearchFilesTool());
 
         updateActiveService(ConfigManager.getInstance().getConfig());
 

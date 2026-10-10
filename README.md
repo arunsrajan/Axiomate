@@ -63,6 +63,7 @@ A modern, high-performance Java desktop IDE built under the package **`com.githu
   - `terminal`: Execute shell commands (`mvn`, `git`, `javac`) with stdout/stderr inspection.
   - `code_refactor`: Automatic code modernization and targeted patch application.
   - `agent_memory`: Store, recall, and search agentic memories.
+  - `search_files`: Search the project for text or a regex (grep-style `path:line: text` results, include globs, sub-folder).
   - `mcp_<server>_<tool>`: Dynamically discovered tools from external MCP servers.
 - Executes full multi-turn loop (`AiMessage.hasToolExecutionRequests()`) until final solution.
 
@@ -229,6 +230,14 @@ Axiomate reads and writes the native files of other coding agents, so your rules
 - **Providers**: Anthropic and every OpenAI-compatible server (OpenAI, DeepSeek, Ollama, LM Studio, vLLM, OpenRouter) stream over server-sent events, including reasoning (`reasoning_content`, Anthropic thinking, inline `<think>` tags) and tool calls. Gemini replies arrive in one piece.
 - **Same results as before**: streamed replies are assembled into exactly the message a non-streaming call returns, so tool calls, reasoning replay, token usage and truncation notes are unchanged. Servers that ignore `stream` or reject `stream_options` are handled automatically.
 - **Controls**: Esc or Stop ends the stream; the transcript only auto-scrolls while you are at the bottom. Turn streaming off in **Settings → General → Streaming**.
+
+### 19. 🔎 Search & Navigation
+- **Find / Replace** (`Ctrl+F` / `Ctrl+H`): a bar above the editor with *Match case*, *Whole word* and *Regex* toggles, every match highlighted and a "3 of 12" position. Enter / Shift+Enter or `F3` / `Shift+F3` step through matches (wrapping around); *Replace* and *Replace All* (one undo step; `$1` group references and `\n` in regex mode).
+- **Find in Files** (`Ctrl+Shift+F`): the bottom panel's **Search** tab searches the open project, with the same toggles and an optional file filter (`*.java`, `src/**/*.{ts,tsx}`). Results are grouped by file; double-click or Enter opens the file with the match selected. Build output, dependency and VCS folders (`target`, `build`, `node_modules`, `.git`…), binary files and files over 2 MB are skipped.
+- **Go to File** (`Ctrl+P`): fuzzy-find any project file by name or path; `App.java:42` opens it at line 42, `:42` jumps within the current file.
+- **Go to Line** (`Ctrl+G`): `42` or `42:7` (line and column).
+- **Prompt history**: `Ctrl+↑` / `Ctrl+↓` in the agent chat (or `↑` in an empty prompt box) recall earlier prompts like a shell history; what you were typing comes back after the newest one. Prompts of the open session are included after a restart.
+- **`search_files` agent tool**: the agent finds code by content — `{"query": "class UserService", "include": "*.java"}` — instead of listing folders and reading files one by one.
 
 ## 🚀 Quick Start
 

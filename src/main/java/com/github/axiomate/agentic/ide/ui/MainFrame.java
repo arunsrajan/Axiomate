@@ -85,6 +85,7 @@ public class MainFrame extends JFrame implements IdeActions {
         editorPanel = new EditorPanel();
         terminalPanel = new TerminalPanel();
         terminalPanel.getMemoryPanel().setIdeActions(this);
+        terminalPanel.getSearchPanel().setOpenHandler(editorPanel::openFileAt);
         aiAgentPanel = new AIAgentPanel(editorPanel::getActiveText, terminalPanel);
         aiAgentPanel.setIdeActions(this);
 
