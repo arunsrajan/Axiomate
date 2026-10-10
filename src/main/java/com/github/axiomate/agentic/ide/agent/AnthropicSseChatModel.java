@@ -102,7 +102,7 @@ public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
                 try (InputStream in = resp.body()) {
                     body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
                 }
-                throw new RuntimeException("HTTP " + resp.statusCode() + " from " + baseUrl + ": " + body);
+                throw new ProviderException("HTTP " + resp.statusCode() + " from " + baseUrl + ": " + body);
             }
             if (!resp.headers().firstValue("Content-Type").orElse("").contains("event-stream")) {
                 // An Anthropic-compatible server that ignored "stream": read the whole message instead
@@ -117,10 +117,10 @@ public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
             SseReader.read(resp.body(), sink::isCancelled, assembler::accept);
             return assembler.toResponse();
         } catch (IOException e) {
-            throw new RuntimeException("Request to " + baseUrl + " failed: " + e.getMessage(), e);
+            throw new ProviderException("Request to " + baseUrl + " failed: " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new RuntimeException("Request to " + baseUrl + " was interrupted", e);
+            throw new ProviderException("Request to " + baseUrl + " was interrupted", e);
         }
     }
 
@@ -219,7 +219,7 @@ public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
                     if (usage.has("output_tokens")) outputTokens = usage.path("output_tokens").asInt(outputTokens);
                     if (usage.has("input_tokens")) inputTokens = usage.path("input_tokens").asInt(inputTokens);
                 }
-                case "error" -> throw new RuntimeException("Anthropic stream error: "
+                case "error" -> throw new ProviderException("Anthropic stream error: "
                         + event.path("error").path("message").asText(event.path("error").toString()));
                 default -> {
                 }

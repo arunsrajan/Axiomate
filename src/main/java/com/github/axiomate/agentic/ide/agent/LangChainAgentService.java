@@ -510,7 +510,13 @@ public class LangChainAgentService implements AIAgentService {
                     log.info("Agent task stopped by the user");
                     return;
                 }
-                log.error("Failed to execute LangChainAgent task", e);
+                if (isProviderFailure(e)) {
+                    // The provider refused or failed the request; the user sees why in the chat
+                    log.warn("Agent task failed: {} [{}]: {}", activeProviderName, activeTargetModel, e.getMessage());
+                    log.debug("Provider failure", e);
+                } else {
+                    log.error("Failed to execute LangChainAgent task", e);
+                }
                 // Record assistant error message in the task's session so it does not end on an unanswered prompt
                 try {
                     if (session != null) {
@@ -527,6 +533,14 @@ public class LangChainAgentService implements AIAgentService {
                 VisionSupport.clearThreadState();
             }
         });
+    }
+
+    static boolean isProviderFailure(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof ProviderException) return true;
+            if (c.getCause() == c) break;
+        }
+        return false;
     }
 
     private List<ToolSpecification> buildToolSpecifications() {
