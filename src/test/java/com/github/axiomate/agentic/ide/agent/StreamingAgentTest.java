@@ -389,6 +389,8 @@ class StreamingAgentTest {
         assertTrue(rec.done.await(60, TimeUnit.SECONDS));
         String reported = rec.error.get() != null ? String.valueOf(rec.error.get().getMessage()) : rec.result.get();
         assertTrue(reported != null && reported.contains("Overloaded"), String.valueOf(reported));
+        assertTrue(LangChainAgentService.isProviderFailure(rec.error.get()), "a provider failure, logged without a stack trace");
+        assertFalse(LangChainAgentService.isProviderFailure(new NullPointerException()), "IDE bugs keep their stack trace");
     }
 
     // ---------------------------------------------------------------- SSE reader

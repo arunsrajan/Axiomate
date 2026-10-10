@@ -116,12 +116,12 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingCh
                 throw e;
             }
         } catch (HttpError e) {
-            throw new RuntimeException("HTTP " + e.status + " from " + baseUrl + ": " + e.body, e);
+            throw new ProviderException("HTTP " + e.status + " from " + baseUrl + ": " + e.body, e);
         } catch (IOException e) {
-            throw new RuntimeException("Request to " + baseUrl + " failed: " + e.getMessage(), e);
+            throw new ProviderException("Request to " + baseUrl + " failed: " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new RuntimeException("Request to " + baseUrl + " was interrupted", e);
+            throw new ProviderException("Request to " + baseUrl + " was interrupted", e);
         }
     }
 
