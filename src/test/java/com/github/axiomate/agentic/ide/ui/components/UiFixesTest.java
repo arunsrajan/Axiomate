@@ -138,6 +138,42 @@ class UiFixesTest {
         waitFor(() -> console.getText().contains("after-stop"), 10_000);
     }
 
+    @Test
+    @DisplayName("Switching sessions in the chat panel keeps each session's provider and model")
+    void switchingSessionsKeepsTheirModels() throws Exception {
+        var sm = com.github.axiomate.agentic.ide.agent.session.SessionManager.getInstance();
+        var gemini = sm.createSession("Gemini work", "GEMINI", "gemini-2.0-flash", false);
+        var openai = sm.createSession("OpenAI work", "OPENAI", "gpt-4o", false);
+        AIAgentPanel[] holder = new AIAgentPanel[1];
+        SwingUtilities.invokeAndWait(() -> holder[0] = new AIAgentPanel(() -> "", new TerminalPanel()));
+        flushEdt();
+
+        SwingUtilities.invokeAndWait(() -> {
+            JComboBox<?> selector = sessionSelector(holder[0]);
+            selector.setSelectedIndex(sm.getSessions().indexOf(gemini));
+        });
+        flushEdt();
+
+        assertEquals(gemini.getId(), sm.getActiveSession().getId());
+        assertEquals("GEMINI", gemini.getProviderId());
+        assertEquals("gemini-2.0-flash", gemini.getModelId());
+        assertEquals("OPENAI", openai.getProviderId());
+        assertEquals("gpt-4o", openai.getModelId());
+    }
+
+    /** The chat panel's session dropdown: the combo whose entries are the session names. */
+    private static JComboBox<?> sessionSelector(Container c) {
+        for (Component k : c.getComponents()) {
+            if (k instanceof JComboBox<?> box && box.getItemCount() > 0
+                    && String.valueOf(box.getItemAt(0)).contains("(")) return box;
+            if (k instanceof Container cc) {
+                JComboBox<?> found = sessionSelector(cc);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
     private static void waitFor(java.util.function.BooleanSupplier cond, long ms) throws Exception {
         long end = System.currentTimeMillis() + ms;
         while (System.currentTimeMillis() < end) {

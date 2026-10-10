@@ -570,7 +570,7 @@ public class AIAgentPanel extends JPanel {
                 reloadChatFromSession();
             }
         }));
-        ConfigManager.getInstance().addListener(updatedCfg -> refreshSessionUi());
+        ConfigManager.getInstance().addListener(updatedCfg -> UIUtils.onEdt(this::refreshSessionUi));
         ProjectManager.getInstance().addProjectChangeListener(dir -> SwingUtilities.invokeLater(this::updateProjectBranch));
         SessionManager.getInstance().addSessionChangeListener(() -> SwingUtilities.invokeLater(this::updateProjectBranch));
         // Branch switches made outside the IDE (terminal, other tools) show up within a few seconds
@@ -772,7 +772,17 @@ public class AIAgentPanel extends JPanel {
 
     private void syncControlsToSession(AgentSession session) {
         if (session == null) return;
+        // Refilling the combos auto-selects their first item; those events must not rewrite the session's model
+        boolean wasUpdating = updatingSessionUi;
+        updatingSessionUi = true;
+        try {
+            syncControls(session);
+        } finally {
+            updatingSessionUi = wasUpdating;
+        }
+    }
 
+    private void syncControls(AgentSession session) {
         IdeConfig config = ConfigManager.getInstance().getConfig();
         if (config.getProvider(session.getProviderId()) == null && !config.getProviders().isEmpty()) {
             String fallbackId = config.getProviders().containsKey(config.getActiveProviderId())

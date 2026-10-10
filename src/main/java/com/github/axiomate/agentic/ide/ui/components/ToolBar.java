@@ -137,7 +137,7 @@ public class ToolBar extends JToolBar {
             }
         });
 
-        ConfigManager.getInstance().addListener(this::refreshProviderCombo);
+        ConfigManager.getInstance().addListener(cfg -> UIUtils.onEdt(() -> refreshProviderCombo(cfg)));
 
         add(provLabel);
         add(providerCombo);

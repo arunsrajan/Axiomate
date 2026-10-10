@@ -65,7 +65,7 @@ public class StatusBar extends JPanel {
 
         ProjectManager.getInstance().addActiveFileChangeListener(this::updateActiveFile);
         ProjectManager.getInstance().addProjectChangeListener(dir -> SwingUtilities.invokeLater(this::updateProject));
-        ConfigManager.getInstance().addListener(this::updateConfig);
+        ConfigManager.getInstance().addListener(cfg -> UIUtils.onEdt(() -> updateConfig(cfg)));
 
         MemoryManager.getInstance().addChangeListener(this::updateMemoryCount);
         updateMemoryCount();
