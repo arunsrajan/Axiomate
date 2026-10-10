@@ -82,11 +82,15 @@ class AgentMemoryTest {
     void testRecordEpisode() {
         MemoryManager manager = MemoryManager.getInstance();
         int initialSize = manager.getMemoryStore().getAllMemories().size();
+        long initialEpisodes = manager.getMemoryStore().getAllMemories().stream()
+                .filter(m -> m.getTags().contains("task-history")).count();
 
         manager.recordEpisode("Refactor Calculator", "Successfully added power and squareRoot methods");
 
         int newSize = manager.getMemoryStore().getAllMemories().size();
-        assertEquals(initialSize + 1, newSize, "Memory store should have 1 more episodic memory");
+        // Other tests share the singleton; once episodes hit the cap the oldest one is pruned
+        int expected = initialEpisodes < MemoryManager.MAX_TASK_EPISODES ? initialSize + 1 : initialSize;
+        assertEquals(expected, newSize, "Memory store should have 1 more episodic memory unless at the cap");
 
         List<MemoryItem> episodes = manager.getMemoryStore().getMemoriesByType(MemoryType.EPISODIC);
         assertFalse(episodes.isEmpty());

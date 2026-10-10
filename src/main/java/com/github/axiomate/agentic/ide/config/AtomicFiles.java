@@ -55,6 +55,15 @@ public final class AtomicFiles {
         }
     }
 
+    /** One-line reason a state file could not be read, for a log message that does not need a stack trace. */
+    public static String readFailureReason(Exception e) {
+        String msg = e instanceof com.fasterxml.jackson.core.JsonProcessingException jpe
+                ? jpe.getOriginalMessage() : e.getMessage();
+        if (msg == null) return e.getClass().getSimpleName();
+        int nl = msg.indexOf('\n');
+        return nl < 0 ? msg : msg.substring(0, nl);
+    }
+
     static void restrictToOwner(Path p) {
         try {
             Files.setPosixFilePermissions(p, PosixFilePermissions.fromString("rw-------"));

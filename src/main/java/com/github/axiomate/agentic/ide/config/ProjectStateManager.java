@@ -55,7 +55,9 @@ public class ProjectStateManager {
             } catch (Exception e) {
                 // Keep the unreadable file: starting fresh must not destroy every project's sessions
                 Path backup = AtomicFiles.backupUnreadable(stateFilePath);
-                log.error("Failed to read workspace state from {}; kept a copy at {} and starting fresh", stateFilePath, backup, e);
+                log.warn("Could not read workspace state from {} ({}); kept a copy at {} and starting fresh",
+                        stateFilePath, AtomicFiles.readFailureReason(e), backup);
+                log.debug("Workspace state read failure", e);
             }
         }
         WorkspaceState state = new WorkspaceState();

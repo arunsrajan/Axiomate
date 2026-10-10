@@ -62,7 +62,9 @@ public class McpManager {
             } catch (Exception e) {
                 // Keep the unreadable file: the defaults saved below must not replace the user's servers
                 Path backup = com.github.axiomate.agentic.ide.config.AtomicFiles.backupUnreadable(configPath);
-                log.error("Failed to load MCP server config from {}; kept a copy at {}", configPath, backup, e);
+                log.warn("Could not read MCP server config from {} ({}); kept a copy at {}",
+                        configPath, com.github.axiomate.agentic.ide.config.AtomicFiles.readFailureReason(e), backup);
+                log.debug("MCP server config read failure", e);
             }
         }
 

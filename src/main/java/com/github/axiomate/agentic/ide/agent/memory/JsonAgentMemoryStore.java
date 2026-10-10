@@ -57,7 +57,9 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
             } catch (Exception e) {
                 // Keep the unreadable file: the defaults saved below must not destroy the user's memories
                 Path backup = com.github.axiomate.agentic.ide.config.AtomicFiles.backupUnreadable(storagePath);
-                log.error("Failed to load agent memories from {}; kept a copy at {}", storagePath, backup, e);
+                log.warn("Could not read agent memories from {} ({}); kept a copy at {}",
+                        storagePath, com.github.axiomate.agentic.ide.config.AtomicFiles.readFailureReason(e), backup);
+                log.debug("Agent memory read failure", e);
             }
         }
 
