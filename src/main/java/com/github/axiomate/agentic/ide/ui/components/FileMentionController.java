@@ -347,7 +347,7 @@ public class FileMentionController {
         String trigger = Pattern.quote(config.getMentionTriggerChar());
         Matcher matcher = Pattern.compile("(?:^|\\s)" + trigger + "([\\w\\.\\-\\/\\\\]+)").matcher(prompt);
         while (matcher.find()) {
-            File f = resolveMentionedFile(projectDir, matcher.group(1).trim().replace('\\', '/'));
+            File f = resolveMentionedFile(projectDir, mentionToken(matcher.group(1)));
             if (f != null && f.isFile() && com.github.axiomate.agentic.ide.agent.vision.VisionSupport.isImageFile(f)
                     && !images.contains(f)) {
                 images.add(f);
@@ -368,9 +368,9 @@ public class FileMentionController {
 
         Set<String> matchedTokens = new LinkedHashSet<>();
         while (matcher.find()) {
-            String token = matcher.group(1);
-            if (token != null && !token.isBlank()) {
-                matchedTokens.add(token.trim().replace('\\', '/'));
+            String token = matcher.group(1) == null ? "" : mentionToken(matcher.group(1));
+            if (!token.isBlank()) {
+                matchedTokens.add(token);
             }
         }
 
@@ -386,7 +386,8 @@ public class FileMentionController {
             }
             if (targetFile != null && targetFile.exists() && targetFile.isFile()) {
                 try {
-                    String content = Files.readString(targetFile.toPath());
+                    // Lenient decoding: a Latin-1 file must still be attached, not silently skipped
+                    String content = new String(Files.readAllBytes(targetFile.toPath()), java.nio.charset.StandardCharsets.UTF_8);
                     if (content.length() > MAX_FILE_CHARS) {
                         content = content.substring(0, MAX_FILE_CHARS) + "\n... [Truncated due to context limit]";
                     }
@@ -401,6 +402,13 @@ public class FileMentionController {
         }
 
         return contextBuilder.toString().trim();
+    }
+
+    /** A mention as typed, without the full stop of a sentence that ends with it ("Explain @README.md."). */
+    static String mentionToken(String raw) {
+        String t = raw.trim().replace('\\', '/');
+        while (t.endsWith(".")) t = t.substring(0, t.length() - 1);
+        return t;
     }
 
     public static File resolveMentionedFile(File projectDir, String token) {

@@ -114,19 +114,15 @@ public class ExecutionSandbox {
         }
 
         try {
-            String rootCanon = workspaceRoot.getCanonicalPath().replace('\\', '/').toLowerCase();
-            String targetCanon = targetFile.getCanonicalPath().replace('\\', '/').toLowerCase();
-
-            if (targetCanon.startsWith(rootCanon)) {
+            // Compare whole path components: a string prefix let /work/app reach /work/app-secrets
+            Path target = targetFile.getCanonicalFile().toPath();
+            if (target.startsWith(workspaceRoot.getCanonicalFile().toPath())) {
                 return new SandboxValidationResult(true, targetFile.getAbsolutePath(), null);
             }
 
             String tmpDir = System.getProperty("java.io.tmpdir");
-            if (tmpDir != null) {
-                String tmpCanon = new File(tmpDir).getCanonicalPath().replace('\\', '/').toLowerCase();
-                if (targetCanon.startsWith(tmpCanon)) {
-                    return new SandboxValidationResult(true, targetFile.getAbsolutePath(), null);
-                }
+            if (tmpDir != null && target.startsWith(new File(tmpDir).getCanonicalFile().toPath())) {
+                return new SandboxValidationResult(true, targetFile.getAbsolutePath(), null);
             }
 
             return new SandboxValidationResult(false, targetFile.getAbsolutePath(),

@@ -20,6 +20,8 @@ public class ContextCompressor {
 
     public record CompressionResult(boolean compressed, int tokensSaved, String summary) {}
 
+    private static final String SUMMARY_HEADER = "### Condensed Context Summary (Compressed at 95% token limit):\n";
+
     /**
      * Checks if the session's token usage has exceeded the threshold ratio (e.g. 0.95 = 95%)
      * and performs semantic compression if necessary.
@@ -38,17 +40,24 @@ public class ContextCompressor {
         log.warn("Token usage reached {}% on session '{}'. Triggering 95% context compression...",
                 String.format("%.1f", session.getTokenTracker().getUsagePercentage()), session.getName());
 
-        // Extract messages to compress (all except the last 3 messages)
-        int keepCount = Math.min(3, messages.size());
-        int compressUntil = messages.size() - keepCount;
+        int compressUntil = retainFrom(messages);
+        if (compressUntil <= 0) {
+            return new CompressionResult(false, 0, "Message history too brief to compress.");
+        }
 
         List<AgentMessage> toCompress = new ArrayList<>(messages.subList(0, compressUntil));
         List<AgentMessage> toRetain = new ArrayList<>(messages.subList(compressUntil, messages.size()));
 
         // Synthesize condensed summary of early turns
         StringBuilder summaryBuilder = new StringBuilder();
-        summaryBuilder.append("### Condensed Context Summary (Compressed at 95% token limit):\n");
+        summaryBuilder.append(SUMMARY_HEADER);
         for (AgentMessage msg : toCompress) {
+            if (msg.getRole() == AgentRole.SYSTEM) {
+                // An earlier compression's summary is already condensed; cutting it to one line would lose it
+                summaryBuilder.append(msg.getContent().replace(SUMMARY_HEADER, "").strip())
+                        .append("\n");
+                continue;
+            }
             String roleName = msg.getRole().name();
             String snippet = msg.getContent().length() > 120
                     ? msg.getContent().substring(0, 117) + "..."
@@ -84,6 +93,24 @@ public class ContextCompressor {
 
         log.info(summary);
         return new CompressionResult(true, tokensSaved, summary);
+    }
+
+    /** Conversation messages (prompts and final answers) kept word for word after compression. */
+    static final int KEEP_CONVERSATION_MESSAGES = 3;
+
+    /**
+     * Index of the first message to keep. Counting only prompts and final answers: a tool-heavy last turn must not
+     * push the user's latest request and the answer it refers to into a one-line summary.
+     */
+    static int retainFrom(List<AgentMessage> messages) {
+        int seen = 0;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            AgentMessage m = messages.get(i);
+            if (m.isUser() || (m.isAssistant() && !m.isInterim())) {
+                if (++seen == KEEP_CONVERSATION_MESSAGES) return i;
+            }
+        }
+        return Math.max(0, messages.size() - KEEP_CONVERSATION_MESSAGES);
     }
 }
 
