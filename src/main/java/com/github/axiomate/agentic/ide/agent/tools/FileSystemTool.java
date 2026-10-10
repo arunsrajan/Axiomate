@@ -123,6 +123,9 @@ public class FileSystemTool implements AgentTool {
         if (!Files.exists(path)) {
             return "ERROR: Directory not found: " + path.toAbsolutePath();
         }
+        if (!Files.isDirectory(path)) {
+            return "ERROR: " + path.toAbsolutePath() + " is a file, not a directory. Use the read action to see its contents.";
+        }
         try (Stream<Path> stream = Files.list(path)) {
             String files = stream.map(p -> (Files.isDirectory(p) ? "[DIR] " : "[FILE] ") + p.getFileName().toString())
                     .sorted()

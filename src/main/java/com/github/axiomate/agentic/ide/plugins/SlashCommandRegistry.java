@@ -34,6 +34,8 @@ public class SlashCommandRegistry {
             this(name, description, template, source, null);
         }
 
+        private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\$(ARGUMENTS|[1-9])(?!\\d)");
+
         public boolean isAction() {
             return action != null;
         }
@@ -41,12 +43,19 @@ public class SlashCommandRegistry {
         public String expand(String arguments) {
             String args = arguments == null ? "" : arguments.trim();
             String t = template == null ? "" : template;
-            boolean hasPlaceholder = t.contains("$ARGUMENTS") || t.matches("(?s).*\\$[1-9].*");
+            boolean hasPlaceholder = PLACEHOLDER.matcher(t).find();
             String[] words = args.isEmpty() ? new String[0] : args.split("\\s+");
-            String out = t.replace("$ARGUMENTS", args);
-            for (int i = 9; i >= 1; i--) {
-                out = out.replace("$" + i, i <= words.length ? words[i - 1] : "");
+            // One pass over the template only: "$5" typed by the user must stay "$5"
+            java.util.regex.Matcher m = PLACEHOLDER.matcher(t);
+            StringBuilder sb = new StringBuilder();
+            while (m.find()) {
+                String key = m.group(1);
+                String value = "ARGUMENTS".equals(key) ? args
+                        : Integer.parseInt(key) <= words.length ? words[Integer.parseInt(key) - 1] : "";
+                m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(value));
             }
+            m.appendTail(sb);
+            String out = sb.toString();
             if (!hasPlaceholder && !args.isEmpty()) {
                 out = out.stripTrailing() + "\n\n" + args;
             }

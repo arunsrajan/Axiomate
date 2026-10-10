@@ -209,6 +209,64 @@ public class AppMenuBar extends JMenuBar {
         editMenu.add(pasteItem);
         editMenu.addSeparator();
         editMenu.add(selectAllItem);
+
+        JMenuItem findItem = new JMenuItem("Find…");
+        findItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
+        findItem.addActionListener(e -> editorPanel.showFindBar(false));
+
+        JMenuItem replaceItem = new JMenuItem("Replace…");
+        replaceItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK));
+        replaceItem.addActionListener(e -> editorPanel.showFindBar(true));
+
+        JMenuItem findNextItem = new JMenuItem("Find Next");
+        findNextItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F3, 0));
+        findNextItem.addActionListener(e -> editorPanel.findNext());
+
+        JMenuItem findPrevItem = new JMenuItem("Find Previous");
+        findPrevItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F3, InputEvent.SHIFT_DOWN_MASK));
+        findPrevItem.addActionListener(e -> editorPanel.findPrevious());
+
+        JMenuItem findInFilesItem = new JMenuItem("Find in Files…");
+        findInFilesItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        findInFilesItem.addActionListener(e -> {
+            if (!terminalPanel.isVisible()) toggleTerminalRunnable.run();
+            var ed = editorPanel.getActiveEditor();
+            terminalPanel.showSearch(ed != null ? ed.getSelectedText() : null);
+        });
+
+        JMenuItem goToFileItem = new JMenuItem("Go to File…");
+        goToFileItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, InputEvent.CTRL_DOWN_MASK));
+        goToFileItem.addActionListener(e -> {
+            java.io.File project = ProjectManager.getInstance().getCurrentProjectDirectory();
+            if (project == null || !project.isDirectory()) return;
+            new com.github.axiomate.agentic.ide.ui.dialogs.QuickOpenDialog(mainFrame, project,
+                    (file, line, column) -> {
+                        if (line > 0) editorPanel.openFileAt(file, line, column, 0);
+                        else editorPanel.openFile(file);
+                    },
+                    line -> editorPanel.goToLine(line, 0)).setVisible(true);
+        });
+
+        JMenuItem goToLineItem = new JMenuItem("Go to Line…");
+        goToLineItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_G, InputEvent.CTRL_DOWN_MASK));
+        goToLineItem.addActionListener(e -> {
+            var ed = editorPanel.getActiveEditor();
+            if (ed == null) return;
+            String answer = JOptionPane.showInputDialog(mainFrame,
+                    "Line (1-" + ed.getLineCount() + "), optionally :column", "Go to Line", JOptionPane.PLAIN_MESSAGE);
+            int[] target = EditorPanel.parseLineColumn(answer);
+            if (target != null) editorPanel.goToLine(target[0], target[1]);
+        });
+
+        editMenu.addSeparator();
+        editMenu.add(findItem);
+        editMenu.add(replaceItem);
+        editMenu.add(findNextItem);
+        editMenu.add(findPrevItem);
+        editMenu.add(findInFilesItem);
+        editMenu.addSeparator();
+        editMenu.add(goToFileItem);
+        editMenu.add(goToLineItem);
         add(editMenu);
 
         // 3. AI AGENT MENU

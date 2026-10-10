@@ -90,6 +90,9 @@ public class AIAgentPanel extends JPanel {
     private final FileMentionController fileMentionController;
 
     private final SlashCommandCompletion slashCompletion;
+    private final PromptHistory promptHistory = new PromptHistory();
+    /** Set while the history puts a prompt into the box, so that edit does not end browsing. */
+    private boolean recallingPrompt;
     private final List<JButton> quickActions = new ArrayList<>();
     private final ImageAttachmentStrip attachmentStrip = new ImageAttachmentStrip(true, this::updateVisionHint);
     private final JLabel visionHint = new JLabel();
@@ -419,7 +422,7 @@ public class AIAgentPanel extends JPanel {
         inputArea.setFont(transcriptFont(Font.PLAIN, 0f));
         inputArea.setBorder(new EmptyBorder(6, 2, 6, 6));
         inputArea.setOpaque(false);
-        inputArea.setToolTipText("Type your prompt... Type '@' to mention files, '/' for slash commands");
+        inputArea.setToolTipText("Type your prompt... Type '@' to mention files, '/' for slash commands, Ctrl+Up/Down for earlier prompts");
         inputArea.putClientProperty("JTextField.placeholderText", "Ask Axiomate…  @ mention files · / commands · Ctrl+Enter to send");
 
         fileMentionController = new FileMentionController(inputArea);
@@ -433,6 +436,24 @@ public class AIAgentPanel extends JPanel {
                     e.consume();
                     submitPrompt();
                 }
+                // Prompt history: Ctrl+Up/Down anywhere, plain Up/Down in an empty box or while browsing
+                // (the @ and / popups consume the arrows first while they are open)
+                if (!e.isConsumed() && (e.getKeyCode() == KeyEvent.VK_UP || e.getKeyCode() == KeyEvent.VK_DOWN)) {
+                    boolean up = e.getKeyCode() == KeyEvent.VK_UP;
+                    boolean ctrl = e.isControlDown() || e.isMetaDown();
+                    boolean plain = !ctrl && !e.isShiftDown() && !e.isAltDown()
+                            && (up ? (inputArea.getText().isEmpty() || promptHistory.isBrowsing()) && caretOnFirstLine()
+                                   : promptHistory.isBrowsing() && caretOnLastLine());
+                    if (ctrl || plain) {
+                        String text = up ? promptHistory.previous(inputArea.getText()) : promptHistory.next();
+                        if (text != null) {
+                            e.consume();
+                            showRecalledPrompt(text);
+                        } else if (ctrl) {
+                            e.consume();
+                        }
+                    }
+                }
                 // Esc interrupts a running agent, like Claude Code (popups consume Esc first when open)
                 if (e.getKeyCode() == KeyEvent.VK_ESCAPE && !e.isConsumed() && thinkingIndicator.isRunning()
                         && !slashCompletion.isPopupVisible()) {
@@ -441,6 +462,14 @@ public class AIAgentPanel extends JPanel {
                 }
             }
         });
+
+        // Typing into a recalled prompt makes it a new draft: the next Up starts again from the newest prompt
+        inputArea.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { if (!recallingPrompt) promptHistory.reset(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { if (!recallingPrompt) promptHistory.reset(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { }
+        });
+        seedPromptHistory();
 
         JScrollPane inputScroll = new JScrollPane(inputArea);
         inputScroll.setBorder(BorderFactory.createEmptyBorder());
@@ -1108,7 +1137,7 @@ public class AIAgentPanel extends JPanel {
                 appendAssistantBubble(MemoryManager.getInstance().getMemoryStore().getRelevantContext(""));
             } else {
                 inputArea.setText(promptText);
-                submitPrompt();
+                submitPrompt(false);
             }
         });
         return btn;
@@ -1172,19 +1201,68 @@ public class AIAgentPanel extends JPanel {
         inputArea.requestFocusInWindow();
     }
 
+    /** Prompts recalled with Ctrl+Up / Ctrl+Down. */
+    public PromptHistory getPromptHistory() {
+        return promptHistory;
+    }
+
+    private void showRecalledPrompt(String text) {
+        recallingPrompt = true;
+        try {
+            inputArea.setText(text);
+            inputArea.setCaretPosition(text.length());
+        } finally {
+            recallingPrompt = false;
+        }
+    }
+
+    private boolean caretOnFirstLine() {
+        try {
+            return inputArea.getLineOfOffset(inputArea.getCaretPosition()) == 0;
+        } catch (javax.swing.text.BadLocationException e) {
+            return true;
+        }
+    }
+
+    private boolean caretOnLastLine() {
+        try {
+            return inputArea.getLineOfOffset(inputArea.getCaretPosition()) == inputArea.getLineCount() - 1;
+        } catch (javax.swing.text.BadLocationException e) {
+            return true;
+        }
+    }
+
+    /** Earlier prompts of the open session, so the history survives a restart. */
+    private void seedPromptHistory() {
+        AgentSession session = SessionManager.getInstance().getActiveSession();
+        if (session == null) return;
+        List<String> prompts = new ArrayList<>();
+        for (AgentMessage m : session.getMessages()) {
+            if (m.isUser()) prompts.add(m.getContent());
+        }
+        promptHistory.seed(prompts);
+    }
+
     public void sendPromptDirectly(String prompt) {
         inputArea.setText(prompt);
-        submitPrompt();
+        submitPrompt(false);
     }
 
     private void submitPrompt() {
+        submitPrompt(true);
+    }
+
+    /** @param typedByUser record the prompt in the history (menu and chip prompts are not) */
+    private void submitPrompt(boolean typedByUser) {
         String prompt = inputArea.getText().trim();
+        String typed = prompt;
         if (prompt.isEmpty() && attachmentStrip.isEmpty()) return;
         if (prompt.isEmpty()) prompt = "Describe the attached image(s).";
 
         Dispatch dispatch = SlashCommandRegistry.getInstance().dispatch(prompt);
         switch (dispatch.outcome()) {
             case EXECUTED -> {
+                if (typedByUser) promptHistory.add(typed);
                 inputArea.setText("");
                 return;
             }
@@ -1207,6 +1285,7 @@ public class AIAgentPanel extends JPanel {
         }
 
         List<ImageAttachment> images = collectImages(prompt);
+        if (typedByUser) promptHistory.add(typed);
         inputArea.setText("");
         attachmentStrip.clear();
         appendUserBubble(prompt, images);
