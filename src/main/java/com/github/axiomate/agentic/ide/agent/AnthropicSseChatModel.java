@@ -14,6 +14,9 @@ import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.output.Response;
 import dev.langchain4j.model.output.TokenUsage;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.ProxySelector;
@@ -35,6 +38,7 @@ import java.util.Map;
  */
 public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
 
+    private static final Logger log = LoggerFactory.getLogger(AnthropicSseChatModel.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     static final String API_VERSION = "2023-06-01";
 
@@ -51,6 +55,11 @@ public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
                                  Double temperature, int maxTokens, Duration timeout) {
         this.delegate = delegate;
         String url = baseUrl == null || baseUrl.isBlank() ? "https://api.anthropic.com/v1/" : baseUrl.trim();
+        if (url.endsWith("/messages")) {
+            url = url.substring(0, url.length() - "/messages".length());
+        } else if (url.endsWith("/messages/")) {
+            url = url.substring(0, url.length() - "/messages/".length());
+        }
         this.baseUrl = url.endsWith("/") ? url : url + "/";
         this.apiKey = apiKey;
         this.modelName = modelName;
@@ -58,8 +67,9 @@ public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
         this.maxTokens = maxTokens;
         this.timeout = timeout;
         this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(30))
-                .proxy(ProxySelector.getDefault())
+                .proxy(proxySelectorFor(this.baseUrl))
                 .build();
     }
 
@@ -90,13 +100,14 @@ public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
         if (tools != null && !tools.isEmpty()) request.tools(AnthropicMapper.toAnthropicTools(tools));
         try {
             HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(baseUrl + "messages"))
+                    .version(HttpClient.Version.HTTP_1_1)
                     .timeout(timeout)
                     .header("Content-Type", "application/json")
                     .header("Accept", "text/event-stream")
                     .header("anthropic-version", API_VERSION)
                     .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(request.build())));
             if (apiKey != null && !apiKey.isBlank()) req.header("x-api-key", apiKey);
-            HttpResponse<InputStream> resp = http.send(req.build(), HttpResponse.BodyHandlers.ofInputStream());
+            HttpResponse<InputStream> resp = sendWithRetry(req.build());
             if (resp.statusCode() / 100 != 2) {
                 String body;
                 try (InputStream in = resp.body()) {
@@ -122,6 +133,40 @@ public class AnthropicSseChatModel implements ChatLanguageModel, StreamingChat {
             Thread.currentThread().interrupt();
             throw new ProviderException("Request to " + baseUrl + " was interrupted", e);
         }
+    }
+
+    private HttpResponse<InputStream> sendWithRetry(HttpRequest req) throws IOException, InterruptedException {
+        try {
+            return http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (IOException e) {
+            if (isNoBytesError(e)) {
+                log.warn("Connection to {} closed before headers received, retrying once with clean connection: {}",
+                        baseUrl, e.getMessage());
+                HttpClient freshClient = HttpClient.newBuilder()
+                        .version(HttpClient.Version.HTTP_1_1)
+                        .connectTimeout(Duration.ofSeconds(30))
+                        .proxy(proxySelectorFor(baseUrl))
+                        .build();
+                return freshClient.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            }
+            throw e;
+        }
+    }
+
+    private static boolean isNoBytesError(IOException e) {
+        String msg = e.getMessage();
+        return msg != null && (msg.contains("header parser received no bytes") || msg.contains("Connection reset")
+                || msg.contains("EOFException"));
+    }
+
+    static ProxySelector proxySelectorFor(String url) {
+        if (url != null) {
+            String lower = url.toLowerCase(java.util.Locale.ROOT);
+            if (lower.contains("://localhost") || lower.contains("://127.0.0.1") || lower.contains("://[::1]")) {
+                return HttpClient.Builder.NO_PROXY;
+            }
+        }
+        return ProxySelector.getDefault();
     }
 
     static Response<AiMessage> fromWholeMessage(JsonNode message, Sink sink) throws IOException {

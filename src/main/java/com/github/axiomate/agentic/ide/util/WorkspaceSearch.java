@@ -46,11 +46,16 @@ public final class WorkspaceSearch {
     }
 
     /**
-     * @param line   1-based line number
-     * @param column 0-based offset of the match in {@code lineText}
+     * @param line          1-based line number
+     * @param column        0-based offset of the match in the file line
+     * @param displayColumn 0-based offset of the match in {@code lineText}
      */
-    public record Match(Path file, String relativePath, int line, int column, int length, String lineText) {
+    public record Match(Path file, String relativePath, int line, int column, int length, String lineText, int displayColumn) {
+        public Match(Path file, String relativePath, int line, int column, int length, String lineText) {
+            this(file, relativePath, line, column, length, lineText, column);
+        }
     }
+
 
     /**
      * @param truncated true when {@code maxResults} was reached before every file was searched
@@ -220,13 +225,15 @@ public final class WorkspaceSearch {
             if (line.endsWith("\r")) line = line.substring(0, line.length() - 1);
             int col = m.start() - lineStart;
             int len = Math.max(0, Math.min(m.end(), lineStart + line.length()) - m.start());
+            int displayCol = col;
             if (line.length() > MAX_LINE_CHARS) {
                 int from = Math.max(0, Math.min(col - 80, line.length() - MAX_LINE_CHARS));
-                line = (from > 0 ? "…" : "") + line.substring(from, Math.min(line.length(), from + MAX_LINE_CHARS)) + "…";
-                col = col - from + (from > 0 ? 1 : 0);
-                len = Math.min(len, Math.max(0, line.length() - col));
+                int to = Math.min(line.length(), from + MAX_LINE_CHARS);
+                line = (from > 0 ? "…" : "") + line.substring(from, to) + (to < line.length() ? "…" : "");
+                displayCol = col - from + (from > 0 ? 1 : 0);
+                len = Math.min(len, Math.max(0, line.length() - displayCol));
             }
-            out.add(new Match(file, rel, lineNo, col, len, line));
+            out.add(new Match(file, rel, lineNo, col, len, line, displayCol));
         }
     }
 

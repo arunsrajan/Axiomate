@@ -249,7 +249,7 @@ public class SearchPanel extends JPanel {
             } else {
                 WorkspaceSearch.Match m = row.match();
                 String line = m.lineText();
-                int start = Math.min(m.column(), line.length());
+                int start = Math.min(m.displayColumn(), line.length());
                 int end = Math.min(line.length(), start + m.length());
                 // Leading indentation is noise in a result list
                 int lead = 0;

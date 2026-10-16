@@ -90,6 +90,11 @@ public class UniversalChatModelFactory {
                 String formattedUrl = null;
                 if (baseUrl != null && !baseUrl.isBlank()) {
                     formattedUrl = baseUrl.trim();
+                    if (formattedUrl.endsWith("/messages")) {
+                        formattedUrl = formattedUrl.substring(0, formattedUrl.length() - "/messages".length());
+                    } else if (formattedUrl.endsWith("/messages/")) {
+                        formattedUrl = formattedUrl.substring(0, formattedUrl.length() - "/messages/".length());
+                    }
                     if (!formattedUrl.endsWith("/")) {
                         formattedUrl = formattedUrl + "/";
                     }

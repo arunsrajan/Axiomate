@@ -161,6 +161,44 @@ class UiFixesTest {
         assertEquals("gpt-4o", openai.getModelId());
     }
 
+    @Test
+    @DisplayName("goToLine on CRLF line endings accurately clamps caret before \\r\\n")
+    void goToLineCrlf() throws Exception {
+        Path crlfFile = Files.writeString(dir.resolve("Crlf.txt"), "first line\r\nsecond line\r\nthird");
+        EditorPanel editor = new EditorPanel();
+        SwingUtilities.invokeAndWait(() -> {
+            editor.openFile(crlfFile.toFile());
+            assertTrue(editor.goToLine(1, 100)); // clamp to line end
+            org.fife.ui.rsyntaxtextarea.RSyntaxTextArea ta = editor.getActiveEditor();
+            assertEquals("first line".length(), ta.getCaretPosition());
+            assertTrue(editor.goToLine(2, 6));
+            assertEquals("first line\r\n".length() + 6, ta.getCaretPosition());
+        });
+    }
+
+    @Test
+    @DisplayName("ProjectTreePanel refreshTree is safe off-EDT and handles null project directory")
+    void projectTreeNullProjectAndThreadSafety() throws Exception {
+        ProjectManager.getInstance().setCurrentProjectDirectory(null);
+        ProjectTreePanel[] panel = new ProjectTreePanel[1];
+        SwingUtilities.invokeAndWait(() -> panel[0] = new ProjectTreePanel(f -> {}, f -> {}));
+        Thread t = new Thread(() -> panel[0].refreshTree());
+        t.start();
+        t.join();
+        flushEdt();
+        assertNotNull(panel[0].getTree().getModel());
+    }
+
+    @Test
+    @DisplayName("TerminalPanel handles null project directory without NullPointerException")
+    void terminalPanelNullProjectDir() throws Exception {
+        ProjectManager.getInstance().setCurrentProjectDirectory(null);
+        TerminalPanel[] panel = new TerminalPanel[1];
+        SwingUtilities.invokeAndWait(() -> panel[0] = new TerminalPanel());
+        flushEdt();
+        assertNotNull(panel[0]);
+    }
+
     /** The chat panel's session dropdown: the combo whose entries are the session names. */
     private static JComboBox<?> sessionSelector(Container c) {
         for (Component k : c.getComponents()) {

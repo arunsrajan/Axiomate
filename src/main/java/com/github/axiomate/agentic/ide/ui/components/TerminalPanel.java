@@ -131,8 +131,9 @@ public class TerminalPanel extends JPanel {
         // A new project starts the terminal in its own folder, not where a "cd" in the previous one left it
         ProjectManager.getInstance().addProjectChangeListener(dir -> terminalDir = null);
 
+        File projDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         appendTerminal("Axiomate AI Agent IDE Terminal ready. Current directory: " +
-                ProjectManager.getInstance().getCurrentProjectDirectory().getAbsolutePath() + "\n");
+                (projDir != null ? projDir.getAbsolutePath() : System.getProperty("user.dir", ".")) + "\n");
     }
 
     private JTextArea createConsoleArea() {
@@ -287,7 +288,9 @@ public class TerminalPanel extends JPanel {
 
     private File currentTerminalDir() {
         File dir = terminalDir;
-        return dir != null && dir.isDirectory() ? dir : ProjectManager.getInstance().getCurrentProjectDirectory();
+        if (dir != null && dir.isDirectory()) return dir;
+        File proj = ProjectManager.getInstance().getCurrentProjectDirectory();
+        return proj != null && proj.isDirectory() ? proj : new File(System.getProperty("user.dir", "."));
     }
 
     private static java.nio.charset.Charset nativeCharset() {

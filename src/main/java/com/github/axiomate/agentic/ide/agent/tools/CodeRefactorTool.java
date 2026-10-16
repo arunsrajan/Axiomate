@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * Tool allowing the agent to refactor, patch, or replace code in a project file.
@@ -49,9 +50,17 @@ public class CodeRefactorTool implements AgentTool {
                 return "ERROR: No active file currently open in editor and no filePath specified.";
             }
         } else {
-            File baseDir = ProjectManager.getInstance().getCurrentProjectDirectory();
-            Path p = baseDir.toPath().resolve(filePath).normalize();
-            targetFile = p.toFile();
+            Path path = Paths.get(filePath);
+            if (path.isAbsolute()) {
+                targetFile = path.normalize().toFile();
+            } else {
+                File baseDir = ProjectManager.getInstance().getCurrentProjectDirectory();
+                if (baseDir == null) {
+                    return "ERROR: No project directory is open to resolve relative path: " + filePath;
+                }
+                Path p = baseDir.toPath().resolve(path).normalize();
+                targetFile = p.toFile();
+            }
         }
 
         if (!targetFile.exists()) {

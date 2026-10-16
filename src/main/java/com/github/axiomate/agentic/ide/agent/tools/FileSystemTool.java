@@ -49,12 +49,18 @@ public class FileSystemTool implements AgentTool {
         File baseDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         Path targetPath;
         if (pathStr == null || pathStr.isBlank()) {
+            if (baseDir == null) {
+                return "ERROR: No project directory is open and no path was specified.";
+            }
             targetPath = baseDir.toPath();
         } else {
             Path p = Paths.get(pathStr);
             if (p.isAbsolute()) {
                 targetPath = p;
             } else {
+                if (baseDir == null) {
+                    return "ERROR: No project directory is open to resolve relative path: " + pathStr;
+                }
                 targetPath = baseDir.toPath().resolve(p).normalize();
             }
         }

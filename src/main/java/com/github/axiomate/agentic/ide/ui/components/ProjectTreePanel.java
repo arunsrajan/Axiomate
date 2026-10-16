@@ -119,12 +119,14 @@ public class ProjectTreePanel extends JPanel {
 
         refreshTree();
 
-        ProjectManager.getInstance().addProjectChangeListener(dir -> refreshTree());
+        ProjectManager.getInstance().addProjectChangeListener(dir -> UIUtils.onEdt(this::refreshTree));
     }
 
     public void refreshTree() {
         File rootDir = ProjectManager.getInstance().getCurrentProjectDirectory();
         if (rootDir == null || !rootDir.exists()) {
+            treeModel = new DefaultTreeModel(new DefaultMutableTreeNode("No folder opened"));
+            tree.setModel(treeModel);
             return;
         }
 
@@ -302,6 +304,10 @@ public class ProjectTreePanel extends JPanel {
             }
             return this;
         }
+    }
+
+    public JTree getTree() {
+        return tree;
     }
 }
 

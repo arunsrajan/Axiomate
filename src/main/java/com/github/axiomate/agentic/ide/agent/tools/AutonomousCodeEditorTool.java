@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -113,9 +114,15 @@ public class AutonomousCodeEditorTool implements AgentTool {
 
     private File resolveTargetFile(String filePath) {
         if (filePath != null && !filePath.isBlank()) {
+            Path p = Paths.get(filePath);
+            if (p.isAbsolute()) {
+                return p.normalize().toFile();
+            }
             File baseDir = ProjectManager.getInstance().getCurrentProjectDirectory();
-            Path path = baseDir.toPath().resolve(filePath).normalize();
-            return path.toFile();
+            if (baseDir != null) {
+                return baseDir.toPath().resolve(p).normalize().toFile();
+            }
+            return p.toFile();
         }
         return ProjectManager.getInstance().getActiveFile();
     }
