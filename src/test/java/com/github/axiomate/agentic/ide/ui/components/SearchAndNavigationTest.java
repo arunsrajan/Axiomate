@@ -205,6 +205,49 @@ class SearchAndNavigationTest {
     }
 
     @Test
+    @DisplayName("Find/Replace handles invalid regex replacement templates gracefully without throwing")
+    void invalidRegexReplacementHandledGracefully() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            RSyntaxTextArea ta = new RSyntaxTextArea("hello world 123\n");
+            FindReplaceBar bar = bar(ta);
+            bar.regex.setSelected(true);
+            bar.findField.setText("world (\\d+)");
+            // Template refers to non-existent group $5
+            bar.replaceField.setText("earth $5");
+            bar.findNext();
+            assertFalse(bar.replaceCurrent());
+            assertTrue(bar.status.getText().toLowerCase().contains("invalid replacement"));
+
+            assertEquals(0, bar.replaceAll());
+            assertTrue(bar.status.getText().toLowerCase().contains("invalid replacement"));
+
+            // Template with trailing backslash
+            bar.replaceField.setText("earth \\");
+            bar.findNext();
+            assertFalse(bar.replaceCurrent());
+            assertEquals(0, bar.replaceAll());
+        });
+    }
+
+    @Test
+    @DisplayName("WorkspaceSearch on long lines preserves true column in Match while displayColumn indexes snippet")
+    void longLineSearchPreservesActualColumn() throws Exception {
+        String padding = "x".repeat(350);
+        String content = "start " + padding + " target " + padding + " end\n";
+        Path longFile = dir.resolve("src/LongLine.txt");
+        Files.writeString(longFile, content);
+
+        WorkspaceSearch.Result res = search("target", false, false, false, "src/LongLine.txt");
+        assertEquals(1, res.matches().size());
+        WorkspaceSearch.Match m = res.matches().get(0);
+        int expectedCol = content.indexOf("target");
+        assertEquals(expectedCol, m.column(), "Match.column must reflect the real column in the line");
+        assertTrue(m.lineText().contains("target"));
+        int snippetCol = m.displayColumn();
+        assertEquals("target", m.lineText().substring(snippetCol, snippetCol + m.length()));
+    }
+
+    @Test
     @DisplayName("Go to Line and open-at-match: line and column parsing, clamping, the match selected")
     void goToLine() throws Exception {
         assertArrayEquals(new int[]{42, 0}, EditorPanel.parseLineColumn("42"));

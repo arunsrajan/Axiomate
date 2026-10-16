@@ -129,7 +129,14 @@ public class FindReplaceBar extends JPanel {
         String text = ed.getText();
         int[] current = matchAt(text, p, ed.getSelectionStart(), ed.getSelectionEnd());
         if (current == null) return findNext();
-        String replacement = replacement(text, p, current[0]);
+        String replacement;
+        try {
+            replacement = replacement(text, p, current[0]);
+        } catch (IllegalArgumentException | IndexOutOfBoundsException ex) {
+            status.setText("Invalid replacement: " + (ex.getMessage() != null ? ex.getMessage() : "syntax error"));
+            status.setForeground(UIUtils.ERROR_COLOR);
+            return false;
+        }
         ed.replaceRange(replacement, current[0], current[1]);
         ed.setCaretPosition(current[0] + replacement.length());
         findNext();
@@ -148,7 +155,13 @@ public class FindReplaceBar extends JPanel {
             return 0;
         }
         List<String> replacements = new ArrayList<>();
-        for (int[] r : ranges) replacements.add(replacement(text, p, r[0]));
+        try {
+            for (int[] r : ranges) replacements.add(replacement(text, p, r[0]));
+        } catch (IllegalArgumentException | IndexOutOfBoundsException ex) {
+            status.setText("Invalid replacement: " + (ex.getMessage() != null ? ex.getMessage() : "syntax error"));
+            status.setForeground(UIUtils.ERROR_COLOR);
+            return 0;
+        }
         ed.beginAtomicEdit();
         try {
             for (int i = ranges.size() - 1; i >= 0; i--) {

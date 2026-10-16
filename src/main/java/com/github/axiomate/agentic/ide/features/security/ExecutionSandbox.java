@@ -105,7 +105,11 @@ public class ExecutionSandbox {
      */
     public SandboxValidationResult validatePathAccess(File targetFile) {
         if (!sandboxEnforced) {
-            return new SandboxValidationResult(true, targetFile.getAbsolutePath(), null);
+            return new SandboxValidationResult(true, targetFile != null ? targetFile.getAbsolutePath() : "null", null);
+        }
+
+        if (targetFile == null) {
+            return new SandboxValidationResult(false, "null", "Target file is null");
         }
 
         File workspaceRoot = ProjectManager.getInstance().getCurrentProjectDirectory();

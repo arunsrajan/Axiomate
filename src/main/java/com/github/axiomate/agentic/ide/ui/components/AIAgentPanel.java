@@ -105,6 +105,7 @@ public class AIAgentPanel extends JPanel {
     private String displayedSessionId;
 
     private JPanel currentAssistantMessagePanel;
+    private JPanel currentAssistantContentPanel;
     private JTextArea currentAssistantTextArea;
     private StringBuilder currentStreamingBuffer;
     /** Incremented per prompt and on Stop; events of an older task are ignored. Changed on the event thread only. */
@@ -872,6 +873,7 @@ public class AIAgentPanel extends JPanel {
     public void reloadChatFromSession() {
         chatBox.removeAll();
         currentAssistantMessagePanel = null;
+        currentAssistantContentPanel = null;
         currentAssistantTextArea = null;
         AgentSession session = SessionManager.getInstance().getActiveSession();
         displayedSessionId = session != null ? session.getId() : null;
@@ -896,6 +898,7 @@ public class AIAgentPanel extends JPanel {
         }
         applyDisplayFilters();
         updateTokenDisplay();
+        seedPromptHistory();
         chatBox.revalidate();
         chatBox.repaint();
         scrollToBottom();
@@ -1310,6 +1313,7 @@ public class AIAgentPanel extends JPanel {
 
         currentStreamingBuffer = new StringBuilder();
         currentAssistantMessagePanel = null;
+        currentAssistantContentPanel = null;
         currentAssistantTextArea = null;
 
         // Services that save the conversation themselves must not get every step saved a second time
@@ -1370,7 +1374,11 @@ public class AIAgentPanel extends JPanel {
                     if (!visible()) return;
                     // Text streamed before a tool call stays in its own bubble; the next reply starts a new one
                     endLiveThinking();
+                    if (currentAssistantContentPanel != null && currentStreamingBuffer != null && !currentStreamingBuffer.isEmpty()) {
+                        populateAssistantContent(currentAssistantContentPanel, currentStreamingBuffer.toString());
+                    }
                     currentAssistantMessagePanel = null;
+                    currentAssistantContentPanel = null;
                     currentAssistantTextArea = null;
                     currentStreamingBuffer = new StringBuilder();
                     setAgentState("Running tool: " + toolName, UIUtils.ACCENT_COLOR, true);
@@ -1396,12 +1404,20 @@ public class AIAgentPanel extends JPanel {
                     if (!current()) return;
                     endLiveThinking();
                     // The final text is authoritative (e.g. a stream that differs from the assembled answer)
-                    if (visible() && currentAssistantTextArea != null && fullResponse != null && !fullResponse.isBlank()
-                            && !currentAssistantTextArea.getText().equals(fullResponse)) {
-                        currentAssistantTextArea.setText(fullResponse);
+                    if (visible()) {
+                        String finalReply = (fullResponse != null && !fullResponse.isBlank())
+                                ? fullResponse
+                                : (currentStreamingBuffer != null ? currentStreamingBuffer.toString() : "");
+                        if (currentAssistantContentPanel != null) {
+                            populateAssistantContent(currentAssistantContentPanel, finalReply);
+                        } else if (currentAssistantTextArea != null && !finalReply.isBlank()
+                                && !currentAssistantTextArea.getText().equals(finalReply)) {
+                            currentAssistantTextArea.setText(finalReply);
+                        }
                     }
-                    if (currentAssistantMessagePanel != null && currentAssistantTextArea != null) {
+                    if (currentAssistantMessagePanel != null) {
                         currentAssistantMessagePanel = null;
+                        currentAssistantContentPanel = null;
                         currentAssistantTextArea = null;
                     }
                     setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);
@@ -1745,9 +1761,11 @@ public class AIAgentPanel extends JPanel {
             JButton toggle = createCollapseToggleButton(false);
             currentAssistantTextArea = createBubbleTextArea("");
 
-            JPanel contentPanel = new JPanel(new BorderLayout());
-            contentPanel.setOpaque(false);
-            contentPanel.add(currentAssistantTextArea, BorderLayout.CENTER);
+            currentAssistantContentPanel = new JPanel();
+            currentAssistantContentPanel.setLayout(new BoxLayout(currentAssistantContentPanel, BoxLayout.Y_AXIS));
+            currentAssistantContentPanel.setOpaque(false);
+            currentAssistantTextArea.setAlignmentX(Component.LEFT_ALIGNMENT);
+            currentAssistantContentPanel.add(currentAssistantTextArea);
 
             // The reply starts on the ● line; the collapse link sits at the right of the first line
             JPanel header = new JPanel(new BorderLayout());
@@ -1755,10 +1773,10 @@ public class AIAgentPanel extends JPanel {
             header.add(toggle, BorderLayout.NORTH);
             JPanel body = new JPanel(new BorderLayout(6, 0));
             body.setOpaque(false);
-            body.add(contentPanel, BorderLayout.CENTER);
+            body.add(currentAssistantContentPanel, BorderLayout.CENTER);
             body.add(header, BorderLayout.EAST);
 
-            MessageCard card = new MessageCard(MessageDisplayType.WALKTHROUGH, contentPanel, toggle, false);
+            MessageCard card = new MessageCard(MessageDisplayType.WALKTHROUGH, currentAssistantContentPanel, toggle, false);
             wireToggle(card, toggle, header);
             card.setBorder(new EmptyBorder(4, 4, 4, 4));
             card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.DOT, 14, UIUtils.foreground()), body), BorderLayout.CENTER);
@@ -1845,10 +1863,90 @@ public class AIAgentPanel extends JPanel {
 
     private void appendAssistantBubble(String text) {
         ensureAssistantBubble();
-        currentAssistantTextArea.setText(text);
+        populateAssistantContent(currentAssistantContentPanel, text);
         currentAssistantMessagePanel = null;
+        currentAssistantContentPanel = null;
         currentAssistantTextArea = null;
         scrollToBottom();
+    }
+
+    private void populateAssistantContent(JPanel container, String text) {
+        if (container == null) return;
+        String content = text != null ? text : "";
+        if (!MarkdownTableParser.containsMarkdown(content)) {
+            if (container.getComponentCount() == 1 && container.getComponent(0) instanceof JTextArea ta) {
+                if (!ta.getText().equals(content)) {
+                    ta.setText(content);
+                }
+            } else {
+                container.removeAll();
+                JTextArea ta = createBubbleTextArea(content);
+                ta.setAlignmentX(Component.LEFT_ALIGNMENT);
+                container.add(ta);
+            }
+            container.revalidate();
+            container.repaint();
+            return;
+        }
+
+        List<MarkdownTableParser.Segment> segments = MarkdownTableParser.parseSegments(content);
+        boolean hasRich = segments.stream().anyMatch(s ->
+                s instanceof MarkdownTableParser.TableSegment
+                        || s instanceof MarkdownTableParser.CodeBlockSegment
+                        || (s instanceof MarkdownTableParser.TextSegment ts && MarkdownTextPanel.hasMarkdownFormatting(ts.text()))
+        );
+
+        if (!hasRich) {
+            if (container.getComponentCount() == 1 && container.getComponent(0) instanceof JTextArea ta) {
+                if (!ta.getText().equals(content)) {
+                    ta.setText(content);
+                }
+            } else {
+                container.removeAll();
+                JTextArea ta = createBubbleTextArea(content);
+                ta.setAlignmentX(Component.LEFT_ALIGNMENT);
+                container.add(ta);
+            }
+            container.revalidate();
+            container.repaint();
+            return;
+        }
+
+        container.removeAll();
+        container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
+
+        for (int i = 0; i < segments.size(); i++) {
+            MarkdownTableParser.Segment seg = segments.get(i);
+            if (seg instanceof MarkdownTableParser.TextSegment ts) {
+                String s = ts.text();
+                if (i > 0 && s.startsWith("\n")) s = s.substring(1);
+                if (i < segments.size() - 1 && s.endsWith("\n")) s = s.substring(0, s.length() - 1);
+                if (!s.isBlank()) {
+                    if (MarkdownTextPanel.hasMarkdownFormatting(s)) {
+                        MarkdownTextPanel textPanel = new MarkdownTextPanel(s);
+                        textPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+                        container.add(textPanel);
+                    } else {
+                        JTextArea area = createBubbleTextArea(s);
+                        area.setAlignmentX(Component.LEFT_ALIGNMENT);
+                        container.add(area);
+                    }
+                    container.add(Box.createVerticalStrut(6));
+                }
+            } else if (seg instanceof MarkdownTableParser.CodeBlockSegment cb) {
+                MarkdownCodePanel codePanel = new MarkdownCodePanel(cb);
+                codePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+                container.add(codePanel);
+                container.add(Box.createVerticalStrut(8));
+            } else if (seg instanceof MarkdownTableParser.TableSegment tab) {
+                MarkdownTablePanel tablePanel = new MarkdownTablePanel(tab);
+                tablePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+                container.add(tablePanel);
+                container.add(Box.createVerticalStrut(8));
+            }
+        }
+        container.revalidate();
+        container.repaint();
     }
 
     private void appendSystemBubble(String text) {

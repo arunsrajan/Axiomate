@@ -227,4 +227,25 @@ class ToolFixesTest {
             assertFalse(Files.exists(outside));
         }
     }
+
+    @Test
+    @DisplayName("Tools handle null project directory without NullPointerException")
+    void toolsWithNullProjectDirectory() throws Exception {
+        ProjectManager.getInstance().setCurrentProjectDirectory(null);
+
+        // FileSystemTool
+        String fsEmpty = new FileSystemTool().execute("{\"action\":\"list\"}");
+        assertTrue(fsEmpty.startsWith("ERROR"), fsEmpty);
+        String fsRel = new FileSystemTool().execute("{\"action\":\"read\",\"path\":\"file.txt\"}");
+        assertTrue(fsRel.startsWith("ERROR"), fsRel);
+
+        // CodeRefactorTool
+        String refactor = new CodeRefactorTool().execute("{\"filePath\":\"some/relative.txt\",\"replacementCode\":\"x\"}");
+        assertTrue(refactor.startsWith("ERROR"), refactor);
+
+        // ExecutionSandbox validatePathAccess
+        var sandboxRes = com.github.axiomate.agentic.ide.features.security.ExecutionSandbox.getInstance().validatePathAccess(null);
+        assertFalse(sandboxRes.allowed());
+        assertEquals("Target file is null", sandboxRes.violationReason());
+    }
 }

@@ -411,4 +411,26 @@ class StreamingAgentTest {
         assertEquals("\n\nnote", LangChainAgentService.unstreamedPart("abc\n\nnote", "abc"));
         assertEquals("", LangChainAgentService.unstreamedPart("different", "abc"));
     }
+
+    @Test
+    @DisplayName("Anthropic: custom localhost URL works with HTTP/1.1 and direct proxy bypass")
+    void anthropicLocalhostUrlHttp11() throws Exception {
+        startServer("ANTHROPIC", "claude-sonnet-4-5", new ConcurrentLinkedDeque<>(List.of(Reply.sse(
+                ev("{\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}"),
+                ev("{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}"),
+                ev("{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello from local proxy\"}}"),
+                ev("{\"type\":\"content_block_stop\",\"index\":0}"),
+                ev("{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}"),
+                ev("{\"type\":\"message_stop\"}")))));
+
+        assertSame(java.net.http.HttpClient.Builder.NO_PROXY, AnthropicSseChatModel.proxySelectorFor("http://localhost:20128/v1/"));
+        assertSame(java.net.http.HttpClient.Builder.NO_PROXY, AnthropicSseChatModel.proxySelectorFor("http://127.0.0.1:20128/v1"));
+        assertSame(java.net.http.HttpClient.Builder.NO_PROXY, AnthropicSseChatModel.proxySelectorFor("http://[::1]:20128/v1/"));
+        assertNotSame(java.net.http.HttpClient.Builder.NO_PROXY, AnthropicSseChatModel.proxySelectorFor("https://api.anthropic.com/v1"));
+
+        LangChainAgentService service = new LangChainAgentService();
+        Recorder rec = run(service, "claude-sonnet-4-5");
+        assertEquals("Hello from local proxy", rec.text());
+        assertNull(rec.error.get());
+    }
 }

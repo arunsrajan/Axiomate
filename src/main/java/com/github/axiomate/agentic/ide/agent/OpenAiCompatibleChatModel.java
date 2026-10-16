@@ -73,8 +73,9 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingCh
         this.maxTokens = maxTokens;
         this.timeout = timeout;
         this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(30))
-                .proxy(ProxySelector.getDefault())
+                .proxy(AnthropicSseChatModel.proxySelectorFor(this.baseUrl))
                 .build();
     }
 
@@ -260,6 +261,7 @@ public class OpenAiCompatibleChatModel implements ChatLanguageModel, StreamingCh
 
     private HttpRequest.Builder request(ObjectNode body) throws IOException {
         HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(baseUrl + "/chat/completions"))
+                .version(HttpClient.Version.HTTP_1_1)
                 .timeout(timeout)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(body)));

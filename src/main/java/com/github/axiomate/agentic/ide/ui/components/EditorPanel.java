@@ -333,8 +333,10 @@ public class EditorPanel extends JPanel {
                     "Save changes before closing?", "Unsaved Changes",
                     JOptionPane.YES_NO_CANCEL_OPTION);
             if (result == JOptionPane.YES_OPTION) {
-                saveTab(tabComponent);
-            } else if (result == JOptionPane.CANCEL_OPTION) {
+                if (!saveTab(tabComponent)) {
+                    return;
+                }
+            } else if (result != JOptionPane.NO_OPTION) {
                 return;
             }
         }
@@ -427,7 +429,14 @@ public class EditorPanel extends JPanel {
             int l = Math.max(1, Math.min(line, ed.getLineCount())) - 1;
             int start = ed.getLineStartOffset(l);
             int end = ed.getLineEndOffset(l);
-            int lineLength = Math.max(0, end - start - (l < ed.getLineCount() - 1 ? 1 : 0));
+            String lineContent = ed.getText(start, end - start);
+            int newlineChars = 0;
+            if (lineContent.endsWith("\r\n")) {
+                newlineChars = 2;
+            } else if (lineContent.endsWith("\n") || lineContent.endsWith("\r")) {
+                newlineChars = 1;
+            }
+            int lineLength = Math.max(0, end - start - newlineChars);
             ed.setCaretPosition(start + Math.max(0, Math.min(column, lineLength)));
             centerCaret(ed);
             ed.requestFocusInWindow();

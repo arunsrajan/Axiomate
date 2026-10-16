@@ -47,7 +47,19 @@ public class ProjectManager {
     }
 
     public void setCurrentProjectDirectory(File directory) {
-        if (directory != null && directory.exists() && directory.isDirectory()) {
+        if (directory == null) {
+            this.currentProjectDirectory = null;
+            log.info("Project directory cleared");
+            for (Consumer<File> listener : projectChangeListeners) {
+                try {
+                    listener.accept(null);
+                } catch (Exception e) {
+                    log.error("Error notifying project change listener", e);
+                }
+            }
+            return;
+        }
+        if (directory.exists() && directory.isDirectory()) {
             this.currentProjectDirectory = directory;
             log.info("Project directory changed to: {}", directory.getAbsolutePath());
             for (Consumer<File> listener : projectChangeListeners) {
