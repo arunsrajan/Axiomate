@@ -67,7 +67,7 @@ public class ToolBar extends JToolBar {
             menu.add(item("Import MCP servers from agents…", () -> actions.openMcpInterop(false)));
             menu.add(item("Export MCP servers to agents…", () -> actions.openMcpInterop(true)));
             menu.addSeparator();
-            menu.add(item("Import sessions from Claude Code / Codex…", actions::openExternalSessionImport));
+            menu.add(item("Import sessions from Claude / Codex / Gemini…", actions::openExternalSessionImport));
             menu.add(item("Show Agent Sync panel", () -> actions.showSidebarView(IdeActions.VIEW_AGENT_SYNC)));
             menu.show(syncBtn, 0, syncBtn.getHeight());
         });

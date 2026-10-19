@@ -13,11 +13,17 @@ import java.util.Optional;
  * <p>
  * Paths are relative to the project root ({@link MemoryScope#PROJECT}) or the user's home directory
  * ({@link MemoryScope#USER}). The token {@value #CLAUDE_PROJECT_TOKEN} expands to Claude Code's
- * encoded project directory name under {@code ~/.claude/projects}.
+ * encoded project directory name under {@code ~/.claude/projects}. A path starting with
+ * {@value #CLAUDE_HOME}, {@value #CODEX_HOME} or {@value #GEMINI_HOME} is relative to that agent's
+ * config directory, which honors {@code CLAUDE_CONFIG_DIR}, {@code CODEX_HOME} and
+ * {@code GEMINI_CLI_HOME} (see {@link AgentEnvironment}).
  */
 public final class CodingAgentCatalog {
 
     public static final String CLAUDE_PROJECT_TOKEN = "{claudeProject}";
+    public static final String CLAUDE_HOME = "{claudeHome}";
+    public static final String CODEX_HOME = "{codexHome}";
+    public static final String GEMINI_HOME = "{geminiHome}";
     public static final String EXPORT_FILE_BASENAME = "axiomate-memory";
 
     /**
@@ -32,15 +38,13 @@ public final class CodingAgentCatalog {
                                  List<String> suffixes, MemoryType type, boolean splitSections,
                                  String indexFile, String description) {
 
-        public Path resolve(Path projectDir, Path homeDir) {
-            Path base = scope == MemoryScope.PROJECT ? projectDir : homeDir;
-            if (base == null) return null;
-            String p = path;
-            if (p.contains(CLAUDE_PROJECT_TOKEN)) {
-                if (projectDir == null) return null;
-                p = p.replace(CLAUDE_PROJECT_TOKEN, encodeClaudeProjectDir(projectDir));
-            }
-            return base.resolve(p);
+        public Path resolve(Path projectDir, AgentEnvironment env) {
+            return resolvePath(scope, path, projectDir, env);
+        }
+
+        /** True for Claude Code auto memory, which lives under the home directory but belongs to one project. */
+        public boolean projectBound() {
+            return path.contains(CLAUDE_PROJECT_TOKEN);
         }
 
         public boolean accepts(String fileName) {
@@ -67,9 +71,8 @@ public final class CodingAgentCatalog {
     public record ExportTarget(CodingAgent agent, MemoryScope scope, String path, ExportStyle style,
                                String frontmatter) {
 
-        public Path resolve(Path projectDir, Path homeDir) {
-            Path base = scope == MemoryScope.PROJECT ? projectDir : homeDir;
-            return base == null ? null : base.resolve(path);
+        public Path resolve(Path projectDir, AgentEnvironment env) {
+            return resolvePath(scope, path, projectDir, env);
         }
     }
 
@@ -78,7 +81,19 @@ public final class CodingAgentCatalog {
     private CodingAgentCatalog() {
     }
 
+    /**
+     * The fixed locations for an agent, without settings-driven ones (custom context file names).
+     */
     public static List<MemoryLocation> locations(CodingAgent agent) {
+        return locations(agent, null, null);
+    }
+
+    /**
+     * All locations for an agent. When {@code env} is given, locations configured in the agent's own
+     * settings are included: Codex {@code project_doc_fallback_filenames} and Gemini CLI
+     * {@code context.fileName}.
+     */
+    public static List<MemoryLocation> locations(CodingAgent agent, AgentEnvironment env, Path projectDir) {
         List<MemoryLocation> l = new ArrayList<>();
         switch (agent) {
             case CLAUDE_CODE -> {
@@ -86,15 +101,23 @@ public final class CodingAgentCatalog {
                 l.add(file(agent, MemoryScope.PROJECT, ".claude/CLAUDE.md", MemoryType.PROJECT_RULE, "Project memory (.claude)"));
                 l.add(file(agent, MemoryScope.PROJECT, "CLAUDE.local.md", MemoryType.PROJECT_RULE, "Local project memory"));
                 l.add(dir(agent, MemoryScope.PROJECT, ".claude/rules", MD, MemoryType.PROJECT_RULE, null, "Modular project rules"));
-                l.add(file(agent, MemoryScope.USER, ".claude/CLAUDE.md", MemoryType.LONG_TERM, "User memory"));
-                l.add(dir(agent, MemoryScope.USER, ".claude/projects/" + CLAUDE_PROJECT_TOKEN + "/memory", MD,
+                l.add(file(agent, MemoryScope.USER, CLAUDE_HOME + "/CLAUDE.md", MemoryType.LONG_TERM, "User memory"));
+                l.add(dir(agent, MemoryScope.USER, CLAUDE_HOME + "/rules", MD, MemoryType.LONG_TERM, null, "User rules"));
+                l.add(dir(agent, MemoryScope.USER, CLAUDE_HOME + "/projects/" + CLAUDE_PROJECT_TOKEN + "/memory", MD,
                         MemoryType.LONG_TERM, "MEMORY.md", "Auto memory for this project"));
             }
             case CODEX -> {
                 l.add(file(agent, MemoryScope.PROJECT, "AGENTS.md", MemoryType.PROJECT_RULE, "AGENTS.md (shared by Codex, Cursor, Antigravity, Copilot...)"));
                 l.add(file(agent, MemoryScope.PROJECT, "AGENTS.override.md", MemoryType.PROJECT_RULE, "Override instructions"));
-                l.add(file(agent, MemoryScope.USER, ".codex/AGENTS.md", MemoryType.LONG_TERM, "Global instructions"));
-                l.add(file(agent, MemoryScope.USER, ".codex/AGENTS.override.md", MemoryType.LONG_TERM, "Global override instructions"));
+                if (env != null) {
+                    for (String name : env.codexFallbackFilenames()) {
+                        if (name.equalsIgnoreCase("AGENTS.md") || name.equalsIgnoreCase("AGENTS.override.md")) continue;
+                        l.add(file(agent, MemoryScope.PROJECT, name, MemoryType.PROJECT_RULE,
+                                "Fallback instructions (project_doc_fallback_filenames)"));
+                    }
+                }
+                l.add(file(agent, MemoryScope.USER, CODEX_HOME + "/AGENTS.md", MemoryType.LONG_TERM, "Global instructions"));
+                l.add(file(agent, MemoryScope.USER, CODEX_HOME + "/AGENTS.override.md", MemoryType.LONG_TERM, "Global override instructions"));
             }
             case CURSOR -> {
                 l.add(dir(agent, MemoryScope.PROJECT, ".cursor/rules", List.of(".mdc", ".md"), MemoryType.PROJECT_RULE, null, "Project rules (.mdc)"));
@@ -110,7 +133,14 @@ public final class CodingAgentCatalog {
             case GEMINI_CLI -> {
                 l.add(file(agent, MemoryScope.PROJECT, "GEMINI.md", MemoryType.PROJECT_RULE, "Project context"));
                 l.add(file(agent, MemoryScope.PROJECT, ".gemini/GEMINI.md", MemoryType.PROJECT_RULE, "Project context (.gemini)"));
-                l.add(file(agent, MemoryScope.USER, ".gemini/GEMINI.md", MemoryType.LONG_TERM, "Global context & saved memories"));
+                l.add(file(agent, MemoryScope.USER, GEMINI_HOME + "/GEMINI.md", MemoryType.LONG_TERM, "Global context & saved memories"));
+                if (env != null) {
+                    for (String name : env.geminiContextFileNames(projectDir)) {
+                        if (name.equalsIgnoreCase(AgentEnvironment.DEFAULT_GEMINI_CONTEXT_FILE)) continue;
+                        l.add(file(agent, MemoryScope.PROJECT, name, MemoryType.PROJECT_RULE, "Project context (context.fileName)"));
+                        l.add(file(agent, MemoryScope.USER, GEMINI_HOME + "/" + name, MemoryType.LONG_TERM, "Global context (context.fileName)"));
+                    }
+                }
             }
             case WINDSURF -> {
                 l.add(dir(agent, MemoryScope.PROJECT, ".windsurf/rules", MD, MemoryType.PROJECT_RULE, null, "Workspace rules"));
@@ -144,9 +174,9 @@ public final class CodingAgentCatalog {
     public static Optional<ExportTarget> exportTarget(CodingAgent agent, MemoryScope scope) {
         boolean project = scope == MemoryScope.PROJECT;
         ExportTarget t = switch (agent) {
-            case CLAUDE_CODE -> managed(agent, scope, project ? "CLAUDE.md" : ".claude/CLAUDE.md");
-            case CODEX -> managed(agent, scope, project ? "AGENTS.md" : ".codex/AGENTS.md");
-            case GEMINI_CLI -> managed(agent, scope, project ? "GEMINI.md" : ".gemini/GEMINI.md");
+            case CLAUDE_CODE -> managed(agent, scope, project ? "CLAUDE.md" : CLAUDE_HOME + "/CLAUDE.md");
+            case CODEX -> managed(agent, scope, project ? "AGENTS.md" : CODEX_HOME + "/AGENTS.md");
+            case GEMINI_CLI -> managed(agent, scope, project ? "GEMINI.md" : GEMINI_HOME + "/GEMINI.md");
             case CURSOR -> project
                     ? dedicated(agent, scope, ".cursor/rules/" + EXPORT_FILE_BASENAME + ".mdc",
                     "description: Axiomate agent memory (project rules and knowledge)\nglobs:\nalwaysApply: true")
@@ -169,11 +199,59 @@ public final class CodingAgentCatalog {
     }
 
     /**
+     * Whether an agent expands {@code @path} imports inside files from this location: Claude Code
+     * (CLAUDE.md, rules, auto memory) and Gemini CLI context files, including the GEMINI.md that
+     * Antigravity shares with Gemini CLI.
+     */
+    public static boolean supportsImports(MemoryLocation loc) {
+        return switch (loc.agent()) {
+            case CLAUDE_CODE, GEMINI_CLI -> true;
+            case ANTIGRAVITY -> loc.path().endsWith("GEMINI.md");
+            default -> false;
+        };
+    }
+
+    /**
+     * The location of a file reached through an {@code @path} import. It inherits the importing
+     * location's agent, scope, memory type and catalog path (so project binding carries over).
+     */
+    public static MemoryLocation importedFrom(MemoryLocation parent, Path importingFile) {
+        String by = importingFile.getFileName() == null ? importingFile.toString() : importingFile.getFileName().toString();
+        return new MemoryLocation(parent.agent(), parent.scope(), parent.path(), false, MemoryImports.IMPORTABLE_SUFFIXES,
+                parent.type(), true, null, "Imported by " + by + " (@import)");
+    }
+
+    /**
      * Claude Code stores per-project data under {@code ~/.claude/projects/<encoded>} where every
      * non-alphanumeric character of the absolute project path is replaced by '-'.
      */
     public static String encodeClaudeProjectDir(Path projectDir) {
         return projectDir.toAbsolutePath().normalize().toString().replaceAll("[^A-Za-z0-9]", "-");
+    }
+
+    static Path resolvePath(MemoryScope scope, String path, Path projectDir, AgentEnvironment env) {
+        String p = path;
+        if (p.contains(CLAUDE_PROJECT_TOKEN)) {
+            if (projectDir == null) return null;
+            p = p.replace(CLAUDE_PROJECT_TOKEN, encodeClaudeProjectDir(projectDir));
+        }
+        Path agentHome = null;
+        if (p.startsWith(CLAUDE_HOME)) {
+            agentHome = env.claudeHome();
+            p = p.substring(CLAUDE_HOME.length());
+        } else if (p.startsWith(CODEX_HOME)) {
+            agentHome = env.codexHome();
+            p = p.substring(CODEX_HOME.length());
+        } else if (p.startsWith(GEMINI_HOME)) {
+            agentHome = env.geminiHome();
+            p = p.substring(GEMINI_HOME.length());
+        }
+        if (agentHome != null) {
+            while (p.startsWith("/")) p = p.substring(1);
+            return p.isEmpty() ? agentHome : agentHome.resolve(p);
+        }
+        Path base = scope == MemoryScope.PROJECT ? projectDir : env.homeDir();
+        return base == null ? null : base.resolve(p);
     }
 
     private static MemoryLocation file(CodingAgent a, MemoryScope s, String path, MemoryType t, String desc) {

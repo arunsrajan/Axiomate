@@ -382,7 +382,7 @@ public class AppMenuBar extends JMenuBar {
         sessionManagerItem.addActionListener(e -> actions(mainFrame).openSessionManager());
         JMenuItem showSessionsItem = new JMenuItem("Show Project Sessions");
         showSessionsItem.addActionListener(e -> actions(mainFrame).showSidebarView(IdeActions.VIEW_SESSIONS));
-        JMenuItem importExternalItem = new JMenuItem("Import Sessions from Claude Code / Codex...");
+        JMenuItem importExternalItem = new JMenuItem("Import Sessions from Claude, Codex & Gemini...");
         importExternalItem.addActionListener(e -> actions(mainFrame).openExternalSessionImport());
         JMenuItem duplicateItem = new JMenuItem("Duplicate Active Session");
         duplicateItem.addActionListener(e -> {

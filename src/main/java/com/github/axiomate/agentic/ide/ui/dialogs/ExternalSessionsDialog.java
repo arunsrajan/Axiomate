@@ -2,6 +2,7 @@ package com.github.axiomate.agentic.ide.ui.dialogs;
 
 import com.github.axiomate.agentic.ide.agent.session.AgentSession;
 import com.github.axiomate.agentic.ide.agent.session.SessionManager;
+import com.github.axiomate.agentic.ide.interop.CodingAgent;
 import com.github.axiomate.agentic.ide.interop.ExternalSessionImporter;
 import com.github.axiomate.agentic.ide.interop.ExternalSessionImporter.ExternalSessionRef;
 import com.github.axiomate.agentic.ide.ui.util.Toast;
@@ -11,29 +12,35 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
- * Lists Claude Code and Codex conversations recorded for the current project and imports them as Axiomate
- * sessions, so work can continue here with full history.
+ * Lists Claude Code, OpenAI Codex and Google Gemini / Antigravity conversations recorded for the current project
+ * and imports them as Axiomate sessions, so work can continue here with full history.
  */
 public class ExternalSessionsDialog extends JDialog {
 
     private final Path projectDir;
-    private final ExternalSessionImporter importer = new ExternalSessionImporter();
+    private final ExternalSessionImporter importer;
     private final CheckTableModel<ExternalSessionRef> model;
     private final JTable table;
-    private final JCheckBox allProjects = new JCheckBox("Show Codex sessions from every project", false);
+    private final JCheckBox allProjects = new JCheckBox("Show sessions from every project", false);
     private final JLabel status = new JLabel(" ");
 
     public ExternalSessionsDialog(Window owner, Path projectDir) {
-        super(owner, "Import Sessions from Claude Code & Codex", ModalityType.APPLICATION_MODAL);
+        this(owner, projectDir, new ExternalSessionImporter());
+    }
+
+    public ExternalSessionsDialog(Window owner, Path projectDir, ExternalSessionImporter importer) {
+        super(owner, "Import Sessions from Claude Code, Codex & Gemini", ModalityType.APPLICATION_MODAL);
         this.projectDir = projectDir;
-        setSize(900, 540);
+        this.importer = importer != null ? importer : new ExternalSessionImporter();
+        setSize(920, 540);
         setLocationRelativeTo(owner);
         setLayout(new BorderLayout());
         add(DialogSupport.banner("Continue conversations from other agents",
-                "Reads Claude Code transcripts (~/.claude/projects) and Codex rollouts (~/.codex/sessions) for this project. "
+                "Reads Claude Code transcripts (~/.claude/projects), Codex rollouts (~/.codex/sessions) and Gemini / Antigravity transcripts (~/.gemini) for this project. "
                         + "Prompts, replies, reasoning and tool calls are preserved. Re-importing updates the same session."), BorderLayout.NORTH);
 
         model = new CheckTableModel<>(new String[]{"Agent", "Conversation", "Started", "Size"}, (r, c) -> switch (c) {
@@ -42,7 +49,7 @@ public class ExternalSessionsDialog extends JDialog {
             case 2 -> r.startedAt() != null ? r.startedAt() : "";
             default -> Math.max(1, r.sizeBytes() / 1024) + " KB";
         });
-        table = DialogSupport.table(model, 32, 120, 480, 150, 80);
+        table = DialogSupport.table(model, 32, 140, 460, 150, 80);
 
         JPanel center = new JPanel(new BorderLayout(0, 6));
         center.setBorder(new EmptyBorder(10, 12, 0, 12));
@@ -70,10 +77,13 @@ public class ExternalSessionsDialog extends JDialog {
             protected List<ExternalSessionRef> doInBackground() {
                 List<ExternalSessionRef> refs = new ArrayList<>(importer.findAll(projectDir));
                 if (all) {
-                    for (ExternalSessionRef r : importer.findSessions(com.github.axiomate.agentic.ide.interop.CodingAgent.CODEX, null)) {
-                        if (refs.stream().noneMatch(x -> x.file().equals(r.file()))) refs.add(r);
+                    for (CodingAgent agent : List.of(CodingAgent.CLAUDE_CODE, CodingAgent.CODEX, CodingAgent.ANTIGRAVITY, CodingAgent.GEMINI_CLI)) {
+                        for (ExternalSessionRef r : importer.findSessions(agent, null)) {
+                            if (refs.stream().noneMatch(x -> x.file().equals(r.file()))) refs.add(r);
+                        }
                     }
                 }
+                refs.sort(Comparator.comparing((ExternalSessionRef r) -> r.startedAt() == null ? "" : r.startedAt()).reversed());
                 return refs;
             }
 
@@ -83,7 +93,7 @@ public class ExternalSessionsDialog extends JDialog {
                     List<ExternalSessionRef> refs = get();
                     model.setRows(refs, r -> false);
                     status.setText(refs.isEmpty()
-                            ? "No Claude Code or Codex sessions found for this project."
+                            ? "No external sessions found for this project."
                             : refs.size() + " conversation(s) found");
                 } catch (Exception ex) {
                     status.setText("Scan failed: " + ex.getMessage());

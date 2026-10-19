@@ -16,6 +16,8 @@ import com.github.axiomate.agentic.ide.config.ConfigManager;
 import com.github.axiomate.agentic.ide.config.IdeConfig;
 import com.github.axiomate.agentic.ide.config.ModelDefinition;
 import com.github.axiomate.agentic.ide.config.ProviderConfig;
+import com.github.axiomate.agentic.ide.mcp.McpManager;
+import com.github.axiomate.agentic.ide.mcp.McpServerConfig;
 import com.github.axiomate.agentic.ide.plugins.SlashCommandRegistry;
 import com.github.axiomate.agentic.ide.plugins.SlashCommandRegistry.Dispatch;
 import com.github.axiomate.agentic.ide.plugins.SlashCommandRegistry.SlashCommand;
@@ -1096,7 +1098,7 @@ public class AIAgentPanel extends JPanel {
             AgentSession s = SessionManager.getInstance().getActiveSession();
             if (s != null) SessionsPanel.exportMarkdown(this, s);
         });
-        JMenuItem externalItem = new JMenuItem("⤓ Import from Claude Code / Codex…");
+        JMenuItem externalItem = new JMenuItem("⤓ Import from Claude / Codex / Gemini…");
         externalItem.addActionListener(e -> ideActions.openExternalSessionImport());
         JMenuItem managerItem = new JMenuItem("🗂 Session Manager (All Projects)…");
         managerItem.addActionListener(e -> ideActions.openSessionManager());
@@ -2154,7 +2156,7 @@ public class AIAgentPanel extends JPanel {
             terminalPanel.getMemoryPanel().importMemories();
         }));
         menu.addSeparator();
-        menu.add(menuItem("Import sessions from Claude Code / Codex…", () -> ideActions.openExternalSessionImport()));
+        menu.add(menuItem("Import sessions from Claude / Codex / Gemini…", () -> ideActions.openExternalSessionImport()));
         menu.add(menuItem("Export session as Markdown…", () -> {
             AgentSession s = SessionManager.getInstance().getActiveSession();
             if (s != null) SessionsPanel.exportMarkdown(this, s);
@@ -2225,6 +2227,34 @@ public class AIAgentPanel extends JPanel {
                 "builtin", args -> ideActions.openMemoryImport()));
         reg.register(new SlashCommand("export-memory", "Export memory to other coding agents", null, "builtin",
                 args -> ideActions.openMemoryExport()));
+        reg.register(new SlashCommand("mcp", "List connected MCP servers and commands: /mcp [server]", null, "builtin", args -> {
+            List<McpServerConfig> configs = McpManager.getInstance().getServerConfigs();
+            if (configs.isEmpty()) {
+                appendSystemBubble("No MCP servers configured. Open MCP Settings (Ctrl+Shift+P) or import from other agents.");
+                return;
+            }
+            StringBuilder sb = new StringBuilder("Model Context Protocol (MCP) Servers:\n");
+            for (McpServerConfig sc : configs) {
+                boolean connected = McpManager.getInstance().isConnected(sc.getName());
+                var tools = McpManager.getInstance().getDiscoveredTools(sc.getName());
+                var prompts = McpManager.getInstance().getDiscoveredPrompts(sc.getName());
+                sb.append(connected ? "🟢 " : "⚪ ").append(sc.getName())
+                        .append(" [").append(sc.getTransport()).append("] — ")
+                        .append(connected ? "connected" : (sc.isEnabled() ? "connecting/stopped" : "disabled"))
+                        .append(" (").append(tools.size()).append(" tools, ").append(prompts.size()).append(" prompts)\n");
+                if (connected && (!args.isBlank() && sc.getName().equalsIgnoreCase(args.trim()) || args.isBlank())) {
+                    for (var t : tools) {
+                        sb.append("    /").append(sc.getName()).append(":").append(t.getRawToolName())
+                                .append(" — ").append(t.getDescription().split("\n")[0]).append("\n");
+                    }
+                    for (var p : prompts) {
+                        sb.append("    /").append(sc.getName()).append(":").append(p.name())
+                                .append(" — ").append(p.description()).append("\n");
+                    }
+                }
+            }
+            appendSystemBubble(sb.toString().stripTrailing());
+        }));
     }
 
     private void scrollToBottom() {

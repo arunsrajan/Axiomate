@@ -11,12 +11,15 @@ import com.github.axiomate.agentic.ide.mcp.McpTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Discovers MCP server definitions configured in other coding agents and converts them to Axiomate
@@ -131,32 +134,32 @@ public class McpConfigInterop {
                 if (servers instanceof Map<?, ?> map) {
                     for (Map.Entry<?, ?> e : map.entrySet()) {
                         if (e.getValue() instanceof Map<?, ?> def) {
-                            list.add(fromToml(src.agent(), file, String.valueOf(e.getKey()), def));
+                            list.add(fromToml(src.agent(), file, String.valueOf(e.getKey()), def, projectDir));
                         }
                     }
                 }
             }
             case CLAUDE_USER_JSON -> {
                 JsonNode root = mapper.readTree(text);
-                addJsonServers(list, src.agent(), file, root.path("mcpServers"));
+                addJsonServers(list, src.agent(), file, root.path("mcpServers"), projectDir);
                 if (projectDir != null) {
                     String wanted = ProjectStateManager.normalizePath(projectDir.toFile());
                     JsonNode projects = root.path("projects");
                     for (Iterator<Map.Entry<String, JsonNode>> it = projects.fields(); it.hasNext(); ) {
                         Map.Entry<String, JsonNode> p = it.next();
                         if (p.getKey().replace('\\', '/').equalsIgnoreCase(wanted)) {
-                            addJsonServers(list, src.agent(), file, p.getValue().path("mcpServers"));
+                            addJsonServers(list, src.agent(), file, p.getValue().path("mcpServers"), projectDir);
                         }
                     }
                 }
             }
-            case JSON_SERVERS -> addJsonServers(list, src.agent(), file, mapper.readTree(text).path("servers"));
-            default -> addJsonServers(list, src.agent(), file, mapper.readTree(text).path("mcpServers"));
+            case JSON_SERVERS -> addJsonServers(list, src.agent(), file, mapper.readTree(text).path("servers"), projectDir);
+            default -> addJsonServers(list, src.agent(), file, mapper.readTree(text).path("mcpServers"), projectDir);
         }
         return list;
     }
 
-    private void addJsonServers(List<DiscoveredServer> out, CodingAgent agent, Path file, JsonNode servers) {
+    private void addJsonServers(List<DiscoveredServer> out, CodingAgent agent, Path file, JsonNode servers, Path projectDir) {
         if (servers == null || !servers.isObject()) return;
         for (Iterator<Map.Entry<String, JsonNode>> it = servers.fields(); it.hasNext(); ) {
             Map.Entry<String, JsonNode> e = it.next();
@@ -187,11 +190,19 @@ public class McpConfigInterop {
             boolean disabled = def.path("disabled").asBoolean(false) || !def.path("enabled").asBoolean(true);
             cfg.setEnabled(!disabled);
             cfg.setDescription("Imported from " + agent.getDisplayName());
+
+            if (projectDir != null) {
+                boolean retargeted = retargetToProject(cfg, projectDir, file);
+                if (retargeted) {
+                    String projName = projectDir.getFileName() != null ? projectDir.getFileName().toString() : projectDir.toString();
+                    note = combineNotes(note, "Retargeted to current project (" + projName + ")");
+                }
+            }
             out.add(new DiscoveredServer(agent, file, cfg, note));
         }
     }
 
-    private DiscoveredServer fromToml(CodingAgent agent, Path file, String name, Map<?, ?> def) {
+    private DiscoveredServer fromToml(CodingAgent agent, Path file, String name, Map<?, ?> def, Path projectDir) {
         McpServerConfig cfg = new McpServerConfig();
         cfg.setName(name);
         String note = null;
@@ -215,6 +226,14 @@ public class McpConfigInterop {
         }
         cfg.setEnabled(!Boolean.FALSE.equals(def.get("enabled")));
         cfg.setDescription("Imported from " + agent.getDisplayName());
+
+        if (projectDir != null) {
+            boolean retargeted = retargetToProject(cfg, projectDir, file);
+            if (retargeted) {
+                String projName = projectDir.getFileName() != null ? projectDir.getFileName().toString() : projectDir.toString();
+                note = combineNotes(note, "Retargeted to current project (" + projName + ")");
+            }
+        }
         return new DiscoveredServer(agent, file, cfg, note);
     }
 
@@ -223,6 +242,284 @@ public class McpConfigInterop {
             if (node.hasNonNull(k) && !node.get(k).asText().isBlank()) return node.get(k).asText();
         }
         return null;
+    }
+
+    // ------------------------------------------------------------------
+    // Project-bound Retargeting & Dynamic Resolution
+    // ------------------------------------------------------------------
+
+    public static boolean isProjectBound(McpServerConfig cfg) {
+        if (cfg == null) return false;
+        String name = cfg.getName() != null ? cfg.getName().toLowerCase(Locale.ROOT) : "";
+        if (name.contains("graphify") || name.contains("filesystem") || name.equals("git")) {
+            return true;
+        }
+        if (cfg.getCommand() != null) {
+            String cmd = cfg.getCommand().toLowerCase(Locale.ROOT);
+            if (cmd.contains("graphify")) return true;
+        }
+        if (cfg.getArgs() != null) {
+            for (String arg : cfg.getArgs()) {
+                if (arg == null) continue;
+                String lower = arg.toLowerCase(Locale.ROOT);
+                if (lower.contains("graphify-out") || lower.contains("graph.json")
+                        || lower.contains("server-filesystem") || lower.contains("mcp-server-git")
+                        || lower.contains("${project_root}") || lower.contains("${projectroot}")
+                        || lower.contains("${project_dir}") || lower.contains("${projectdir}")
+                        || lower.contains("${workspacefolder}") || lower.contains("${workspaceroot}")
+                        || lower.equals("--repository") || lower.equals("-r")) {
+                    return true;
+                }
+            }
+        }
+        if (cfg.getEnv() != null) {
+            for (Map.Entry<String, String> entry : cfg.getEnv().entrySet()) {
+                String val = entry.getValue() != null ? entry.getValue().toLowerCase(Locale.ROOT) : "";
+                if (val.contains("graphify-out") || val.contains("graph.json")
+                        || val.contains("${project_root}") || val.contains("${workspacefolder}")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public static boolean retargetToProject(McpServerConfig cfg, Path projectDir, Path sourceFile) {
+        if (cfg == null || projectDir == null) return false;
+
+        Path absTarget = projectDir.toAbsolutePath().normalize();
+        String targetSystem = absTarget.toString();
+        String targetForward = targetSystem.replace('\\', '/');
+
+        Path sourceProject = detectSourceProject(sourceFile);
+        String sourceProjectSystem = sourceProject != null ? sourceProject.toAbsolutePath().normalize().toString() : null;
+        String sourceProjectForward = sourceProjectSystem != null ? sourceProjectSystem.replace('\\', '/') : null;
+
+        boolean modified = false;
+
+        if (cfg.getArgs() != null && !cfg.getArgs().isEmpty()) {
+            List<String> newArgs = new ArrayList<>(cfg.getArgs());
+            for (int i = 0; i < newArgs.size(); i++) {
+                String original = newArgs.get(i);
+                String updated = retargetArg(cfg, original, i, newArgs, targetSystem, targetForward,
+                        sourceProjectSystem, sourceProjectForward, absTarget);
+                if (updated != null && !updated.equals(original)) {
+                    newArgs.set(i, updated);
+                    modified = true;
+                }
+            }
+            if (modified) {
+                cfg.setArgs(newArgs);
+            }
+        }
+
+        if (cfg.getEnv() != null && !cfg.getEnv().isEmpty()) {
+            Map<String, String> newEnv = new LinkedHashMap<>(cfg.getEnv());
+            boolean envModified = false;
+            for (Map.Entry<String, String> e : newEnv.entrySet()) {
+                String val = e.getValue();
+                String updated = retargetStringValue(val, targetSystem, targetForward,
+                        sourceProjectSystem, sourceProjectForward);
+                if (updated != null && !updated.equals(val)) {
+                    e.setValue(updated);
+                    envModified = true;
+                }
+            }
+            if (envModified) {
+                cfg.setEnv(newEnv);
+                modified = true;
+            }
+        }
+
+        return modified;
+    }
+
+    public static List<String> resolveArgs(McpServerConfig cfg, Path projectDir) {
+        if (cfg == null || cfg.getArgs() == null) return Collections.emptyList();
+        if (projectDir == null) return new ArrayList<>(cfg.getArgs());
+        McpServerConfig copy = new McpServerConfig();
+        copy.setName(cfg.getName());
+        copy.setCommand(cfg.getCommand());
+        copy.setArgs(new ArrayList<>(cfg.getArgs()));
+        copy.setEnv(cfg.getEnv() != null ? new LinkedHashMap<>(cfg.getEnv()) : new LinkedHashMap<>());
+        retargetToProject(copy, projectDir, null);
+        return copy.getArgs();
+    }
+
+    public static Map<String, String> resolveEnv(McpServerConfig cfg, Path projectDir) {
+        if (cfg == null || cfg.getEnv() == null) return Collections.emptyMap();
+        if (projectDir == null) return new LinkedHashMap<>(cfg.getEnv());
+        McpServerConfig copy = new McpServerConfig();
+        copy.setName(cfg.getName());
+        copy.setCommand(cfg.getCommand());
+        copy.setArgs(cfg.getArgs() != null ? new ArrayList<>(cfg.getArgs()) : new ArrayList<>());
+        copy.setEnv(new LinkedHashMap<>(cfg.getEnv()));
+        retargetToProject(copy, projectDir, null);
+        return copy.getEnv();
+    }
+
+    static Path detectSourceProject(Path sourceFile) {
+        if (sourceFile == null) return null;
+        try {
+            Path abs = sourceFile.toAbsolutePath().normalize();
+            Path parent = abs.getParent();
+            if (parent == null) return null;
+            String fileName = abs.getFileName().toString();
+            String parentName = parent.getFileName() != null ? parent.getFileName().toString() : "";
+
+            Path detected = null;
+            if (fileName.equals(".mcp.json") || fileName.equals("mcp.json")) {
+                if (parentName.equals(".cursor") || parentName.equals(".vscode") || parentName.equals(".roo") || parentName.equals(".codex")) {
+                    detected = parent.getParent();
+                } else {
+                    detected = parent;
+                }
+            } else if (parentName.equals(".codex") || parentName.equals(".cursor") || parentName.equals(".vscode")
+                    || parentName.equals(".gemini") || parentName.equals(".roo")) {
+                detected = parent.getParent();
+            } else if (parentName.equals("settings") && parent.getParent() != null
+                    && parent.getParent().getFileName() != null
+                    && parent.getParent().getFileName().toString().equals(".kiro")) {
+                detected = parent.getParent().getParent();
+            }
+
+            if (detected != null) {
+                Path home = Paths.get(System.getProperty("user.home", ".")).toAbsolutePath().normalize();
+                if (detected.toAbsolutePath().normalize().equals(home)) {
+                    return null;
+                }
+                return detected;
+            }
+        } catch (Exception e) {
+            log.debug("Could not determine source project from {}: {}", sourceFile, e.getMessage());
+        }
+        return null;
+    }
+
+    private static String replacePlaceholders(String str, String targetSystem, String targetForward) {
+        if (str == null || str.isBlank()) return str;
+        String s = str;
+        boolean preferForward = s.contains("/") && !s.contains("\\");
+        String rep = preferForward ? targetForward : targetSystem;
+        s = s.replace("${PROJECT_ROOT}", rep);
+        s = s.replace("${project_root}", rep);
+        s = s.replace("${projectRoot}", rep);
+        s = s.replace("${PROJECT_DIR}", rep);
+        s = s.replace("${project_dir}", rep);
+        s = s.replace("${projectDir}", rep);
+        s = s.replace("${workspaceFolder}", rep);
+        s = s.replace("${workspaceRoot}", rep);
+        s = s.replace("${WORKSPACE_FOLDER}", rep);
+        s = s.replace("${WORKSPACE_ROOT}", rep);
+        s = s.replace("${cwd}", rep);
+        s = s.replace("${PWD}", rep);
+        s = s.replace("$PROJECT_ROOT", rep);
+        s = s.replace("%PROJECT_ROOT%", rep);
+        return s;
+    }
+
+    static String retargetArg(McpServerConfig cfg, String original, int index, List<String> allArgs,
+                              String targetSystem, String targetForward,
+                              String sourceProjectSystem, String sourceProjectForward,
+                              Path absTarget) {
+        if (original == null) return null;
+        String str = replacePlaceholders(original, targetSystem, targetForward);
+
+        String prevArg = index > 0 ? allArgs.get(index - 1) : "";
+        String prevArgLower = prevArg.toLowerCase(Locale.ROOT);
+        String strLower = str.toLowerCase(Locale.ROOT);
+        String serverName = cfg.getName() != null ? cfg.getName().toLowerCase(Locale.ROOT) : "";
+
+        boolean preferForward = original.contains("/") && !original.contains("\\");
+        String graphSubpath = preferForward ? "graphify-out/graph.json" : ("graphify-out" + File.separator + "graph.json");
+        String targetGraphPath = preferForward ? (targetForward + "/" + graphSubpath) : (targetSystem + File.separator + graphSubpath);
+
+        boolean isGraphifyServer = serverName.contains("graphify")
+                || (cfg.getCommand() != null && cfg.getCommand().toLowerCase(Locale.ROOT).contains("graphify"))
+                || allArgs.stream().anyMatch(a -> a != null && (a.equalsIgnoreCase("graphify.serve") || a.contains("graphify-mcp")));
+
+        // 1. Graphify: graph.json, graphify-out, or argument following graphify.serve or --graph
+        if (strLower.contains("graphify-out") || strLower.endsWith("graph.json")
+                || prevArgLower.equals("graphify.serve") || prevArgLower.equals("--graph")
+                || (isGraphifyServer && index == allArgs.size() - 1 && !original.startsWith("-"))) {
+            return targetGraphPath;
+        }
+
+        // 2. Filesystem: argument following @modelcontextprotocol/server-filesystem
+        if (prevArgLower.contains("server-filesystem")) {
+            return preferForward ? targetForward : targetSystem;
+        }
+
+        // 3. Git: argument following --repository or -r
+        if (prevArgLower.equals("--repository") || prevArgLower.equals("-r")) {
+            return preferForward ? targetForward : targetSystem;
+        }
+
+        // 4. Server-specific fallback for filesystem or git if argument looks like a foreign project directory
+        if (serverName.equals("filesystem") || serverName.equals("git")) {
+            if (isLikelyDirectoryPath(str)) {
+                return preferForward ? targetForward : targetSystem;
+            }
+        }
+
+        // 5. Foreign source project replacement
+        if (sourceProjectSystem != null && !sourceProjectSystem.equalsIgnoreCase(targetSystem)) {
+            if (str.toLowerCase(Locale.ROOT).contains(sourceProjectSystem.toLowerCase(Locale.ROOT))) {
+                str = replaceIgnoreCase(str, sourceProjectSystem, targetSystem);
+            }
+            if (sourceProjectForward != null && str.toLowerCase(Locale.ROOT).contains(sourceProjectForward.toLowerCase(Locale.ROOT))) {
+                str = replaceIgnoreCase(str, sourceProjectForward, targetForward);
+            }
+        }
+
+        return str;
+    }
+
+    static String retargetStringValue(String val, String targetSystem, String targetForward,
+                                      String sourceProjectSystem, String sourceProjectForward) {
+        if (val == null || val.isBlank()) return val;
+        String s = replacePlaceholders(val, targetSystem, targetForward);
+        String sLower = s.toLowerCase(Locale.ROOT);
+        boolean preferForward = val.contains("/") && !val.contains("\\");
+        String graphSubpath = preferForward ? "graphify-out/graph.json" : ("graphify-out" + File.separator + "graph.json");
+        String targetGraphPath = preferForward ? (targetForward + "/" + graphSubpath) : (targetSystem + File.separator + graphSubpath);
+
+        if (sLower.contains("graphify-out") || sLower.endsWith("graph.json")) {
+            return targetGraphPath;
+        }
+
+        if (sourceProjectSystem != null && !sourceProjectSystem.equalsIgnoreCase(targetSystem)) {
+            if (s.toLowerCase(Locale.ROOT).contains(sourceProjectSystem.toLowerCase(Locale.ROOT))) {
+                s = replaceIgnoreCase(s, sourceProjectSystem, targetSystem);
+            }
+            if (sourceProjectForward != null && s.toLowerCase(Locale.ROOT).contains(sourceProjectForward.toLowerCase(Locale.ROOT))) {
+                s = replaceIgnoreCase(s, sourceProjectForward, targetForward);
+            }
+        }
+        return s;
+    }
+
+    private static boolean isLikelyDirectoryPath(String s) {
+        if (s == null || s.isBlank() || s.startsWith("-")) return false;
+        String lower = s.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".py")
+                || lower.endsWith(".json") || lower.endsWith(".exe") || lower.endsWith(".jar")) {
+            return false;
+        }
+        return s.contains(":\\") || s.contains(":/") || s.startsWith("/") || s.contains("%20");
+    }
+
+    private static String replaceIgnoreCase(String source, String target, String replacement) {
+        if (source == null || target == null || target.isEmpty()) return source;
+        return Pattern.compile(Pattern.quote(target), Pattern.CASE_INSENSITIVE)
+                .matcher(source)
+                .replaceAll(Matcher.quoteReplacement(replacement));
+    }
+
+    private static String combineNotes(String a, String b) {
+        if (a == null || a.isBlank()) return b;
+        if (b == null || b.isBlank()) return a;
+        return a + " · " + b;
     }
 
     // ------------------------------------------------------------------

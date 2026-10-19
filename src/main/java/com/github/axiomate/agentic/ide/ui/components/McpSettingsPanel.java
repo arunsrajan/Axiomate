@@ -180,14 +180,26 @@ public class McpSettingsPanel extends JPanel {
         enabledCheck.setSelected(cfg.isEnabled());
 
         var tools = McpManager.getInstance().getDiscoveredTools(cfg.getName());
-        if (tools.isEmpty()) {
-            discoveredToolsArea.setText("No active tools discovered yet. Click 'Test Connection' or enable server.");
+        var prompts = McpManager.getInstance().getDiscoveredPrompts(cfg.getName());
+        if (tools.isEmpty() && prompts.isEmpty()) {
+            discoveredToolsArea.setText("No active tools or prompts discovered yet. Click 'Test Connection' or enable server.");
         } else {
-            StringBuilder sb = new StringBuilder("Discovered " + tools.size() + " MCP tools:\n");
-            for (var t : tools) {
-                sb.append("• ").append(t.getName()).append(": ").append(t.getDescription()).append("\n\n");
+            StringBuilder sb = new StringBuilder();
+            if (!tools.isEmpty()) {
+                sb.append("Discovered ").append(tools.size()).append(" MCP Tool(s) (slash command: /").append(cfg.getName()).append(":<tool>):\n");
+                for (var t : tools) {
+                    sb.append("• /").append(cfg.getName()).append(":").append(t.getRawToolName())
+                            .append(" — ").append(t.getDescription()).append("\n\n");
+                }
             }
-            discoveredToolsArea.setText(sb.toString());
+            if (!prompts.isEmpty()) {
+                sb.append("Discovered ").append(prompts.size()).append(" MCP Prompt(s) (slash command: /").append(cfg.getName()).append(":<prompt>):\n");
+                for (var p : prompts) {
+                    sb.append("• /").append(cfg.getName()).append(":").append(p.name())
+                            .append(" — ").append(p.description()).append("\n\n");
+                }
+            }
+            discoveredToolsArea.setText(sb.toString().trim());
         }
     }
 
