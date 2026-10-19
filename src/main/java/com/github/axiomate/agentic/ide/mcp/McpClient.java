@@ -41,6 +41,8 @@ public class McpClient implements AutoCloseable {
     private HttpClient httpClient;
 
     private volatile boolean connected = false;
+    /** Capabilities declared by the server at initialize (tools, prompts, etc.) */
+    private volatile JsonNode serverCapabilities;
     /** Session id an HTTP (streamable) server assigns at initialize; sent back with every later request. */
     private volatile String httpSessionId;
 
@@ -68,12 +70,26 @@ public class McpClient implements AutoCloseable {
     }
 
     private void connectStdio() throws IOException {
-        List<String> commandList = commandLine(config.getCommand(), config.getArgs(),
+        File projectDir = com.github.axiomate.agentic.ide.util.ProjectManager.getInstance().getCurrentProjectDirectory();
+        java.nio.file.Path projPath = projectDir != null ? projectDir.toPath() : null;
+        List<String> effectiveArgs = com.github.axiomate.agentic.ide.interop.McpConfigInterop.resolveArgs(config, projPath);
+        List<String> commandList = commandLine(config.getCommand(), effectiveArgs,
                 com.github.axiomate.agentic.ide.util.OSUtils.isWindows());
 
         ProcessBuilder pb = new ProcessBuilder(commandList);
-        if (config.getEnv() != null && !config.getEnv().isEmpty()) {
-            pb.environment().putAll(config.getEnv());
+        if (projectDir != null && projectDir.isDirectory()) {
+            pb.directory(projectDir);
+        }
+        Map<String, String> effectiveEnv = com.github.axiomate.agentic.ide.interop.McpConfigInterop.resolveEnv(config, projPath);
+        if (effectiveEnv != null && !effectiveEnv.isEmpty()) {
+            pb.environment().putAll(effectiveEnv);
+        }
+        if (projectDir != null) {
+            String p = projectDir.getAbsolutePath();
+            pb.environment().put("PROJECT_ROOT", p);
+            pb.environment().put("PROJECT_DIR", p);
+            pb.environment().put("WORKSPACE_FOLDER", p);
+            pb.environment().put("WORKSPACE_ROOT", p);
         }
         pb.redirectError(ProcessBuilder.Redirect.INHERIT);
 
@@ -85,7 +101,8 @@ public class McpClient implements AutoCloseable {
         Thread reader = new Thread(this::listenStdioOutput, "mcp-" + config.getName());
         reader.setDaemon(true);
         reader.start();
-        log.info("Started MCP server process for '{}': {}", config.getName(), commandList);
+        log.info("Started MCP server process for '{}' in {}: {}", config.getName(),
+                projectDir != null ? projectDir.getAbsolutePath() : "<default>", commandList);
     }
 
     private void connectSse() {
@@ -210,10 +227,110 @@ public class McpClient implements AutoCloseable {
         if (response.has("error")) {
             throw new RuntimeException("MCP initialize failed: " + response.path("error").path("message").asText());
         }
+        this.serverCapabilities = response.path("result").path("capabilities");
 
         // Send notifications/initialized
         sendNotification("notifications/initialized", mapper.createObjectNode());
-        log.info("MCP server '{}' initialized successfully", config.getName());
+        log.info("MCP server '{}' initialized successfully (capabilities: tools={}, prompts={})",
+                config.getName(), supportsTools(), supportsPrompts());
+    }
+
+    public boolean supportsPrompts() {
+        return serverCapabilities != null && serverCapabilities.has("prompts");
+    }
+
+    public boolean supportsTools() {
+        return serverCapabilities == null || serverCapabilities.has("tools");
+    }
+
+    public List<McpPromptDefinition> listPrompts() {
+        if (!connected) {
+            try {
+                connect();
+            } catch (Exception e) {
+                log.debug("Could not connect to MCP server '{}' for prompts: {}", config.getName(), e.getMessage());
+                return Collections.emptyList();
+            }
+        }
+        if (!supportsPrompts()) {
+            return Collections.emptyList();
+        }
+        try {
+            JsonNode response = sendRequest("prompts/list", mapper.createObjectNode());
+            if (response.has("error")) {
+                log.debug("MCP prompts/list returned error on '{}': {}", config.getName(),
+                        response.path("error").path("message").asText());
+                return Collections.emptyList();
+            }
+            List<McpPromptDefinition> prompts = new ArrayList<>();
+            JsonNode promptsArray = response.path("result").path("prompts");
+            if (promptsArray.isArray()) {
+                for (JsonNode pNode : promptsArray) {
+                    String name = pNode.path("name").asText();
+                    String desc = pNode.path("description").asText("");
+                    List<McpPromptArgument> args = new ArrayList<>();
+                    JsonNode argsArray = pNode.path("arguments");
+                    if (argsArray.isArray()) {
+                        for (JsonNode aNode : argsArray) {
+                            args.add(new McpPromptArgument(
+                                    aNode.path("name").asText(),
+                                    aNode.path("description").asText(""),
+                                    aNode.path("required").asBoolean(false)
+                            ));
+                        }
+                    }
+                    prompts.add(new McpPromptDefinition(name, desc, args));
+                }
+            }
+            return prompts;
+        } catch (Exception e) {
+            log.debug("Failed to list prompts for MCP server '{}': {}", config.getName(), e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    public String getPrompt(String promptName, Map<String, String> arguments) throws Exception {
+        if (!connected) {
+            connect();
+        }
+        ObjectNode params = mapper.createObjectNode();
+        params.put("name", promptName);
+        if (arguments != null && !arguments.isEmpty()) {
+            ObjectNode argsNode = params.putObject("arguments");
+            for (Map.Entry<String, String> entry : arguments.entrySet()) {
+                argsNode.put(entry.getKey(), entry.getValue());
+            }
+        }
+        JsonNode response = sendRequest("prompts/get", params);
+        if (response.has("error")) {
+            throw new IOException("MCP prompts/get error: " + response.path("error").path("message").asText());
+        }
+        JsonNode result = response.path("result");
+        JsonNode messages = result.path("messages");
+        if (messages.isArray() && !messages.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode msg : messages) {
+                JsonNode content = msg.path("content");
+                if (content.isTextual()) {
+                    sb.append(content.asText()).append("\n\n");
+                } else if (content.has("text")) {
+                    sb.append(content.path("text").asText()).append("\n\n");
+                } else if (content.isArray()) {
+                    for (JsonNode item : content) {
+                        if (item.has("text")) {
+                            sb.append(item.path("text").asText()).append("\n");
+                        }
+                    }
+                    sb.append("\n");
+                }
+            }
+            String text = sb.toString().trim();
+            if (!text.isEmpty()) return text;
+        }
+        if (result.has("description") && !result.path("description").asText().isBlank()) {
+            return result.path("description").asText();
+        }
+        return result.toString();
     }
 
     public List<McpToolDefinition> listTools() throws Exception {
@@ -376,8 +493,13 @@ public class McpClient implements AutoCloseable {
         process = null;
         processWriter = null;
         httpSessionId = null;
+        serverCapabilities = null;
     }
 
     public record McpToolDefinition(String name, String description, JsonNode inputSchema) {}
+
+    public record McpPromptArgument(String name, String description, boolean required) {}
+
+    public record McpPromptDefinition(String name, String description, List<McpPromptArgument> arguments) {}
 }
 

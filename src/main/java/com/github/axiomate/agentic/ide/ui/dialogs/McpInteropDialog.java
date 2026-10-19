@@ -11,6 +11,7 @@ import com.github.axiomate.agentic.ide.ui.util.Toast;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.io.File;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -25,7 +26,8 @@ public class McpInteropDialog extends JDialog {
 
     public McpInteropDialog(Window owner, Path projectDir, boolean exportTab) {
         super(owner, "MCP Servers ⇄ Coding Agents", ModalityType.APPLICATION_MODAL);
-        this.projectDir = projectDir;
+        File current = com.github.axiomate.agentic.ide.util.ProjectManager.getInstance().getCurrentProjectDirectory();
+        this.projectDir = projectDir != null ? projectDir : (current != null ? current.toPath() : null);
         setSize(940, 580);
         setLocationRelativeTo(owner);
         setLayout(new BorderLayout());
@@ -60,7 +62,7 @@ public class McpInteropDialog extends JDialog {
                     + (d.note() != null ? " · " + d.note() : "");
         });
         JTable table = DialogSupport.table(model, 32, 140, 120, 80, 360, 200);
-        JCheckBox enable = new JCheckBox("Start imported servers now (otherwise they are added disabled)", false);
+        JCheckBox enable = new JCheckBox("Start imported servers now (otherwise they are added disabled)", true);
         JCheckBox overwrite = new JCheckBox("Overwrite servers that already exist in Axiomate", false);
         JLabel status = new JLabel(" ");
         JButton importBtn = DialogSupport.primary("Import Selected");

@@ -24,14 +24,23 @@ public class SlashCommandRegistry {
 
     /**
      * @param template prompt template ({@code $ARGUMENTS}, {@code $1..$9}); ignored when {@code action} is set
-     * @param source   who registered the command, e.g. "builtin", "plugin:java-rules", "claude-code"
+     * @param source   who registered the command, e.g. "builtin", "plugin:java-rules", "claude-code", "mcp:server"
      * @param action   IDE action to run instead of sending a prompt, or null
+     * @param expander dynamic template expander function, or null to use {@code template}
      */
     public record SlashCommand(String name, String description, String template, String source,
-                               Consumer<String> action) {
+                               Consumer<String> action, java.util.function.Function<String, String> expander) {
+
+        public SlashCommand(String name, String description, String template, String source, Consumer<String> action) {
+            this(name, description, template, source, action, null);
+        }
 
         public SlashCommand(String name, String description, String template, String source) {
-            this(name, description, template, source, null);
+            this(name, description, template, source, null, null);
+        }
+
+        public SlashCommand(String name, String description, String source, java.util.function.Function<String, String> expander) {
+            this(name, description, null, source, null, expander);
         }
 
         private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\$(ARGUMENTS|[1-9])(?!\\d)");
@@ -41,6 +50,16 @@ public class SlashCommandRegistry {
         }
 
         public String expand(String arguments) {
+            if (expander != null) {
+                try {
+                    String dynamic = expander.apply(arguments);
+                    if (dynamic != null && !dynamic.isBlank()) {
+                        return dynamic.strip();
+                    }
+                } catch (Exception e) {
+                    log.warn("Dynamic command expansion failed for /{}: {}", name, e.getMessage());
+                }
+            }
             String args = arguments == null ? "" : arguments.trim();
             String t = template == null ? "" : template;
             boolean hasPlaceholder = PLACEHOLDER.matcher(t).find();
@@ -93,7 +112,7 @@ public class SlashCommandRegistry {
             log.debug("Ignoring command /{} from {}: name reserved by a built-in", key, command.source());
             return;
         }
-        commands.put(key, new SlashCommand(key, command.description(), command.template(), command.source(), command.action()));
+        commands.put(key, new SlashCommand(key, command.description(), command.template(), command.source(), command.action(), command.expander()));
         notifyListeners();
     }
 
@@ -110,7 +129,18 @@ public class SlashCommandRegistry {
     }
 
     public synchronized SlashCommand find(String name) {
-        return commands.get(normalizeName(name));
+        String key = normalizeName(name);
+        SlashCommand cmd = commands.get(key);
+        if (cmd != null) return cmd;
+        // Fallback: match by suffix if unambiguous (e.g. "execute_sql" for "sqlite:execute_sql")
+        SlashCommand suffixMatch = null;
+        for (Map.Entry<String, SlashCommand> e : commands.entrySet()) {
+            if (e.getKey().endsWith(":" + key)) {
+                if (suffixMatch != null) return null; // ambiguous, requires server prefix
+                suffixMatch = e.getValue();
+            }
+        }
+        return suffixMatch;
     }
 
     public synchronized List<SlashCommand> all() {
@@ -120,13 +150,13 @@ public class SlashCommandRegistry {
     }
 
     /**
-     * Commands whose name starts with the given prefix (without the leading slash).
+     * Commands whose name starts with the given prefix (without the leading slash) or match a namespaced suffix.
      */
     public synchronized List<SlashCommand> complete(String prefix) {
         String p = normalizeName(prefix);
         List<SlashCommand> list = new ArrayList<>();
         for (SlashCommand c : all()) {
-            if (c.name().startsWith(p)) list.add(c);
+            if (c.name().startsWith(p) || (p.length() >= 2 && c.name().contains(p))) list.add(c);
         }
         return list;
     }

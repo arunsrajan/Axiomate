@@ -141,4 +141,73 @@ class McpConfigInteropTest {
         assertTrue(interop.discover(project).stream().anyMatch(d -> d.config().getName().equals("github")
                 && d.agent() == CodingAgent.CLAUDE_CODE));
     }
+
+    @Test
+    @DisplayName("Retargets foreign graphify, filesystem and git paths to the current session project")
+    void retargetProjectBoundServers() throws IOException {
+        Path home = Files.createDirectories(tmp.resolve("home2"));
+        Path project = Files.createDirectories(tmp.resolve("my-active-project"));
+        write(home.resolve(".gemini/config/mcp_config.json"), """
+                {
+                  "mcpServers": {
+                    "graphify": {
+                      "command": "uv",
+                      "args": [
+                        "run", "--with", "graphifyy", "--with", "mcp", "-m", "graphify.serve",
+                        "C:/DEVELOPMENT/GodotGames/MetroidvaniaDeveloperSystemAntigravity/MetroidvaniaDeveloperSystem/graphify-out/graph.json"
+                      ]
+                    },
+                    "filesystem": {
+                      "command": "npx",
+                      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\\\DEVELOPMENT\\\\Apache%20Camel\\\\demo"]
+                    },
+                    "git": {
+                      "command": "uvx",
+                      "args": ["mcp-server-git", "--repository", "C:\\\\DEVELOPMENT\\\\Apache%20Camel\\\\demo"]
+                    }
+                  }
+                }
+                """);
+
+        List<DiscoveredServer> found = new McpConfigInterop(home).discover(project);
+        Map<String, DiscoveredServer> byName = new java.util.HashMap<>();
+        found.forEach(d -> byName.put(d.config().getName(), d));
+
+        DiscoveredServer g = byName.get("graphify");
+        assertNotNull(g);
+        String graphArg = g.config().getArgs().get(g.config().getArgs().size() - 1);
+        String expectedGraph = project.resolve("graphify-out/graph.json").toAbsolutePath().normalize().toString().replace('\\', '/');
+        assertEquals(expectedGraph, graphArg.replace('\\', '/'));
+        assertNotNull(g.note());
+        assertTrue(g.note().contains("Retargeted to current project"), "Note mentions retargeted: " + g.note());
+
+        DiscoveredServer fs = byName.get("filesystem");
+        assertNotNull(fs);
+        String fsArg = fs.config().getArgs().get(fs.config().getArgs().size() - 1);
+        assertEquals(project.toAbsolutePath().normalize().toString(), fsArg);
+
+        DiscoveredServer git = byName.get("git");
+        assertNotNull(git);
+        String gitArg = git.config().getArgs().get(git.config().getArgs().size() - 1);
+        assertEquals(project.toAbsolutePath().normalize().toString(), gitArg);
+    }
+
+    @Test
+    @DisplayName("resolveArgs expands placeholders and dynamically resolves graphify paths")
+    void resolveDynamicProjectArgs() {
+        Path project = tmp.resolve("sample-project");
+
+        McpServerConfig graphifyCfg = new McpServerConfig("graphify", "uv",
+                List.of("run", "--with", "graphifyy", "--with", "mcp", "-m", "graphify.serve", "old/path/graphify-out/graph.json"));
+        assertTrue(McpConfigInterop.isProjectBound(graphifyCfg));
+        List<String> resolved = McpConfigInterop.resolveArgs(graphifyCfg, project);
+        String expectedGraph = project.resolve("graphify-out/graph.json").toAbsolutePath().normalize().toString().replace('\\', '/');
+        assertEquals(expectedGraph, resolved.get(resolved.size() - 1).replace('\\', '/'));
+
+        McpServerConfig placeholderCfg = new McpServerConfig("filesystem", "npx",
+                List.of("-y", "@modelcontextprotocol/server-filesystem", "${PROJECT_ROOT}"));
+        assertTrue(McpConfigInterop.isProjectBound(placeholderCfg));
+        List<String> resolvedFs = McpConfigInterop.resolveArgs(placeholderCfg, project);
+        assertEquals(project.toAbsolutePath().normalize().toString(), resolvedFs.get(2));
+    }
 }

@@ -39,7 +39,7 @@ public class SlashCommandCompletion {
         });
         JScrollPane scroll = new JScrollPane(list);
         scroll.setBorder(null);
-        scroll.setPreferredSize(new Dimension(420, 200));
+        scroll.setPreferredSize(new Dimension(520, 220));
         JLabel header = new JLabel(" Slash commands");
         header.setFont(UIUtils.uiFont(Font.BOLD, 10.5f));
         header.setBorder(new EmptyBorder(3, 6, 3, 6));

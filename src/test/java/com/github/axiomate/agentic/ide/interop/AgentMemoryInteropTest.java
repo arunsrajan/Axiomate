@@ -34,7 +34,7 @@ class AgentMemoryInteropTest {
     void setUp() throws IOException {
         home = Files.createDirectories(tmp.resolve("home"));
         project = Files.createDirectories(tmp.resolve("work/my-app"));
-        interop = new AgentMemoryInterop(home);
+        interop = new AgentMemoryInterop(AgentEnvironment.isolated(home));
     }
 
     private static void write(Path file, String content) throws IOException {

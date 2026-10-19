@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -99,6 +100,128 @@ class ExternalSessionImporterTest {
         assertEquals(List.of(AgentRole.USER, AgentRole.THINKING, AgentRole.TOOL_CALL, AgentRole.TOOL, AgentRole.ASSISTANT), roles);
         assertEquals("shell", s.getMessages().get(3).getToolName());
         assertEquals("pom.xml\n", s.getMessages().get(3).getContent());
+    }
+
+    @Test
+    @DisplayName("Imports Google Antigravity transcript JSONL with thoughts, tool calls and outputs")
+    void antigravity() throws IOException {
+        Path home = Files.createDirectories(tmp.resolve("home"));
+        Path project = Files.createDirectories(tmp.resolve("proj"));
+        String cwd = project.toFile().getCanonicalPath().replace("\\", "\\\\");
+        Path convDir = home.resolve(".gemini/antigravity-ide/brain/conv-123");
+        Path transcript = convDir.resolve(".system_generated/logs/transcript.jsonl");
+
+        write(transcript, String.join("\n",
+                "{\"step_index\":0,\"source\":\"USER_EXPLICIT\",\"type\":\"USER_INPUT\",\"status\":\"DONE\",\"created_at\":\"2026-09-01T12:00:00Z\",\"content\":\"<USER_REQUEST>\\nOptimize SQL queries\\n</USER_REQUEST>\\n<ADDITIONAL_METADATA>\\nThe user has 1 active workspaces, each defined by a URI and a CorpusName. Multiple URIs potentially map to the same CorpusName. The mapping is shown as follows in the format [URI] -> [CorpusName]:\\n" + cwd + " -> my-project\\n</ADDITIONAL_METADATA>\\n<USER_SETTINGS_CHANGE>\\nThe user changed setting `Model Selection` from None to Gemini 2.5 Pro (High).\\n</USER_SETTINGS_CHANGE>\"}",
+                "{\"step_index\":1,\"source\":\"MODEL\",\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"created_at\":\"2026-09-01T12:00:05Z\",\"content\":\"Analyzing queries...\",\"thinking\":\"Check explain plan first.\",\"tool_calls\":[{\"name\":\"run_command\",\"args\":{\"CommandLine\":\"explain analyze select * from users\"}}]}",
+                "{\"step_index\":2,\"source\":\"MODEL\",\"type\":\"RUN_COMMAND\",\"status\":\"DONE\",\"created_at\":\"2026-09-01T12:00:08Z\",\"content\":\"Seq Scan on users (cost=0.00..35.50 rows=2550)\"}",
+                "{\"step_index\":3,\"source\":\"MODEL\",\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"created_at\":\"2026-09-01T12:00:10Z\",\"content\":\"Add an index on users(email).\"}"
+        ));
+
+        // Another conversation for a different project
+        Path otherConv = home.resolve(".gemini/antigravity-ide/brain/conv-other/.system_generated/logs/transcript.jsonl");
+        String otherCwd = tmp.resolve("other").toFile().getCanonicalPath().replace("\\", "\\\\");
+        write(otherConv, "{\"step_index\":0,\"source\":\"USER_EXPLICIT\",\"type\":\"USER_INPUT\",\"created_at\":\"2026-09-01T11:00:00Z\",\"content\":\"<USER_REQUEST>Other work</USER_REQUEST>\\n" + otherCwd + " -> other\"}\n");
+
+        ExternalSessionImporter importer = new ExternalSessionImporter(home);
+        List<ExternalSessionRef> refs = importer.findSessions(CodingAgent.ANTIGRAVITY, project);
+        assertEquals(1, refs.size(), "Only the matching project's Antigravity conversation is returned");
+        assertEquals("Optimize SQL queries", refs.get(0).title());
+        assertEquals("conv-123", refs.get(0).externalId());
+
+        assertEquals(2, importer.findSessions(CodingAgent.ANTIGRAVITY, null).size(), "null project lists all conversations");
+
+        AgentSession session = importer.load(refs.get(0));
+        assertEquals("antigravity-conv-123", session.getId());
+        assertEquals("GEMINI", session.getProviderId());
+        assertEquals("gemini-2.5-pro", session.getModelId());
+        assertTrue(session.getOrigin().contains("Google Antigravity"));
+
+        List<AgentRole> roles = session.getMessages().stream().map(AgentMessage::getRole).toList();
+        assertEquals(List.of(AgentRole.USER, AgentRole.THINKING, AgentRole.ASSISTANT, AgentRole.TOOL_CALL, AgentRole.TOOL, AgentRole.ASSISTANT), roles);
+
+        assertEquals("Optimize SQL queries", session.getMessages().get(0).getContent());
+        assertEquals("Check explain plan first.", session.getMessages().get(1).getContent());
+        assertEquals("run_command", session.getMessages().get(3).getToolName());
+        assertEquals("Seq Scan on users (cost=0.00..35.50 rows=2550)", session.getMessages().get(4).getContent());
+        assertEquals("run command", session.getMessages().get(4).getToolName());
+    }
+
+    @Test
+    @DisplayName("Imports Google Gemini CLI JSON chat sessions with user, model and tool interactions")
+    void geminiCli() throws IOException {
+        Path home = Files.createDirectories(tmp.resolve("home"));
+        Path project = Files.createDirectories(tmp.resolve("proj"));
+        String cwd = project.toFile().getCanonicalPath().replace("\\", "\\\\");
+        Path chatFile = home.resolve(".gemini/chats/session-456.json");
+
+        write(chatFile, """
+                {
+                  "sessionId": "session-456",
+                  "cwd": "%s",
+                  "timestamp": "2026-09-01T14:00:00Z",
+                  "model": "gemini-2.0-flash",
+                  "messages": [
+                    {"role": "user", "content": "Refactor router handlers", "timestamp": "2026-09-01T14:00:00Z"},
+                    {
+                      "role": "model",
+                      "content": "Refactored handlers into separate module.",
+                      "thought": "Group routes by resource name",
+                      "timestamp": "2026-09-01T14:00:05Z",
+                      "toolCalls": [{"name": "write_file", "args": {"path": "router.js"}}]
+                    },
+                    {"role": "tool", "name": "write_file", "content": "File saved successfully", "timestamp": "2026-09-01T14:00:08Z"}
+                  ]
+                }
+                """.formatted(cwd));
+
+        ExternalSessionImporter importer = new ExternalSessionImporter(home);
+        List<ExternalSessionRef> refs = importer.findSessions(CodingAgent.GEMINI_CLI, project);
+        assertEquals(1, refs.size());
+        assertEquals("Refactor router handlers", refs.get(0).title());
+        assertEquals("session-456", refs.get(0).externalId());
+
+        AgentSession session = importer.load(refs.get(0));
+        assertEquals("gemini-cli-session-456", session.getId());
+        assertEquals("GEMINI", session.getProviderId());
+        assertEquals("gemini-2.0-flash", session.getModelId());
+        assertTrue(session.getOrigin().contains("Gemini CLI"));
+
+        List<AgentRole> roles = session.getMessages().stream().map(AgentMessage::getRole).toList();
+        assertEquals(List.of(AgentRole.USER, AgentRole.THINKING, AgentRole.ASSISTANT, AgentRole.TOOL_CALL, AgentRole.TOOL), roles);
+        assertEquals("Group routes by resource name", session.getMessages().get(1).getContent());
+        assertEquals("write_file", session.getMessages().get(3).getToolName());
+        assertEquals("File saved successfully", session.getMessages().get(4).getContent());
+    }
+
+    @Test
+    @DisplayName("Honors CLAUDE_CONFIG_DIR, CODEX_HOME and GEMINI_CLI_HOME environment overrides")
+    void environmentOverrides() throws IOException {
+        Path customClaude = tmp.resolve("custom-claude");
+        Path customCodex = tmp.resolve("custom-codex");
+        Path customGemini = tmp.resolve("custom-gemini");
+        Path project = Files.createDirectories(tmp.resolve("proj"));
+        String cwd = project.toFile().getCanonicalPath().replace("\\", "\\\\");
+
+        write(customClaude.resolve("projects/" + CodingAgentCatalog.encodeClaudeProjectDir(project) + "/c1.jsonl"),
+                "{\"type\":\"user\",\"sessionId\":\"c1\",\"message\":{\"role\":\"user\",\"content\":\"Claude custom\"}}\n");
+        write(customCodex.resolve("sessions/2026/09/01/rollout-custom.jsonl"),
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"cdx1\",\"cwd\":\"" + cwd + "\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Codex custom\"}]}}\n");
+        write(customGemini.resolve(".gemini/chats/g1.json"),
+                "{\"sessionId\":\"g1\",\"cwd\":\"" + cwd + "\",\"messages\":[{\"role\":\"user\",\"content\":\"Gemini custom\"}]}\n");
+
+        AgentEnvironment env = AgentEnvironment.of(tmp.resolve("default-home"), Map.of(
+                AgentEnvironment.CLAUDE_CONFIG_DIR, customClaude.toString(),
+                AgentEnvironment.CODEX_HOME, customCodex.toString(),
+                AgentEnvironment.GEMINI_CLI_HOME, customGemini.toString()
+        ));
+
+        ExternalSessionImporter importer = new ExternalSessionImporter(env);
+        List<ExternalSessionRef> all = importer.findAll(project);
+        assertEquals(3, all.size());
+        assertTrue(all.stream().anyMatch(r -> r.title().equals("Claude custom")));
+        assertTrue(all.stream().anyMatch(r -> r.title().equals("Codex custom")));
+        assertTrue(all.stream().anyMatch(r -> r.title().equals("Gemini custom")));
     }
 
     @Test

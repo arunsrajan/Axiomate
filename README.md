@@ -169,20 +169,20 @@ Axiomate reads and writes the native files of other coding agents, so your rules
 
 | Agent | Memory / rules imported from | Memory exported to | MCP servers | Slash commands | Sessions |
 |---|---|---|---|---|---|
-| **Claude Code** | `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules/`, `~/.claude/CLAUDE.md`, auto memory (`~/.claude/projects/<project>/memory/`) | `CLAUDE.md` (managed block) | `.mcp.json`, `~/.claude.json` | `.claude/commands/` | ✅ `~/.claude/projects/*.jsonl` |
-| **OpenAI Codex** | `AGENTS.md`, `AGENTS.override.md`, `~/.codex/AGENTS.md` | `AGENTS.md` (managed block) | `~/.codex/config.toml` | `~/.codex/prompts/` | ✅ `~/.codex/sessions/**/rollout-*.jsonl` |
+| **Claude Code** | `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules/`, `~/.claude/CLAUDE.md`, `~/.claude/rules/`, auto memory (`~/.claude/projects/<project>/memory/`), `@path` imports, `CLAUDE_CONFIG_DIR` | `CLAUDE.md` (managed block) | `.mcp.json`, `~/.claude.json` | `.claude/commands/` | ✅ `~/.claude/projects/*.jsonl` |
+| **OpenAI Codex** | `AGENTS.md`, `AGENTS.override.md`, `~/.codex/AGENTS.md`, `project_doc_fallback_filenames` from `config.toml`, `CODEX_HOME` | `AGENTS.md` (managed block) | `~/.codex/config.toml` | `~/.codex/prompts/` | ✅ `~/.codex/sessions/**/rollout-*.jsonl` |
 | **Cursor** | `.cursor/rules/*.mdc`, `.cursorrules` | `.cursor/rules/axiomate-memory.mdc` | `.cursor/mcp.json` | `.cursor/commands/` | — |
-| **Google Antigravity** | `.agents/rules/` (and legacy `.agent/rules/`), `~/.gemini/GEMINI.md`, `~/.gemini/config/rules/` | `.agents/rules/axiomate-memory.md` (`trigger: always_on`) | `~/.gemini/antigravity/mcp_config.json` | `.agents/workflows/` | — |
-| **Gemini CLI** | `GEMINI.md`, `~/.gemini/GEMINI.md` (incl. saved memories) | `GEMINI.md` (managed block) | `.gemini/settings.json` | `.gemini/commands/*.toml` | — |
+| **Google Antigravity** | `.agents/rules/` (and legacy `.agent/rules/`), `~/.gemini/GEMINI.md`, `~/.gemini/config/rules/` | `.agents/rules/axiomate-memory.md` (`trigger: always_on`) | `~/.gemini/antigravity/mcp_config.json` | `.agents/workflows/` | ✅ `~/.gemini/antigravity-ide/brain/**/transcript.jsonl` |
+| **Gemini CLI** | `GEMINI.md`, `~/.gemini/GEMINI.md` (incl. saved memories), `context.fileName` in `settings.json`, `@path` imports, `GEMINI_CLI_HOME` | `GEMINI.md` (managed block) | `.gemini/settings.json` | `.gemini/commands/*.toml` | ✅ `~/.gemini/chats/*.json` |
 | **Windsurf** | `.windsurf/rules/`, `.devin/rules/`, `.windsurfrules`, global rules | `.windsurf/rules/axiomate-memory.md` | `~/.codeium/windsurf/mcp_config.json` | `.windsurf/workflows/` | — |
 | **GitHub Copilot** | `.github/copilot-instructions.md`, `.github/instructions/` | `.github/copilot-instructions.md` (managed block) | `.vscode/mcp.json` | — | — |
 | **Cline / Roo Code / Kiro** | `.clinerules`, `memory-bank/`, `.roo/rules/`, `.kiro/steering/` | dedicated rule/steering file | Roo `.roo/mcp.json`, Kiro `.kiro/settings/mcp.json` | Cline & Roo workflows | — |
 
-- **Import memory** (`Agent Sync → Import memory & rules…`): previews every detected file and the memories it contains. Markdown files are split into one memory per section; frontmatter (`globs`, `alwaysApply`, `trigger`, `applyTo`) is preserved. Re-importing a file **replaces** its earlier memories instead of duplicating them.
+- **Import memory** (`Agent Sync → Import memory & rules…`): previews every detected file and the memories it contains. Markdown files are split into one memory per section; frontmatter (`globs`, `alwaysApply`, `trigger`, `applyTo`, and Claude auto-memory `type`) is preserved and mapped to memory types and tags. Follows recursive `@path` imports in Claude Code and Gemini CLI, resolves settings-driven context filenames, and respects environment overrides (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_HOME`). Re-importing a file **replaces** its earlier memories instead of duplicating them.
 - **Project-scoped memory**: rules imported from a project apply only to that project, so one repository's `CLAUDE.md` never leaks into another project's agent context (the Memory tab's scope filter shows *This project + global*, *All projects* or *Global only*).
 - **Export memory**: writes your memories where each agent reads them. Shared files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `copilot-instructions.md`) only get a marker-delimited `<!-- axiomate:memory:start -->` block that is replaced on every export — your own content is untouched. A per-file preview shows exactly what will be written, and a file's own imported memories are never written back into it.
 - **MCP servers**: import servers configured in any of the agents above (added disabled until you opt in), or export Axiomate's servers into another agent's config (JSON configs are merged; Codex TOML is appended).
-- **Sessions**: continue a Claude Code or Codex conversation in Axiomate — prompts, replies, reasoning, tool calls and tool results are preserved.
+- **Sessions**: continue a Claude Code, Codex, Antigravity or Gemini CLI conversation in Axiomate — prompts, replies, reasoning, tool calls and tool results are preserved.
 - **Commands**: Claude Code commands, Codex prompts, Antigravity/Windsurf workflows and Gemini CLI TOML commands are loaded automatically as `/slash` commands.
 
 ### 14. 🗂 Per-Project Session Management

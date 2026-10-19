@@ -362,7 +362,7 @@ public class SessionsPanel extends JPanel {
 
     private JPopupMenu importMenu() {
         JPopupMenu m = new JPopupMenu();
-        m.add(item("From Claude Code / Codex…", actions::openExternalSessionImport));
+        m.add(item("From Claude / Codex / Gemini…", actions::openExternalSessionImport));
         m.add(item("From Axiomate JSON file…", () -> {
             JFileChooser chooser = new JFileChooser(SessionManager.getInstance().getCurrentProjectDirectory());
             if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {

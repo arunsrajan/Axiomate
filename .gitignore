@@ -8,3 +8,5 @@ dependency-reduced-pom.xml
 .DS_Store
 Thumbs.db
 .axiomate/
+graphify-out/
+.agents/

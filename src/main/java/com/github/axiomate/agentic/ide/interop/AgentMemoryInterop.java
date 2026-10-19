@@ -14,7 +14,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -32,6 +31,9 @@ import java.util.stream.Stream;
  * Imports are idempotent: every memory records its source file, so re-importing a file replaces the
  * memories previously imported from it instead of duplicating them. Exports to shared files
  * (CLAUDE.md, AGENTS.md, GEMINI.md...) only touch a marker-delimited block, preserving user content.
+ * <p>
+ * Agent config directories honor {@code CLAUDE_CONFIG_DIR}, {@code CODEX_HOME} and {@code GEMINI_CLI_HOME},
+ * and files pulled in through {@code @path} imports (Claude Code, Gemini CLI) are detected as sources too.
  */
 public class AgentMemoryInterop {
 
@@ -85,18 +87,26 @@ public class AgentMemoryInterop {
                              boolean targetExists, String newContent, int itemCount) {
     }
 
-    private final Path homeDir;
+    private final AgentEnvironment env;
 
     public AgentMemoryInterop() {
-        this(Paths.get(System.getProperty("user.home", ".")));
+        this(AgentEnvironment.system());
     }
 
     public AgentMemoryInterop(Path homeDir) {
-        this.homeDir = homeDir;
+        this(AgentEnvironment.system(homeDir));
+    }
+
+    public AgentMemoryInterop(AgentEnvironment env) {
+        this.env = env;
     }
 
     public Path getHomeDir() {
-        return homeDir;
+        return env.homeDir();
+    }
+
+    public AgentEnvironment getEnvironment() {
+        return env;
     }
 
     // ------------------------------------------------------------------
@@ -105,13 +115,15 @@ public class AgentMemoryInterop {
 
     /**
      * Finds memory files for the given agents. Files shared between agents (e.g. ~/.gemini/GEMINI.md)
-     * are reported once, attributed to the first agent that claims them.
+     * are reported once, attributed to the first agent that claims them. Files reached through
+     * {@code @path} imports are added afterwards, so a file that is also a native location of some
+     * agent (a CLAUDE.md importing {@code @AGENTS.md}) keeps that native attribution.
      */
     public List<DetectedSource> detect(Path projectDir, Collection<CodingAgent> agents) {
         Map<Path, DetectedSource> found = new LinkedHashMap<>();
         for (CodingAgent agent : agents) {
-            for (MemoryLocation loc : CodingAgentCatalog.locations(agent)) {
-                Path p = loc.resolve(projectDir, homeDir);
+            for (MemoryLocation loc : CodingAgentCatalog.locations(agent, env, projectDir)) {
+                Path p = loc.resolve(projectDir, env);
                 if (p == null || !Files.exists(p)) continue;
                 for (Path f : filesFor(loc, p)) {
                     Path key = f.toAbsolutePath().normalize();
@@ -119,11 +131,55 @@ public class AgentMemoryInterop {
                 }
             }
         }
+        followImports(found);
         return new ArrayList<>(found.values());
     }
 
     public List<DetectedSource> detectAll(Path projectDir) {
         return detect(projectDir, EnumSet.allOf(CodingAgent.class));
+    }
+
+    /**
+     * Breadth-first walk of {@code @path} imports from every source whose agent expands them, up to
+     * {@link MemoryImports#MAX_DEPTH} hops. Already-known files are never revisited, which also breaks cycles.
+     */
+    private void followImports(Map<Path, DetectedSource> found) {
+        record Pending(DetectedSource source, int depth) {
+        }
+        Deque<Pending> queue = new ArrayDeque<>();
+        for (DetectedSource s : found.values()) {
+            if (CodingAgentCatalog.supportsImports(s.location())) queue.add(new Pending(s, 0));
+        }
+        while (!queue.isEmpty()) {
+            Pending next = queue.poll();
+            if (next.depth() >= MemoryImports.MAX_DEPTH) continue;
+            DetectedSource parent = next.source();
+            for (Path target : importsOf(parent.file())) {
+                if (found.containsKey(target) || !MemoryImports.isImportable(target) || !Files.isRegularFile(target)) {
+                    continue;
+                }
+                MemoryLocation loc = CodingAgentCatalog.importedFrom(parent.location(), parent.file());
+                DetectedSource child = new DetectedSource(loc, target, sizeOf(target));
+                found.put(target, child);
+                queue.add(new Pending(child, next.depth() + 1));
+            }
+        }
+    }
+
+    private List<Path> importsOf(Path file) {
+        try {
+            if (sizeOf(file) > MAX_FILE_BYTES) return List.of();
+            String text = MarkdownDocument.stripManagedBlock(Files.readString(file, StandardCharsets.UTF_8));
+            List<Path> targets = new ArrayList<>();
+            for (String ref : MemoryImports.findReferences(text)) {
+                Path p = MemoryImports.resolve(ref, file.getParent(), env.homeDir());
+                if (p != null && !p.equals(file) && !targets.contains(p)) targets.add(p);
+            }
+            return targets;
+        } catch (IOException e) {
+            log.debug("Could not read imports of {}: {}", file, e.getMessage());
+            return List.of();
+        }
     }
 
     private List<Path> filesFor(MemoryLocation loc, Path p) {
@@ -172,12 +228,16 @@ public class AgentMemoryInterop {
             throw new IOException("File too large to import (" + src.sizeBytes() / 1024 + " KB): " + file);
         }
 
-        MarkdownDocument doc = MarkdownDocument.parse(Files.readString(file, StandardCharsets.UTF_8));
+        String raw = Files.readString(file, StandardCharsets.UTF_8);
+        MemoryLocation loc = src.location();
+        if (CodingAgentCatalog.supportsImports(loc)) {
+            raw = MemoryImports.stripImportLines(raw); // imported files are memories of their own
+        }
+        MarkdownDocument doc = MarkdownDocument.parse(raw);
         if (!opts.includeManagedContent()) {
             doc = doc.withoutManagedBlock();
         }
 
-        MemoryLocation loc = src.location();
         String fallbackTitle = humanize(fileName);
         String fmTitle = firstNonNull(doc.frontmatter("name"), doc.frontmatter("title"));
         String description = doc.frontmatter("description");
@@ -185,6 +245,9 @@ public class AgentMemoryInterop {
         boolean alwaysOn = "true".equalsIgnoreCase(doc.frontmatter("alwaysApply"))
                 || "always_on".equalsIgnoreCase(doc.frontmatter("trigger"))
                 || "always".equalsIgnoreCase(doc.frontmatter("inclusion"));
+        ClaudeMemoryKind claudeKind = loc.agent() == CodingAgent.CLAUDE_CODE
+                ? ClaudeMemoryKind.from(doc.frontmatter("type"))
+                : null;
 
         List<MarkdownDocument.Section> sections;
         if (loc.splitSections()) {
@@ -195,7 +258,9 @@ public class AgentMemoryInterop {
             sections = body.isEmpty() ? List.of() : List.of(new MarkdownDocument.Section(title, body, 0));
         }
 
-        String projectScope = (opts.scopeToProject() && loc.scope() == MemoryScope.PROJECT && projectDir != null)
+        // Claude auto memory lives under ~/.claude but describes a single project.
+        boolean projectLevel = loc.scope() == MemoryScope.PROJECT || loc.projectBound();
+        String projectScope = (opts.scopeToProject() && projectLevel && projectDir != null)
                 ? ProjectStateManager.normalizePath(projectDir.toFile())
                 : null;
         String timestamp = lastModified(file);
@@ -223,12 +288,51 @@ public class AgentMemoryInterop {
             List<String> extraTags = new ArrayList<>();
             if (alwaysOn) extraTags.add("always-on");
             if (appliesTo != null) extraTags.add("scoped");
+            MemoryType type = loc.type();
             double importance = alwaysOn ? 0.8 : (loc.type() == MemoryType.PROJECT_RULE ? 0.7 : 0.6);
+            if (claudeKind != null) {
+                type = claudeKind.type;
+                importance = alwaysOn ? Math.max(importance, claudeKind.importance) : claudeKind.importance;
+                extraTags.add(claudeKind.tag);
+            }
 
-            items.add(build(src, loc, loc.type(), section.title(), content.toString().strip(), extraTags,
+            items.add(build(src, loc, type, section.title(), content.toString().strip(), extraTags,
                     importance, sourceKey, projectScope, timestamp, ordinal++));
         }
         return items;
+    }
+
+    /**
+     * The {@code type} Claude Code writes into the frontmatter of auto-memory topic files, mapped to
+     * Axiomate memory types: feedback (how the user wants work done) becomes a rule; profile, project
+     * context and references become long-term knowledge.
+     */
+    enum ClaudeMemoryKind {
+        USER(MemoryType.LONG_TERM, 0.7, "user-profile"),
+        FEEDBACK(MemoryType.PROJECT_RULE, 0.75, "feedback"),
+        PROJECT(MemoryType.LONG_TERM, 0.6, "project-context"),
+        REFERENCE(MemoryType.LONG_TERM, 0.5, "reference");
+
+        final MemoryType type;
+        final double importance;
+        final String tag;
+
+        ClaudeMemoryKind(MemoryType type, double importance, String tag) {
+            this.type = type;
+            this.importance = importance;
+            this.tag = tag;
+        }
+
+        static ClaudeMemoryKind from(String value) {
+            if (value == null) return null;
+            return switch (value.trim().toLowerCase()) {
+                case "user" -> USER;
+                case "feedback" -> FEEDBACK;
+                case "project" -> PROJECT;
+                case "reference" -> REFERENCE;
+                default -> null;
+            };
+        }
     }
 
     private MemoryItem build(DetectedSource src, MemoryLocation loc, MemoryType type, String title, String content,
@@ -306,7 +410,7 @@ public class AgentMemoryInterop {
         Optional<ExportTarget> maybeTarget = CodingAgentCatalog.exportTarget(agent, scope);
         if (maybeTarget.isEmpty()) return Optional.empty();
         ExportTarget target = maybeTarget.get();
-        Path path = target.resolve(projectDir, homeDir);
+        Path path = target.resolve(projectDir, env);
         if (path == null) return Optional.empty();
         ExportStyle style = target.style();
 
