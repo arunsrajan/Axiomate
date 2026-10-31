@@ -37,6 +37,8 @@ public class AgentSession {
     private List<String> allowedTools = new CopyOnWriteArrayList<>();
     /** The session's task list (Tasks panel), kept by the agent's task_list tool and by the user. */
     private List<SessionTask> tasks = new CopyOnWriteArrayList<>();
+    /** The latest implementation plan written in Plan mode, shown in the plan window. */
+    private String implementationPlan = "";
 
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -157,6 +159,7 @@ public class AgentSession {
         for (int i = 0; i < end; i++) kept.add(snapshot.get(i).copy());
         copy.setMessages(kept);
         for (SessionTask t : tasks) copy.tasks.add(t.copy());
+        copy.setImplementationPlan(implementationPlan);
         if (tokenTracker != null && copy.tokenTracker != null) {
             long estimate = 0;
             for (AgentMessage m : kept) estimate += TokenTracker.estimateTokens(m.getContent());
@@ -197,6 +200,14 @@ public class AgentSession {
 
     public void setAllowedTools(List<String> allowedTools) {
         this.allowedTools = new CopyOnWriteArrayList<>(allowedTools != null ? allowedTools : List.of());
+    }
+
+    public String getImplementationPlan() {
+        return implementationPlan;
+    }
+
+    public void setImplementationPlan(String implementationPlan) {
+        this.implementationPlan = implementationPlan != null ? implementationPlan : "";
     }
 
     public List<SessionTask> getTasks() {

@@ -247,10 +247,18 @@ Axiomate reads and writes the native files of other coding agents, so your rules
 
 ### 21. 🧭 Execution Modes: Plan, Manual, Auto
 Each session has a mode, shown in the chat footer (*Mode: …*) and switched with the selector, **Shift+Tab** in the prompt box, `/plan`, `/manual`, `/auto` or `/mode`:
-- **Plan** — the agent investigates with read-only tools (reading, listing, `search_files`, `view_image`, memory search) and answers with an implementation plan. Edits and commands are refused at the tool level, not just discouraged. When the plan arrives, its numbered steps are added to the Tasks panel and **Implement (Auto)** / **Implement (Manual)** buttons switch mode and have the agent carry it out. `/plan add caching to the client` switches and sends in one go.
+- **Plan** — the agent investigates with read-only tools (reading, listing, `search_files`, `view_image`, memory search) and answers with an implementation plan. Edits and commands are refused at the tool level, not just discouraged. When the plan arrives, its numbered steps are added to the Tasks panel and it opens in the **implementation plan window** (below). `/plan add caching to the client` switches and sends in one go.
 - **Manual** — before each tool call that changes files or runs commands, a dialog shows exactly what will run: **Allow once**, **Always allow &lt;tool&gt; in this session**, or **Deny** with an optional reason that is passed to the agent. Read-only tools run without asking unless *⋯ → Execution mode → Manual mode: also ask before read-only tools* is ticked.
 - **Auto** — tools run without asking, as before; destructive commands (force push, `rm -rf`, `DROP TABLE`…) still ask.
 - The mode for new sessions is set under *⋯ → Execution mode → Mode for new sessions*; *Forget "always allow" choices* resets a session's approvals.
+
+**Implementation plan window** — a Plan-mode answer opens in its own window beside the IDE (not modal; one per session):
+- The plan rendered like a chat answer (code blocks, tables), with **Edit** / **Preview** to change its Markdown before implementing.
+- **Steps to implement**: the plan's numbered steps with checkboxes (and *All* / *None*); untick a step to leave it out.
+- **Implement (Auto)** / **Implement (Manual)**: switch the session's mode and send the plan — an edited plan in full, a partial selection by naming the steps to do; the chosen steps become the task list and the window closes.
+- **What should change?** + **Revise plan**: sends your feedback while the session stays in Plan mode; the window shows *Revising…* and updates when the revised plan arrives.
+- **Copy**, **Save as Markdown…**, **Show tasks** and **Close** (or Esc).
+- The plan is saved with the session: reopen it with *Open plan window* under the plan in the chat, *⋯ → Execution mode → Show implementation plan…* or `/show-plan`. Untick *Open the plan window when a plan is ready* in the same menu to open it only on request.
 
 ### 22. ✅ Tasks Panel
 - **Tasks sidebar** (`Alt+8`, checklist icon in the activity bar): the active session's task list with progress. The agent keeps it with the new **`task_list` tool** (writing its plan as steps and marking them *in progress* / *completed* as it works); you can add tasks, tick them off, rename, delete, clear completed, or ask the agent to *Continue with next task*.

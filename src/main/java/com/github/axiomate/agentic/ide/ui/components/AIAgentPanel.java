@@ -1483,10 +1483,10 @@ public class AIAgentPanel extends JPanel {
                     }
                     setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);
                     AgentRunTracker.getInstance().finish(run, AgentRunTracker.Status.COMPLETED, null);
-                    if (taskMode == ExecutionMode.PLAN && visible()) {
+                    if (taskMode == ExecutionMode.PLAN) {
                         String plan = fullResponse != null && !fullResponse.isBlank() ? fullResponse
-                                : currentStreamingBuffer != null ? currentStreamingBuffer.toString() : "";
-                        appendPlanActions(taskSessionId, plan);
+                                : visible() && currentStreamingBuffer != null ? currentStreamingBuffer.toString() : "";
+                        onPlanReady(taskSessionId, plan, visible());
                     }
                     updateTokenDisplay();
                     SessionManager.getInstance().autoSaveCurrentProjectSessions();
@@ -1501,6 +1501,7 @@ public class AIAgentPanel extends JPanel {
                     endLiveThinking();
                     setAgentState("Error", UIUtils.ERROR_COLOR, false);
                     AgentRunTracker.getInstance().finish(run, AgentRunTracker.Status.FAILED, throwable.getMessage());
+                    releasePlanWindow(taskSessionId, "The revision failed: " + throwable.getMessage());
                     if (visible()) appendAssistantBubble("⚠️ **Error occurred:** " + throwable.getMessage());
                     terminalPanel.appendAgentLog("ERROR", throwable.toString());
                     updateTokenDisplay();
@@ -1519,6 +1520,7 @@ public class AIAgentPanel extends JPanel {
 
     private void cancelAgent() {
         AgentRunTracker.getInstance().finish(currentRun, AgentRunTracker.Status.STOPPED, "Stopped by the user");
+        if (currentRun != null) releasePlanWindow(currentRun.sessionId(), "Stopped");
         taskGeneration++; // whatever the stopped task still sends is ignored
         AgentManager.getInstance().getActiveService().cancelCurrentTask();
         endLiveThinking();
@@ -2251,10 +2253,36 @@ public class AIAgentPanel extends JPanel {
         }
     }
 
+    /** Opens the plan window of a session; tests replace it, since a window needs a screen. */
+    private java.util.function.BiConsumer<AgentSession, ImplementationPlanPanel.Actions> planWindowOpener =
+            (session, actions) -> com.github.axiomate.agentic.ide.ui.dialogs.ImplementationPlanDialog.open(
+                    SwingUtilities.getWindowAncestor(this), session, actions);
+
+    void setPlanWindowOpener(java.util.function.BiConsumer<AgentSession, ImplementationPlanPanel.Actions> opener) {
+        if (opener != null) this.planWindowOpener = opener;
+    }
+
+    /** Sends the plan window's implement and revise prompts; tests replace it so no model is called. */
+    private java.util.function.Consumer<String> planPromptSender = this::sendPromptDirectly;
+
+    void setPlanPromptSender(java.util.function.Consumer<String> sender) {
+        if (sender != null) this.planPromptSender = sender;
+    }
+
     /**
-     * After a Plan-mode answer: the plan's numbered steps go to the Tasks panel (unless the agent already keeps an
-     * open task list), and buttons switch mode and ask the agent to carry the plan out.
+     * A Plan-mode answer arrived: it is kept as the session's plan, its numbered steps go to the Tasks panel (unless
+     * the agent already keeps an open task list), and it opens in the plan window.
      */
+    void onPlanReady(String sessionId, String plan, boolean showInChat) {
+        AgentSession s = SessionManager.getInstance().findSession(sessionId);
+        if (s == null || plan == null || plan.isBlank()) return;
+        s.setImplementationPlan(plan.strip());
+        SessionManager.getInstance().autoSaveCurrentProjectSessions();
+        if (showInChat) appendPlanActions(sessionId, plan);
+        if (ConfigManager.getInstance().getConfig().isOpenPlanWindowAutomatically()) showPlanWindow(sessionId);
+    }
+
+    /** The chat's note under a plan: its steps went to the Tasks panel, and the plan window can be reopened. */
     void appendPlanActions(String sessionId, String plan) {
         AgentSession s = SessionManager.getInstance().findSession(sessionId);
         if (s == null || plan == null || plan.isBlank()) return;
@@ -2268,21 +2296,18 @@ public class AIAgentPanel extends JPanel {
         }
         int n = s.getTasks().size();
         JLabel msg = new JLabel("<html><b>Plan ready.</b> " + (added ? steps.size() + " steps were added to the Tasks panel. "
-                : n > 0 ? "The task list has " + n + " steps. " : "") + "Review the plan, then:</html>");
+                : n > 0 ? "The task list has " + n + " steps. " : "")
+                + "Review it in the plan window, then implement it from there.</html>");
         msg.setFont(transcriptFont(Font.PLAIN, -1f));
         JPanel buttons = new JPanel(new WrapLayout(FlowLayout.LEFT, 6, 2));
         buttons.setOpaque(false);
-        JButton auto = new JButton("Implement (Auto)");
-        auto.setToolTipText("Switch to Auto mode and carry out the plan");
-        JButton manual = new JButton("Implement (Manual)");
-        manual.setToolTipText("Switch to Manual mode: you approve each change while the plan is carried out");
+        JButton open = new JButton("Open plan window");
+        open.setToolTipText("The plan with its steps, and the buttons to implement or revise it");
+        open.addActionListener(e -> showPlanWindow(sessionId));
         JButton showTasks = new JButton("Show tasks");
-        JButton keep = new JButton("Keep planning");
-        auto.addActionListener(e -> implementPlan(sessionId, ExecutionMode.AUTO, buttons));
-        manual.addActionListener(e -> implementPlan(sessionId, ExecutionMode.MANUAL, buttons));
         showTasks.addActionListener(e -> ideActions.showSidebarView(com.github.axiomate.agentic.ide.ui.IdeActions.VIEW_TASKS));
-        keep.addActionListener(e -> inputArea.requestFocusInWindow());
-        for (JButton b : List.of(auto, manual, showTasks, keep)) buttons.add(b);
+        buttons.add(open);
+        buttons.add(showTasks);
         JPanel inner = new JPanel(new BorderLayout(0, 4));
         inner.setOpaque(false);
         inner.add(msg, BorderLayout.NORTH);
@@ -2294,18 +2319,63 @@ public class AIAgentPanel extends JPanel {
         addCard(card, 6);
     }
 
-    static final String IMPLEMENT_PLAN_PROMPT = "Implement the plan above, step by step. Mark each task in_progress "
-            + "when you start it and completed when it is done.";
+    /** Shows the session's latest plan in its window (⋯ menu, /show-plan, "Open plan window"). */
+    void showPlanWindow(String sessionId) {
+        AgentSession s = SessionManager.getInstance().findSession(sessionId);
+        if (s == null || s.getImplementationPlan().isBlank()) {
+            Toast.info(this, "No implementation plan yet. Switch to Plan mode (/plan) and describe the change.");
+            return;
+        }
+        planWindowOpener.accept(s, planWindowActions(sessionId));
+    }
 
-    private void implementPlan(String sessionId, ExecutionMode mode, JPanel buttons) {
-        AgentSession active = SessionManager.getInstance().getActiveSession();
-        if (active == null || !active.getId().equals(sessionId)) {
-            if (SessionManager.getInstance().findSession(sessionId) == null) return;
-            SessionManager.getInstance().switchSession(sessionId);
+    private ImplementationPlanPanel.Actions planWindowActions(String sessionId) {
+        return new ImplementationPlanPanel.Actions() {
+            @Override
+            public void implement(ExecutionMode mode, String prompt, List<String> steps) {
+                implementPlan(sessionId, mode, prompt, steps);
+            }
+
+            @Override
+            public void revise(String prompt) {
+                if (!openSession(sessionId)) return;
+                setExecutionMode(ExecutionMode.PLAN);
+                planPromptSender.accept(prompt);
+            }
+
+            @Override
+            public void showTasks() {
+                ideActions.showSidebarView(com.github.axiomate.agentic.ide.ui.IdeActions.VIEW_TASKS);
+            }
+        };
+    }
+
+    /** Carries the plan out: the chosen steps become the task list, the mode switches and the prompt is sent. */
+    void implementPlan(String sessionId, ExecutionMode mode, String prompt, List<String> steps) {
+        if (!openSession(sessionId)) return;
+        AgentSession s = SessionManager.getInstance().getActiveSession();
+        if (!steps.isEmpty()) {
+            List<SessionTask> tasks = new ArrayList<>();
+            for (String step : steps) tasks.add(new SessionTask(step, SessionTask.Status.PENDING, "agent"));
+            TaskBoard.getInstance().replace(s, tasks);
         }
         setExecutionMode(mode);
-        for (Component c : buttons.getComponents()) c.setEnabled(false);
-        sendPromptDirectly(IMPLEMENT_PLAN_PROMPT);
+        planPromptSender.accept(prompt);
+    }
+
+    /** Makes {@code sessionId} the active session; false when it no longer exists. */
+    private boolean openSession(String sessionId) {
+        AgentSession active = SessionManager.getInstance().getActiveSession();
+        if (active != null && active.getId().equals(sessionId)) return true;
+        if (SessionManager.getInstance().findSession(sessionId) == null) return false;
+        SessionManager.getInstance().switchSession(sessionId);
+        return true;
+    }
+
+    /** A plan window waiting for a revision gets its buttons back when the run fails or is stopped. */
+    private static void releasePlanWindow(String sessionId, String message) {
+        ImplementationPlanPanel window = com.github.axiomate.agentic.ide.ui.dialogs.ImplementationPlanDialog.find(sessionId);
+        if (window != null && window.isBusy()) window.setBusy(false, message);
     }
 
     // ------------------------------------------------------------------ copy and fork
@@ -2496,6 +2566,20 @@ public class AIAgentPanel extends JPanel {
             ConfigManager.getInstance().saveConfig(cfg);
         });
         modes.add(askReads);
+        JCheckBoxMenuItem autoOpenPlan = new JCheckBoxMenuItem("Open the plan window when a plan is ready",
+                ConfigManager.getInstance().getConfig().isOpenPlanWindowAutomatically());
+        autoOpenPlan.addActionListener(e -> {
+            IdeConfig cfg = ConfigManager.getInstance().getConfig();
+            cfg.setOpenPlanWindowAutomatically(autoOpenPlan.isSelected());
+            ConfigManager.getInstance().saveConfig(cfg);
+        });
+        modes.add(autoOpenPlan);
+        JMenuItem showPlan = menuItem("Show implementation plan…", () -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null) showPlanWindow(s.getId());
+        });
+        showPlan.setEnabled(active != null && !active.getImplementationPlan().isBlank());
+        modes.add(showPlan);
         JMenu defaults = new JMenu("Mode for new sessions");
         ButtonGroup defaultGroup = new ButtonGroup();
         for (ExecutionMode m : ExecutionMode.values()) {
@@ -2613,6 +2697,11 @@ public class AIAgentPanel extends JPanel {
                 appendSystemBubble("Execution mode: " + (s != null ? s.getExecutionMode().label() : "Auto")
                         + "\n/plan · /manual · /auto, or Shift+Tab in the prompt box.");
             }
+        }));
+        reg.register(new SlashCommand("show-plan", "Open the session's latest implementation plan in its window", null,
+                "builtin", args -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null) showPlanWindow(s.getId());
         }));
         reg.register(new SlashCommand("copy", "Copy the last answer (or /copy all for the conversation as Markdown)", null,
                 "builtin", args -> {

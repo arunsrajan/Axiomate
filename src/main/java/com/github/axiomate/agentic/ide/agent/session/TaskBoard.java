@@ -117,11 +117,22 @@ public final class TaskBoard {
             int indent = line.length() - line.stripLeading().length();
             if (m.matches() && (stepIndent < 0 || indent == stepIndent)) {
                 stepIndent = indent;
-                String step = m.group(2).replace("**", "").replace("__", "").strip();
+                String step = plainText(m.group(2));
                 if (!step.isEmpty() && steps.size() < MAX_TASKS) steps.add(clip(step));
             }
         }
         return steps;
+    }
+
+    /** *emphasis* (may contain underscores, as in *old_name*) and _emphasis_ (not inside snake_case words). */
+    private static final Pattern STAR_EMPHASIS = Pattern.compile("(?<![\\w*])\\*([^*\\s](?:[^*]*[^*\\s])?)\\*(?![\\w*])");
+    private static final Pattern UNDERSCORE_EMPHASIS = Pattern.compile("(?<![\\w_])_([^_\\s](?:[^_]*[^_\\s])?)_(?![\\w_])");
+
+    /** A step as plain text: "**Add** `CacheConfig` to *the menu*" reads "Add CacheConfig to the menu". */
+    static String plainText(String markdown) {
+        String t = markdown.replace("**", "").replace("__", "").replace("`", "");
+        t = STAR_EMPHASIS.matcher(t).replaceAll("$1");
+        return UNDERSCORE_EMPHASIS.matcher(t).replaceAll("$1").strip();
     }
 
     /** The list as the agent sees it: "1. [x] Title". */

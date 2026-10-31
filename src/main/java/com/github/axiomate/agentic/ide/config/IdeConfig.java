@@ -31,6 +31,8 @@ public class IdeConfig {
     private String mentionTriggerChar = "@";
     /** Manual mode normally lets read-only tools (reading, listing, searching) run without asking. */
     private boolean manualModeAsksForReadOnlyTools = false;
+    /** A plan written in Plan mode opens in its own window as soon as it arrives. */
+    private boolean openPlanWindowAutomatically = true;
     /** Execution mode new sessions start in. */
     private com.github.axiomate.agentic.ide.agent.ExecutionMode defaultExecutionMode = com.github.axiomate.agentic.ide.agent.ExecutionMode.AUTO;
 
@@ -229,6 +231,14 @@ public class IdeConfig {
 
     public void setManualModeAsksForReadOnlyTools(boolean manualModeAsksForReadOnlyTools) {
         this.manualModeAsksForReadOnlyTools = manualModeAsksForReadOnlyTools;
+    }
+
+    public boolean isOpenPlanWindowAutomatically() {
+        return openPlanWindowAutomatically;
+    }
+
+    public void setOpenPlanWindowAutomatically(boolean openPlanWindowAutomatically) {
+        this.openPlanWindowAutomatically = openPlanWindowAutomatically;
     }
 
     public com.github.axiomate.agentic.ide.agent.ExecutionMode getDefaultExecutionMode() {
