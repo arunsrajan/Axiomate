@@ -431,7 +431,7 @@ public class UIUtils {
     // Activity bar & action icons (stroke-drawn, DPI independent)
     // ------------------------------------------------------------------
 
-    public enum Glyph {EXPLORER, SESSIONS, MEMORY, SYNC, PLUGINS, SEARCH, PLUS, TRASH, PIN, DOWNLOAD, UPLOAD, MORE, REFRESH, TERMINAL, COMMAND, DOT, ELBOW, SPARK, BRANCH, CHEVRON_RIGHT, CHEVRON_DOWN}
+    public enum Glyph {EXPLORER, SESSIONS, MEMORY, SYNC, PLUGINS, SEARCH, PLUS, TRASH, PIN, DOWNLOAD, UPLOAD, MORE, REFRESH, TERMINAL, COMMAND, DOT, ELBOW, SPARK, BRANCH, CHEVRON_RIGHT, CHEVRON_DOWN, TASKS}
 
     /**
      * Stroke-based glyph icon; a null color follows the current theme's foreground.
@@ -477,6 +477,21 @@ public class UIUtils {
                         p.lineTo(s * .9, s * .42);
                         p.lineTo(s * .76, s * .42);
                         g2.draw(p);
+                    }
+                    case TASKS -> {
+                        // A checklist: three boxes, the first two ticked, with a line beside each
+                        for (int i = 0; i < 3; i++) {
+                            float rowY = s * (.16f + i * .27f);
+                            g2.draw(new RoundRectangle2D.Float(s * .1f, rowY, s * .2f, s * .2f, s * .06f, s * .06f));
+                            g2.draw(new Line2D.Float(s * .42f, rowY + s * .1f, s * .9f, rowY + s * .1f));
+                            if (i < 2) {
+                                Path2D tick = new Path2D.Float();
+                                tick.moveTo(s * .14, rowY + s * .1);
+                                tick.lineTo(s * .19, rowY + s * .15);
+                                tick.lineTo(s * .27, rowY + s * .04);
+                                g2.draw(tick);
+                            }
+                        }
                     }
                     case MEMORY -> {
                         g2.draw(new RoundRectangle2D.Float(s * .22f, s * .22f, s * .56f, s * .56f, s * .12f, s * .12f));

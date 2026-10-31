@@ -29,6 +29,10 @@ public class IdeConfig {
     /** Show replies in the agent chat as they are generated (providers that support streaming). */
     private boolean streamingEnabled = true;
     private String mentionTriggerChar = "@";
+    /** Manual mode normally lets read-only tools (reading, listing, searching) run without asking. */
+    private boolean manualModeAsksForReadOnlyTools = false;
+    /** Execution mode new sessions start in. */
+    private com.github.axiomate.agentic.ide.agent.ExecutionMode defaultExecutionMode = com.github.axiomate.agentic.ide.agent.ExecutionMode.AUTO;
 
     private double temperature = 0.2;
     private String systemPrompt = """
@@ -217,6 +221,23 @@ public class IdeConfig {
 
     public void setStreamingEnabled(boolean streamingEnabled) {
         this.streamingEnabled = streamingEnabled;
+    }
+
+    public boolean isManualModeAsksForReadOnlyTools() {
+        return manualModeAsksForReadOnlyTools;
+    }
+
+    public void setManualModeAsksForReadOnlyTools(boolean manualModeAsksForReadOnlyTools) {
+        this.manualModeAsksForReadOnlyTools = manualModeAsksForReadOnlyTools;
+    }
+
+    public com.github.axiomate.agentic.ide.agent.ExecutionMode getDefaultExecutionMode() {
+        return defaultExecutionMode;
+    }
+
+    public void setDefaultExecutionMode(com.github.axiomate.agentic.ide.agent.ExecutionMode defaultExecutionMode) {
+        this.defaultExecutionMode = defaultExecutionMode != null ? defaultExecutionMode
+                : com.github.axiomate.agentic.ide.agent.ExecutionMode.AUTO;
     }
 
     public boolean isFileMentionsEnabled() {

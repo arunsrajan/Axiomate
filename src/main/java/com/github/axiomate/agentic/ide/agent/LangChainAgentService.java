@@ -147,6 +147,7 @@ public class LangChainAgentService implements AIAgentService {
                 if (session == null) {
                     throw new IllegalStateException("No active agent session");
                 }
+                AgentTaskContext.set(session);
 
                 // Feature 33: Prompt-injection shield validation
                 var shieldResult = com.github.axiomate.agentic.ide.features.security.PromptInjectionShield.getInstance()
@@ -260,6 +261,7 @@ public class LangChainAgentService implements AIAgentService {
                     systemPromptBuilder.append("- The current host OS is LINUX / UNIX / MACOS. For command-line execution, running builds/tests, or scripts, ALWAYS invoke the 'bash' tool (or 'terminal' which defaults to Bash).\n");
                     systemPromptBuilder.append("- Do NOT invoke Windows-specific cmdlets or powershell unless explicitly requested by the user.\n");
                 }
+                systemPromptBuilder.append(executionModeInstructions(session));
 
                 messages.add(new SystemMessage(systemPromptBuilder.toString()));
 
@@ -408,10 +410,20 @@ public class LangChainAgentService implements AIAgentService {
                                 toolResult = repeated;
                                 listener.onThinking("🔁 Skipped a repeated call to " + toolName + " with identical arguments.");
                             } else if (tool != null) {
-                                try {
-                                    toolResult = tool.execute(arguments);
-                                } catch (Exception ex) {
-                                    toolResult = "ERROR executing tool " + toolName + ": " + ex.getMessage();
+                                if (ToolPermissions.wouldAsk(session, toolName, arguments)) {
+                                    listener.onThinking("✋ Waiting for your approval to run " + toolName + "…");
+                                }
+                                ToolPermissions.Verdict verdict = ToolPermissions.check(session, toolName, arguments);
+                                if (!verdict.allowed()) {
+                                    toolResult = verdict.refusal();
+                                    listener.onThinking((session.getExecutionMode() == ExecutionMode.PLAN ? "📝 Plan mode: "
+                                            : "🚫 ") + toolName + " was not run.");
+                                } else {
+                                    try {
+                                        toolResult = tool.execute(arguments);
+                                    } catch (Exception ex) {
+                                        toolResult = "ERROR executing tool " + toolName + ": " + ex.getMessage();
+                                    }
                                 }
                             } else {
                                 toolResult = "ERROR: Tool '" + toolName + "' is not registered.";
@@ -529,10 +541,43 @@ public class LangChainAgentService implements AIAgentService {
                         String.format("Error calling provider %s [%s] at URL [%s]: %s",
                                 activeProviderName, activeTargetModel, activeEndpointUrl, e.getMessage()), e));
             } finally {
+                AgentTaskContext.clear();
                 ReasoningContext.clear();
                 VisionSupport.clearThreadState();
             }
         });
+    }
+
+    /** System-prompt section for the session's execution mode and its task list. */
+    static String executionModeInstructions(AgentSession session) {
+        StringBuilder sb = new StringBuilder("\n\n## Execution Mode: ");
+        ExecutionMode mode = session.getExecutionMode();
+        sb.append(mode.label().toUpperCase()).append('\n');
+        switch (mode) {
+            case PLAN -> sb.append("""
+                    - You are in PLAN MODE. Do not change anything: do not edit or write files and do not run commands. \
+                    Tools that would are refused.
+                    - Investigate with read-only tools (file_system read/list, code_editor read_file, search_files, \
+                    view_image, agent_memory search) until you understand what is needed.
+                    - Finish with an implementation plan: a short summary, then the steps as a numbered list \
+                    ("1. ..."), naming the files each step changes, then risks and how to verify. Also record the \
+                    steps with task_list (action "set").
+                    - The user reviews the plan and switches to Manual or Auto mode to carry it out.
+                    """);
+            case MANUAL -> sb.append("""
+                    - You are in MANUAL MODE. The user approves each tool call that changes files or runs commands \
+                    before it runs. If a call is DENIED, do not repeat it: adjust your approach or ask the user.
+                    """);
+            default -> sb.append("- You are in AUTO MODE: tools run without asking (destructive commands still ask).\n");
+        }
+        sb.append("- For work with several steps, keep the task list with task_list: mark a step in_progress while ")
+                .append("you work on it and completed when it is done.\n");
+        if (!session.getTasks().isEmpty()) {
+            int[] p = com.github.axiomate.agentic.ide.agent.session.TaskBoard.progress(session);
+            sb.append("- Current task list (").append(p[0]).append('/').append(p[1]).append(" done):\n")
+                    .append(com.github.axiomate.agentic.ide.agent.session.TaskBoard.describe(session.getTasks())).append('\n');
+        }
+        return sb.toString();
     }
 
     static boolean isProviderFailure(Throwable t) {

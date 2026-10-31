@@ -75,6 +75,7 @@ public class MockAgentService implements AIAgentService {
             taskCancel.set(cancel);
             try {
                 AgentSession session = SessionManager.getInstance().getActiveSession();
+                AgentTaskContext.set(session);
                 IdeConfig config = ConfigManager.getInstance().getConfig();
 
                 // Feature 33: Prompt-injection shield validation
@@ -173,6 +174,7 @@ public class MockAgentService implements AIAgentService {
                 log.error("Agent error", e);
                 listener.onError(e);
             } finally {
+                AgentTaskContext.clear();
                 taskCancel.remove();
             }
         });
@@ -281,7 +283,8 @@ public class MockAgentService implements AIAgentService {
             listener.onToolCall(mcpTool.getName(), args);
             sleep(400);
 
-            String result = mcpTool.execute(args);
+            ToolPermissions.Verdict verdict = ToolPermissions.check(AgentTaskContext.session(), mcpTool.getName(), args);
+            String result = verdict.allowed() ? mcpTool.execute(args) : verdict.refusal();
             listener.onToolResult(mcpTool.getName(), result);
             sleep(200);
 
@@ -510,6 +513,9 @@ public class MockAgentService implements AIAgentService {
     }
 
     private String executeRegisteredTool(String name, String args) {
+        // Same rules as the real agent: Plan refuses changes, Manual asks first
+        ToolPermissions.Verdict verdict = ToolPermissions.check(AgentTaskContext.session(), name, args);
+        if (!verdict.allowed()) return verdict.refusal();
         for (AgentTool t : tools) {
             if (t.getName().equalsIgnoreCase(name)) {
                 try {

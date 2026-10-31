@@ -64,6 +64,7 @@ A modern, high-performance Java desktop IDE built under the package **`com.githu
   - `code_refactor`: Automatic code modernization and targeted patch application.
   - `agent_memory`: Store, recall, and search agentic memories.
   - `search_files`: Search the project for text or a regex (grep-style `path:line: text` results, include globs, sub-folder).
+  - `task_list`: Keep the session's task list (shown in the Tasks panel): write the plan as steps, mark them in progress / completed.
   - `mcp_<server>_<tool>`: Dynamically discovered tools from external MCP servers.
 - Executes full multi-turn loop (`AiMessage.hasToolExecutionRequests()`) until final solution.
 
@@ -238,6 +239,23 @@ Axiomate reads and writes the native files of other coding agents, so your rules
 - **Go to Line** (`Ctrl+G`): `42` or `42:7` (line and column).
 - **Prompt history**: `Ctrl+↑` / `Ctrl+↓` in the agent chat (or `↑` in an empty prompt box) recall earlier prompts like a shell history; what you were typing comes back after the newest one. Prompts of the open session are included after a restart.
 - **`search_files` agent tool**: the agent finds code by content — `{"query": "class UserService", "include": "*.java"}` — instead of listing folders and reading files one by one.
+
+### 20. 🍴 Fork & Copy
+- **Right-click any entry in the agent chat**: *Copy message*, *Copy conversation as Markdown*, *Copy last answer*, *Fork from here* (a new session with the conversation up to the end of that turn) and *Fork whole session*.
+- **Edit & resend** (right-click one of your prompts): a new session with the conversation before that prompt, and the prompt put back in the box to change and send. The original session is left as it was.
+- Forks keep pasted images, the session's mode and its task list. The chat's ⋯ → *Session* menu and the session menu offer *Fork session* and the copy options too; `/fork [name]` and `/copy` (`/copy all` for the conversation) do the same from the prompt box.
+
+### 21. 🧭 Execution Modes: Plan, Manual, Auto
+Each session has a mode, shown in the chat footer (*Mode: …*) and switched with the selector, **Shift+Tab** in the prompt box, `/plan`, `/manual`, `/auto` or `/mode`:
+- **Plan** — the agent investigates with read-only tools (reading, listing, `search_files`, `view_image`, memory search) and answers with an implementation plan. Edits and commands are refused at the tool level, not just discouraged. When the plan arrives, its numbered steps are added to the Tasks panel and **Implement (Auto)** / **Implement (Manual)** buttons switch mode and have the agent carry it out. `/plan add caching to the client` switches and sends in one go.
+- **Manual** — before each tool call that changes files or runs commands, a dialog shows exactly what will run: **Allow once**, **Always allow &lt;tool&gt; in this session**, or **Deny** with an optional reason that is passed to the agent. Read-only tools run without asking unless *⋯ → Execution mode → Manual mode: also ask before read-only tools* is ticked.
+- **Auto** — tools run without asking, as before; destructive commands (force push, `rm -rf`, `DROP TABLE`…) still ask.
+- The mode for new sessions is set under *⋯ → Execution mode → Mode for new sessions*; *Forget "always allow" choices* resets a session's approvals.
+
+### 22. ✅ Tasks Panel
+- **Tasks sidebar** (`Alt+8`, checklist icon in the activity bar): the active session's task list with progress. The agent keeps it with the new **`task_list` tool** (writing its plan as steps and marking them *in progress* / *completed* as it works); you can add tasks, tick them off, rename, delete, clear completed, or ask the agent to *Continue with next task*.
+- **Agent activity**: the task running now (session, mode, elapsed time, tool calls, last tool) with a **Stop** button, and how recent runs ended — completed, failed or stopped — with their duration; click one to open its session.
+- Tasks are saved with the session, so they come back after a restart and are copied into forks.
 
 ## 🚀 Quick Start
 

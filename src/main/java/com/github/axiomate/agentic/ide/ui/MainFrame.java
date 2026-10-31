@@ -19,6 +19,7 @@ import com.github.axiomate.agentic.ide.ui.components.ProjectTreePanel;
 import com.github.axiomate.agentic.ide.ui.components.SessionsPanel;
 import com.github.axiomate.agentic.ide.ui.components.SettingsDialog;
 import com.github.axiomate.agentic.ide.ui.components.StatusBar;
+import com.github.axiomate.agentic.ide.ui.components.TasksPanel;
 import com.github.axiomate.agentic.ide.ui.components.TerminalPanel;
 import com.github.axiomate.agentic.ide.ui.components.ToolBar;
 import com.github.axiomate.agentic.ide.ui.dialogs.AgentMemoryExportDialog;
@@ -172,6 +173,9 @@ public class MainFrame extends JFrame implements IdeActions {
         sidebar.add(new SessionsPanel(this), VIEW_SESSIONS);
         sidebar.add(new AgentSyncPanel(this), VIEW_AGENT_SYNC);
         sidebar.add(new PluginsPanel(this, pluginManager), VIEW_PLUGINS);
+        TasksPanel tasksPanel = new TasksPanel(this);
+        tasksPanel.setPromptSender(aiAgentPanel::sendPromptDirectly);
+        sidebar.add(tasksPanel, VIEW_TASKS);
         sidebar.setMinimumSize(new Dimension(200, 0));
 
         activityBar = new ActivityBar(id -> {
@@ -185,6 +189,7 @@ public class MainFrame extends JFrame implements IdeActions {
         activityBar.addView(VIEW_SESSIONS, "Agent Sessions (Alt+5)", UIUtils.Glyph.SESSIONS);
         activityBar.addView(VIEW_AGENT_SYNC, "Agent Sync — Claude Code, Codex, Cursor, Antigravity… (Alt+6)", UIUtils.Glyph.SYNC);
         activityBar.addView(VIEW_PLUGINS, "Plugins (Alt+7)", UIUtils.Glyph.PLUGINS);
+        activityBar.addView(VIEW_TASKS, "Tasks — the session's task list and agent activity (Alt+8)", UIUtils.Glyph.TASKS);
         activityBar.addAction("Agentic memory (Alt+4)", UIUtils.Glyph.MEMORY, this::focusMemoryTab);
         activityBar.addAction("Command palette (Ctrl+K)", UIUtils.Glyph.COMMAND, this::openCommandPalette);
         activityBar.addAction("Settings (Ctrl+,)", UIUtils.Glyph.MORE, this::openSettings);
@@ -223,6 +228,7 @@ public class MainFrame extends JFrame implements IdeActions {
         setContentPane(contentPane);
         installGlobalShortcuts();
         installDestructiveActionConfirmation();
+        installToolApproval();
 
         // Project changes rescope memory, reload the other agents' commands and update the title
         ProjectManager.getInstance().addProjectChangeListener(dir -> {
@@ -243,6 +249,12 @@ public class MainFrame extends JFrame implements IdeActions {
      * Destructive agent actions (force push, hard reset, recursive delete, dropping tables, deleting files) ask the
      * user first. Without this the gate has no one to ask and refuses every such action.
      */
+    /** Manual mode asks here before the agent runs a tool that changes files or runs commands. */
+    private void installToolApproval() {
+        com.github.axiomate.agentic.ide.agent.ToolPermissions.setApprovalHandler(
+                request -> com.github.axiomate.agentic.ide.ui.dialogs.ToolApprovalDialog.ask(this, request));
+    }
+
     private void installDestructiveActionConfirmation() {
         com.github.axiomate.agentic.ide.features.security.IrreversibleActionGate.getInstance().setConfirmationHandler(
                 (operation, subject, warning) -> {
@@ -635,6 +647,11 @@ public class MainFrame extends JFrame implements IdeActions {
         terminalPanel.selectMemoryTab();
     }
 
+    @Override
+    public void stopAgent() {
+        aiAgentPanel.stopAgent();
+    }
+
     /**
      * Re-reads slash commands from other coding agents (Claude Code commands, Codex prompts, Antigravity
      * workflows, Gemini CLI commands...) for the current project.
@@ -662,6 +679,7 @@ public class MainFrame extends JFrame implements IdeActions {
         entries.add(new CommandPalette.Entry("View: Agent Sync (Claude Code, Codex, Cursor, Antigravity…)", "View", "Alt+6",
                 () -> showSidebarView(VIEW_AGENT_SYNC)));
         entries.add(new CommandPalette.Entry("View: Plugins", "View", "Alt+7", () -> showSidebarView(VIEW_PLUGINS)));
+        entries.add(new CommandPalette.Entry("View: Tasks", "View", "Alt+8", () -> showSidebarView(VIEW_TASKS)));
         entries.addAll(CommandPalette.fromMenuBar(getJMenuBar()));
         for (AgentSession s : SessionManager.getInstance().getSessions()) {
             entries.add(new CommandPalette.Entry("Switch to session: " + s.getName(), "Session", s.getModelId(),
