@@ -60,8 +60,11 @@ public class MarkdownTextPanel extends JPanel {
         String codeFgHex = dark ? "#f0f0f0" : "#202020";
         String borderColor = toHex(UIUtils.borderColor());
 
+        // The rules go into this pane's own document. HTMLEditorKit.getStyleSheet() is the default sheet shared by
+        // every HTML view in the IDE: adding to it gave all of them (labels, dialogs) the chat's colours and code style.
         HTMLEditorKit kit = new HTMLEditorKit();
-        StyleSheet sheet = kit.getStyleSheet();
+        editorPane.setEditorKit(kit);
+        StyleSheet sheet = ((javax.swing.text.html.HTMLDocument) editorPane.getDocument()).getStyleSheet();
         sheet.addRule("body { font-family: " + font.getFamily() + ", sans-serif; font-size: " + font.getSize() + "pt; color: " + fgHex + "; margin: 0; padding: 0; }");
         sheet.addRule("h1 { font-size: 15pt; font-weight: bold; color: " + fgHex + "; margin-top: 10px; margin-bottom: 4px; padding-bottom: 2px; }");
         sheet.addRule("h2 { font-size: 13.5pt; font-weight: bold; color: " + fgHex + "; margin-top: 10px; margin-bottom: 4px; border-bottom: 1px solid " + borderColor + "; padding-bottom: 2px; }");
@@ -74,7 +77,6 @@ public class MarkdownTextPanel extends JPanel {
         sheet.addRule("p { margin-top: 3px; margin-bottom: 4px; color: " + fgHex + "; }");
         sheet.addRule(".lead { color: " + mutedHex + "; }");
 
-        editorPane.setEditorKit(kit);
         editorPane.setText("<html><body>" + markdownToHtmlBody(rawMarkdown, codeBgHex, codeFgHex) + "</body></html>");
         editorPane.setCaretPosition(0);
         revalidate();

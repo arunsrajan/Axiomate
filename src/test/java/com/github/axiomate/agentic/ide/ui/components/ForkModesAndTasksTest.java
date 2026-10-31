@@ -186,7 +186,7 @@ class ForkModesAndTasksTest {
     }
 
     @Test
-    @DisplayName("Plan answers become tasks (not the code block's numbering) and offer to implement the plan")
+    @DisplayName("Plan answers become tasks (not the code block's numbering) and the chat can reopen the plan window")
     void planBecomesTasks() throws Exception {
         AgentSession s = SessionManager.getInstance().createSession("Plan tasks", "MOCK", "mock-agent", false);
         String plan = """
@@ -200,7 +200,7 @@ class ForkModesAndTasksTest {
                 ```
                 10. Update the README
                 """;
-        assertEquals(List.of("Add the field to `AgentSession`", "Write the tests", "Update the README"), TaskBoard.stepsFromPlan(plan));
+        assertEquals(List.of("Add the field to AgentSession", "Write the tests", "Update the README"), TaskBoard.stepsFromPlan(plan));
 
         AIAgentPanel[] holder = new AIAgentPanel[1];
         SwingUtilities.invokeAndWait(() -> holder[0] = new AIAgentPanel(() -> "", new TerminalPanel()));
@@ -208,8 +208,8 @@ class ForkModesAndTasksTest {
             holder[0].appendPlanActions(s.getId(), plan);
             assertEquals(3, s.getTasks().size());
             assertTrue(s.getTasks().stream().allMatch(t -> t.getStatus() == SessionTask.Status.PENDING && "agent".equals(t.getSource())));
-            assertNotNull(find(holder[0], JButton.class, b -> "Implement (Auto)".equals(b.getText())));
-            assertNotNull(find(holder[0], JButton.class, b -> "Implement (Manual)".equals(b.getText())));
+            assertNotNull(find(holder[0], JButton.class, b -> "Open plan window".equals(b.getText())),
+                    "the chat's note reopens the plan window, where the implement buttons are");
 
             holder[0].appendPlanActions(s.getId(), "1. Something else");
             assertEquals(3, s.getTasks().size(), "an open task list is not replaced");
