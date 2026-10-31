@@ -6,6 +6,8 @@ public enum AgentRole {
     SYSTEM,
     TOOL,
     TOOL_CALL,
-    THINKING
+    THINKING,
+    /** The files a run changed, with lines added and removed (see FileChangeTracker#describe). */
+    FILE_CHANGES
 }
 

@@ -148,6 +148,7 @@ public class LangChainAgentService implements AIAgentService {
                     throw new IllegalStateException("No active agent session");
                 }
                 AgentTaskContext.set(session);
+                FileChangeTracker.begin(com.github.axiomate.agentic.ide.util.ProjectManager.getInstance().getCurrentProjectDirectory());
 
                 // Feature 33: Prompt-injection shield validation
                 var shieldResult = com.github.axiomate.agentic.ide.features.security.PromptInjectionShield.getInstance()
@@ -488,6 +489,7 @@ public class LangChainAgentService implements AIAgentService {
                                 .recordTaskOutcome("GENERAL", true, 20.0, 0.005, null);
 
                         finished = true;
+                        reportFileChanges(session, listener);
                         listener.onComplete(finalResponse);
                         return;
                     }
@@ -513,6 +515,7 @@ public class LangChainAgentService implements AIAgentService {
                     session.addMessage(new AgentMessage(AgentRole.ASSISTANT, msg));
                     SessionManager.getInstance().autoSaveCurrentProjectSessions();
                     listener.onToken(msg);
+                    reportFileChanges(session, listener);
                     listener.onComplete(msg);
                 }
 
@@ -537,15 +540,30 @@ public class LangChainAgentService implements AIAgentService {
                     }
                 } catch (Exception ignored) {
                 }
+                reportFileChanges(session, listener);
                 listener.onError(new RuntimeException(
                         String.format("Error calling provider %s [%s] at URL [%s]: %s",
                                 activeProviderName, activeTargetModel, activeEndpointUrl, e.getMessage()), e));
             } finally {
+                // A stopped run still changed files: keep them with the session (nothing else reports them)
+                reportFileChanges(session, null);
                 AgentTaskContext.clear();
                 ReasoningContext.clear();
                 VisionSupport.clearThreadState();
             }
         });
+    }
+
+    /**
+     * Saves the files this run changed with the session (shown after the answer, also when it is reopened) and tells
+     * the listener; nothing when the run changed no files or was already reported.
+     */
+    static void reportFileChanges(AgentSession session, AgentListener listener) {
+        List<FileChangeTracker.FileChange> changes = FileChangeTracker.finish();
+        if (changes.isEmpty() || session == null) return;
+        session.addMessage(new AgentMessage(AgentRole.FILE_CHANGES, FileChangeTracker.describe(changes)));
+        SessionManager.getInstance().autoSaveCurrentProjectSessions();
+        if (listener != null) listener.onFilesChanged(changes);
     }
 
     /** System-prompt section for the session's execution mode and its task list. */

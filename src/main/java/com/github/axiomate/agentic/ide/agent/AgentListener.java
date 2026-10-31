@@ -18,6 +18,10 @@ public interface AgentListener {
 
     void onToolResult(String toolName, String output);
 
+    /** The files the run changed, reported just before {@link #onComplete} (or {@link #onError}). */
+    default void onFilesChanged(java.util.List<FileChangeTracker.FileChange> changes) {
+    }
+
     void onComplete(String fullResponse);
 
     void onError(Throwable throwable);

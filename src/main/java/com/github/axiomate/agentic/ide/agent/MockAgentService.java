@@ -76,6 +76,7 @@ public class MockAgentService implements AIAgentService {
             try {
                 AgentSession session = SessionManager.getInstance().getActiveSession();
                 AgentTaskContext.set(session);
+                FileChangeTracker.begin(com.github.axiomate.agentic.ide.util.ProjectManager.getInstance().getCurrentProjectDirectory());
                 IdeConfig config = ConfigManager.getInstance().getConfig();
 
                 // Feature 33: Prompt-injection shield validation
@@ -172,8 +173,10 @@ public class MockAgentService implements AIAgentService {
             } catch (Exception e) {
                 if (cancelled()) return;
                 log.error("Agent error", e);
+                reportFileChanges(listener);
                 listener.onError(e);
             } finally {
+                FileChangeTracker.clear();
                 AgentTaskContext.clear();
                 taskCancel.remove();
             }
@@ -512,6 +515,12 @@ public class MockAgentService implements AIAgentService {
         streamResponse(response, listener);
     }
 
+    /** The files the run changed, just before its answer; the chat saves them with the session for this service. */
+    private static void reportFileChanges(AgentListener listener) {
+        java.util.List<FileChangeTracker.FileChange> changes = FileChangeTracker.finish();
+        if (!changes.isEmpty()) listener.onFilesChanged(changes);
+    }
+
     private String executeRegisteredTool(String name, String args) {
         // Same rules as the real agent: Plan refuses changes, Manual asks first
         ToolPermissions.Verdict verdict = ToolPermissions.check(AgentTaskContext.session(), name, args);
@@ -554,6 +563,7 @@ public class MockAgentService implements AIAgentService {
         com.github.axiomate.agentic.ide.features.devexperience.AgentAnalyticsDashboard.getInstance()
                 .recordTaskOutcome("GENERAL", true, 15.0, 0.002, null);
 
+        reportFileChanges(listener);
         listener.onComplete(current.toString());
     }
 

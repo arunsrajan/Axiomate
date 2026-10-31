@@ -265,6 +265,12 @@ Each session has a mode, shown in the chat footer (*Mode: …*) and switched wit
 - **Agent activity**: the task running now (session, mode, elapsed time, tool calls, last tool) with a **Stop** button, and how recent runs ended — completed, failed or stopped — with their duration; click one to open its session.
 - Tasks are saved with the session, so they come back after a restart and are copied into forks.
 
+### 23. 📝 Changed Files Summary
+- **After each answer**, the agent chat lists the files the run changed: *Changed 3 files* **+42** **−7**, then one line per file with its added (green) and removed (red) lines, marked *new* or *deleted* where it applies. Click a file name to open it in the editor.
+- **Each edit's tool result** shows its own **+added −removed** lines beside it (`code_editor`, `file_system` write and `code_refactor`), and the agent sees them too.
+- **What is counted**: every file the agent's file tools change. In a git repository, files changed any other way during the run — for example by a shell command — are found as well, by comparing `git status` before and after; build output ignored by git is left out, and files you had already modified are counted from how they were when the run started. Binary and very large files are listed without line counts.
+- The summary is saved with the session (shown again when it is reopened, included in Markdown exports) but is not sent to the model.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

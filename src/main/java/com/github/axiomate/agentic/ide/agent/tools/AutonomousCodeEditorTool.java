@@ -93,8 +93,20 @@ public class AutonomousCodeEditorTool implements AgentTool {
         com.github.axiomate.agentic.ide.features.security.AuditTrailService.getInstance()
                 .recordEvent("AGENT", "CODE_EDITOR", targetFile.getPath(), "Action: " + action);
 
+        // The file as it was, for the run's change summary and this edit's "+added -removed" lines
+        boolean edits = !"read_file".equals(action);
+        boolean existed = targetFile.isFile();
+        String before = edits ? com.github.axiomate.agentic.ide.agent.FileChangeTracker.readText(targetFile) : null;
+        if (edits && (!existed || before != null)) {
+            com.github.axiomate.agentic.ide.agent.FileChangeTracker.recordBefore(targetFile, before);
+        }
         try {
-            return dispatch(action, targetFile, json);
+            String result = dispatch(action, targetFile, json);
+            if (edits && result.startsWith("SUCCESS") && (!existed || before != null)) {
+                result += com.github.axiomate.agentic.ide.agent.FileChangeTracker.deltaLabel(before,
+                        com.github.axiomate.agentic.ide.agent.FileChangeTracker.readText(targetFile));
+            }
+            return result;
         } catch (NotUtf8Exception e) {
             return "ERROR: " + e.getMessage();
         }
