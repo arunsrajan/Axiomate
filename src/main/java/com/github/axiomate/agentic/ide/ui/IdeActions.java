@@ -12,6 +12,7 @@ public interface IdeActions {
     String VIEW_SESSIONS = "sessions";
     String VIEW_AGENT_SYNC = "agent-sync";
     String VIEW_PLUGINS = "plugins";
+    String VIEW_TASKS = "tasks";
 
     IdeActions NONE = new IdeActions() {
     };
@@ -54,5 +55,9 @@ public interface IdeActions {
     }
 
     default void reloadAgentCommands() {
+    }
+
+    /** Stops the running agent task, as the Stop button in the agent panel does. */
+    default void stopAgent() {
     }
 }

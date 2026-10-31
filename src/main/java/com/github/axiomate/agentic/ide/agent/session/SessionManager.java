@@ -117,6 +117,7 @@ public class SessionManager {
         }
 
         AgentSession session = new AgentSession(name, providerId, modelId, autoRoutingEnabled, maxCtx);
+        session.setExecutionMode(config.getDefaultExecutionMode());
         stampProject(session, currentProjectDirectory);
         sessions.add(session);
         activeSession = session;
@@ -321,6 +322,27 @@ public class SessionManager {
         stampProject(copy, currentProjectDirectory);
         sessions.add(copy);
         activeSession = copy;
+        notifyListeners();
+        autoSaveCurrentProjectSessions();
+        return copy;
+    }
+
+    /**
+     * Forks a session of the current project at a point in its conversation and activates the fork.
+     *
+     * @param endExclusive number of messages the fork keeps (the whole conversation for a plain fork)
+     * @param name         the fork's name, or null for "&lt;name&gt; (fork)"
+     */
+    public synchronized AgentSession forkSession(String sessionId, int endExclusive, String name) {
+        AgentSession source = findSession(sessionId);
+        if (source == null) return null;
+        String forkName = name != null && !name.isBlank() ? name.strip() : source.getName() + " (fork)";
+        AgentSession copy = source.forkUpTo(endExclusive, forkName);
+        stampProject(copy, currentProjectDirectory);
+        sessions.add(copy);
+        activeSession = copy;
+        log.info("Forked session '{}' at message {} of {} into '{}'", source.getName(),
+                Math.min(endExclusive, source.getMessages().size()), source.getMessages().size(), forkName);
         notifyListeners();
         autoSaveCurrentProjectSessions();
         return copy;

@@ -54,6 +54,14 @@ public class AgentMessage {
         this(role, content, toolName, null);
     }
 
+    /** An independent copy with every field, including image attachments and the interim flag. */
+    public AgentMessage copy() {
+        AgentMessage m = new AgentMessage(role, content, toolName, timestamp);
+        m.setAttachments(attachments);
+        m.setInterim(interim);
+        return m;
+    }
+
     public boolean isInterim() {
         return interim;
     }

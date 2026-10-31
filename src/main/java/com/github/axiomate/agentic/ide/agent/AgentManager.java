@@ -41,6 +41,7 @@ public class AgentManager {
         registerTool(memoryTool);
         registerTool(new ViewImageTool());
         registerTool(new SearchFilesTool());
+        registerTool(new TaskListTool());
 
         updateActiveService(ConfigManager.getInstance().getConfig());
 

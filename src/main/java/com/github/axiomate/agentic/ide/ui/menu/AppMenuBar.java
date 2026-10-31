@@ -525,6 +525,9 @@ public class AppMenuBar extends JMenuBar {
         JMenuItem viewPluginsItem = new JMenuItem("Show Plugins Sidebar");
         viewPluginsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_7, InputEvent.ALT_DOWN_MASK));
         viewPluginsItem.addActionListener(e -> actions(mainFrame).showSidebarView(IdeActions.VIEW_PLUGINS));
+        JMenuItem viewTasksItem = new JMenuItem("Show Tasks Sidebar");
+        viewTasksItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_8, InputEvent.ALT_DOWN_MASK));
+        viewTasksItem.addActionListener(e -> actions(mainFrame).showSidebarView(IdeActions.VIEW_TASKS));
 
         JMenu themeSubMenu = new JMenu("Themes");
         for (String th : UIUtils.THEMES) {
@@ -562,6 +565,7 @@ public class AppMenuBar extends JMenuBar {
         viewMenu.add(viewSessionsItem);
         viewMenu.add(viewSyncItem);
         viewMenu.add(viewPluginsItem);
+        viewMenu.add(viewTasksItem);
         viewMenu.add(toggleAgentItem);
         viewMenu.add(toggleTermItem);
         viewMenu.add(viewMemoryTabItem);

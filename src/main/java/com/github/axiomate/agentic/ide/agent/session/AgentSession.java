@@ -31,6 +31,12 @@ public class AgentSession {
     private String origin = "";
     /** Folder the session works in; the Explorer switches to it when the session is selected. */
     private String projectPath;
+    /** Plan / Manual / Auto. Sessions saved by older versions have none and run in Auto, as they always did. */
+    private com.github.axiomate.agentic.ide.agent.ExecutionMode executionMode = com.github.axiomate.agentic.ide.agent.ExecutionMode.AUTO;
+    /** Tools the user chose "Always allow" for in Manual mode. */
+    private List<String> allowedTools = new CopyOnWriteArrayList<>();
+    /** The session's task list (Tasks panel), kept by the agent's task_list tool and by the user. */
+    private List<SessionTask> tasks = new CopyOnWriteArrayList<>();
 
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -132,14 +138,73 @@ public class AgentSession {
      * Creates an independent copy of this session (new id, copied history and settings).
      */
     public AgentSession fork(String newName) {
+        return forkUpTo(messages.size(), newName);
+    }
+
+    /**
+     * A copy holding only the first {@code endExclusive} messages: "fork from here" continues the conversation from
+     * that point. Messages keep their images and interim flag (interim narration must stay out of later requests).
+     */
+    public AgentSession forkUpTo(int endExclusive, String newName) {
         AgentSession copy = new AgentSession(newName, providerId, modelId, autoRoutingEnabled,
                 tokenTracker != null ? tokenTracker.getMaxContextTokens() : 128_000);
         copy.setSystemPrompt(systemPrompt);
         copy.setOrigin("Forked from '" + name + "'");
-        for (AgentMessage m : messages) {
-            copy.addMessage(new AgentMessage(m.getRole(), m.getContent(), m.getToolName(), m.getTimestamp()));
+        copy.setExecutionMode(executionMode);
+        List<AgentMessage> snapshot = List.copyOf(messages);
+        int end = Math.max(0, Math.min(endExclusive, snapshot.size()));
+        List<AgentMessage> kept = new java.util.ArrayList<>();
+        for (int i = 0; i < end; i++) kept.add(snapshot.get(i).copy());
+        copy.setMessages(kept);
+        for (SessionTask t : tasks) copy.tasks.add(t.copy());
+        if (tokenTracker != null && copy.tokenTracker != null) {
+            long estimate = 0;
+            for (AgentMessage m : kept) estimate += TokenTracker.estimateTokens(m.getContent());
+            copy.tokenTracker.setEstimatedUsage(estimate);
         }
         return copy;
+    }
+
+    /** Index of the {@code ordinal}-th (0-based) user prompt in {@code messages}, or -1. */
+    public static int indexOfUserMessage(List<AgentMessage> messages, int ordinal) {
+        int seen = 0;
+        for (int i = 0; i < messages.size(); i++) {
+            if (messages.get(i).isUser() && seen++ == ordinal) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * End (exclusive) of the turn that the {@code ordinal}-th user prompt started: the next prompt's index, or the
+     * end of the conversation. {@code ordinal} -1 is the part before the first prompt.
+     */
+    public static int endOfTurn(List<AgentMessage> messages, int ordinal) {
+        int next = indexOfUserMessage(messages, ordinal + 1);
+        return next >= 0 ? next : messages.size();
+    }
+
+    public com.github.axiomate.agentic.ide.agent.ExecutionMode getExecutionMode() {
+        return executionMode;
+    }
+
+    public void setExecutionMode(com.github.axiomate.agentic.ide.agent.ExecutionMode executionMode) {
+        this.executionMode = executionMode != null ? executionMode : com.github.axiomate.agentic.ide.agent.ExecutionMode.AUTO;
+    }
+
+    public List<String> getAllowedTools() {
+        return allowedTools;
+    }
+
+    public void setAllowedTools(List<String> allowedTools) {
+        this.allowedTools = new CopyOnWriteArrayList<>(allowedTools != null ? allowedTools : List.of());
+    }
+
+    public List<SessionTask> getTasks() {
+        return tasks;
+    }
+
+    public void setTasks(List<SessionTask> tasks) {
+        this.tasks = new CopyOnWriteArrayList<>(tasks != null ? tasks : List.of());
     }
 
     public TokenTracker getTokenTracker() {

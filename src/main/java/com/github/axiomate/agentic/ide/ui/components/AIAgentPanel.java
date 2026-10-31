@@ -5,10 +5,14 @@ import com.github.axiomate.agentic.ide.agent.AgentListener;
 import com.github.axiomate.agentic.ide.agent.AgentManager;
 import com.github.axiomate.agentic.ide.agent.AgentMessage;
 import com.github.axiomate.agentic.ide.agent.AgentRole;
+import com.github.axiomate.agentic.ide.agent.AgentRunTracker;
+import com.github.axiomate.agentic.ide.agent.ExecutionMode;
 import com.github.axiomate.agentic.ide.agent.memory.MemoryManager;
 import com.github.axiomate.agentic.ide.agent.session.AgentSession;
 import com.github.axiomate.agentic.ide.agent.session.ContextCompressor;
 import com.github.axiomate.agentic.ide.agent.session.SessionManager;
+import com.github.axiomate.agentic.ide.agent.session.SessionTask;
+import com.github.axiomate.agentic.ide.agent.session.TaskBoard;
 import com.github.axiomate.agentic.ide.agent.session.TokenTracker;
 import com.github.axiomate.agentic.ide.agent.vision.ImageAttachment;
 import com.github.axiomate.agentic.ide.agent.vision.VisionSupport;
@@ -98,6 +102,12 @@ public class AIAgentPanel extends JPanel {
     private final List<JButton> quickActions = new ArrayList<>();
     private final ImageAttachmentStrip attachmentStrip = new ImageAttachmentStrip(true, this::updateVisionHint);
     private final JLabel visionHint = new JLabel();
+    /** Plan / Manual / Auto for the active session. */
+    private final JComboBox<ExecutionMode> modeCombo = new JComboBox<>(ExecutionMode.values());
+    /** Above the prompt in Plan and Manual mode, so the mode is never a surprise. */
+    private final JLabel modeHint = new JLabel();
+    /** The agent run in progress, for the Tasks panel's activity list. */
+    private AgentRunTracker.Run currentRun;
     /** "payments-api  ⎇ main": the project the agent works in and its checked-out git branch. */
     private final JLabel projectLabel = new JLabel();
     private final JLabel branchLabel = new JLabel();
@@ -249,6 +259,26 @@ public class AIAgentPanel extends JPanel {
             }
         });
         modelLine.add(autoRouteCheck);
+
+        modeCombo.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        modeCombo.setToolTipText("<html><b>Plan</b>: read and search only, then propose a plan<br>"
+                + "<b>Manual</b>: ask before each tool that changes files or runs commands<br>"
+                + "<b>Auto</b>: run tools without asking<br>Shift+Tab in the prompt box switches mode</html>");
+        modeCombo.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean sel, boolean focus) {
+                super.getListCellRendererComponent(list, value, index, sel, focus);
+                if (value instanceof ExecutionMode m) {
+                    if (index < 0) setText("Mode: " + m.label()); // the closed selector says what it is
+                    else setToolTipText(m.description());
+                }
+                return this;
+            }
+        });
+        modeCombo.addActionListener(e -> {
+            if (updatingSessionUi) return;
+            if (modeCombo.getSelectedItem() instanceof ExecutionMode m) setExecutionMode(m);
+        });
 
         // Line B: Token Usage Progress Bar & Compression Button
         JPanel tokenLine = new JPanel(new BorderLayout(8, 0));
@@ -434,10 +464,21 @@ public class AIAgentPanel extends JPanel {
 
         inputArea.addKeyListener(new KeyAdapter() {
             @Override
+            public void keyTyped(KeyEvent e) {
+                if (e.getKeyChar() == '\t' && e.isShiftDown()) e.consume(); // Shift+Tab switched the mode instead
+            }
+
+            @Override
             public void keyPressed(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.VK_ENTER && (e.isControlDown() || e.isMetaDown())) {
                     e.consume();
                     submitPrompt();
+                }
+                // Shift+Tab switches Plan → Manual → Auto, like Claude Code
+                if (e.getKeyCode() == KeyEvent.VK_TAB && e.isShiftDown() && !e.isControlDown() && !e.isAltDown()) {
+                    e.consume();
+                    AgentSession s = SessionManager.getInstance().getActiveSession();
+                    if (s != null) setExecutionMode(s.getExecutionMode().next());
                 }
                 // Prompt history: Ctrl+Up/Down anywhere, plain Up/Down in an empty box or while browsing
                 // (the @ and / popups consume the arrows first while they are open)
@@ -556,6 +597,9 @@ public class AIAgentPanel extends JPanel {
         footLeft.add(attachBtn);
         footLeft.add(providerCombo);
         footLeft.add(modelCombo);
+        modeCombo.putClientProperty("FlatLaf.style", "borderWidth: 0; focusWidth: 0");
+        modeCombo.setPreferredSize(new Dimension(118, 24));
+        footLeft.add(modeCombo);
         JPanel footRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         footRight.setOpaque(false);
         footRight.add(tokenUsageLabel);
@@ -579,6 +623,11 @@ public class AIAgentPanel extends JPanel {
         inputPanel.add(Box.createVerticalStrut(2));
         inputPanel.add(attachmentStrip);
         inputPanel.add(visionHint);
+        modeHint.setFont(UIUtils.uiFont(Font.PLAIN, 11.5f));
+        modeHint.setBorder(new EmptyBorder(0, 4, 2, 0));
+        modeHint.setAlignmentX(Component.LEFT_ALIGNMENT);
+        modeHint.setVisible(false);
+        inputPanel.add(modeHint);
         inputPanel.add(promptBox);
         inputPanel.add(Box.createVerticalStrut(4));
         inputPanel.add(footer);
@@ -842,6 +891,8 @@ public class AIAgentPanel extends JPanel {
             modelCombo.setSelectedItem(session.getModelId());
         }
         autoRouteCheck.setSelected(session.isAutoRoutingEnabled());
+        modeCombo.setSelectedItem(session.getExecutionMode());
+        updateModeHint(session.getExecutionMode());
 
         AgentManager.getInstance().updateActiveService(config);
     }
@@ -1103,7 +1154,10 @@ public class AIAgentPanel extends JPanel {
         JMenuItem managerItem = new JMenuItem("🗂 Session Manager (All Projects)…");
         managerItem.addActionListener(e -> ideActions.openSessionManager());
 
+        JMenuItem copyConversationItem = new JMenuItem("📋 Copy Conversation as Markdown");
+        copyConversationItem.addActionListener(e -> copyWithToast(conversationMarkdown(), "Conversation copied"));
         menu.add(duplicateItem);
+        menu.add(copyConversationItem);
         menu.add(markdownItem);
         menu.addSeparator();
         menu.add(reloadItem);
@@ -1323,6 +1377,10 @@ public class AIAgentPanel extends JPanel {
         final int generation = ++taskGeneration;
         AgentSession taskSession = SessionManager.getInstance().getActiveSession();
         final String taskSessionId = taskSession != null ? taskSession.getId() : null;
+        final ExecutionMode taskMode = taskSession != null ? taskSession.getExecutionMode() : ExecutionMode.AUTO;
+        final AgentRunTracker.Run run = AgentRunTracker.getInstance().start(taskSessionId,
+                taskSession != null ? taskSession.getName() : "", prompt, taskMode);
+        currentRun = run;
         agentService.sendMessage(prompt, contextCode, activeFilePath, images, new AgentListener() {
             /** Still the latest task (not stopped or superseded). */
             private boolean current() {
@@ -1372,6 +1430,7 @@ public class AIAgentPanel extends JPanel {
 
             @Override
             public void onToolCall(String toolName, String input) {
+                if (current()) AgentRunTracker.getInstance().toolCall(run, toolName);
                 SwingUtilities.invokeLater(() -> {
                     if (!visible()) return;
                     // Text streamed before a tool call stays in its own bubble; the next reply starts a new one
@@ -1423,6 +1482,12 @@ public class AIAgentPanel extends JPanel {
                         currentAssistantTextArea = null;
                     }
                     setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);
+                    AgentRunTracker.getInstance().finish(run, AgentRunTracker.Status.COMPLETED, null);
+                    if (taskMode == ExecutionMode.PLAN && visible()) {
+                        String plan = fullResponse != null && !fullResponse.isBlank() ? fullResponse
+                                : currentStreamingBuffer != null ? currentStreamingBuffer.toString() : "";
+                        appendPlanActions(taskSessionId, plan);
+                    }
                     updateTokenDisplay();
                     SessionManager.getInstance().autoSaveCurrentProjectSessions();
                     scrollToBottom();
@@ -1435,6 +1500,7 @@ public class AIAgentPanel extends JPanel {
                     if (!current()) return;
                     endLiveThinking();
                     setAgentState("Error", UIUtils.ERROR_COLOR, false);
+                    AgentRunTracker.getInstance().finish(run, AgentRunTracker.Status.FAILED, throwable.getMessage());
                     if (visible()) appendAssistantBubble("⚠️ **Error occurred:** " + throwable.getMessage());
                     terminalPanel.appendAgentLog("ERROR", throwable.toString());
                     updateTokenDisplay();
@@ -1443,7 +1509,16 @@ public class AIAgentPanel extends JPanel {
         });
     }
 
+    /** Stops the running agent task (Tasks panel, menus); nothing happens when the agent is idle. */
+    public void stopAgent() {
+        if (AgentManager.getInstance().getActiveService().isBusy() || currentRun != null
+                && currentRun.status() == AgentRunTracker.Status.RUNNING) {
+            cancelAgent();
+        }
+    }
+
     private void cancelAgent() {
+        AgentRunTracker.getInstance().finish(currentRun, AgentRunTracker.Status.STOPPED, "Stopped by the user");
         taskGeneration++; // whatever the stopped task still sends is ignored
         AgentManager.getInstance().getActiveService().cancelCurrentTask();
         endLiveThinking();
@@ -1522,6 +1597,7 @@ public class AIAgentPanel extends JPanel {
     }
 
     private void addCard(MessageCard card, int gap) {
+        installMessageMenu(card);
         chatBox.add(card);
         chatBox.add(Box.createVerticalStrut(gap));
         scrollToBottom();
@@ -1753,6 +1829,7 @@ public class AIAgentPanel extends JPanel {
         }
 
         MessageCard card = new MessageCard(MessageDisplayType.USER, inner, null);
+        card.setRawText(text);
         card.setBorder(new EmptyBorder(8, 4, 4, 4));
         card.add(inner, BorderLayout.CENTER);
         addCard(card, 4);
@@ -1855,6 +1932,7 @@ public class AIAgentPanel extends JPanel {
         body.add(contentPanel, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.THINKING, contentPanel, toggle, true);
+        card.setRawText(thought);
         wireToggle(card, toggle, header);
         card.setBorder(new EmptyBorder(2, 4, 2, 4));
         card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.SPARK, 14, UIUtils.mutedForeground()), body), BorderLayout.CENTER);
@@ -1875,6 +1953,10 @@ public class AIAgentPanel extends JPanel {
     private void populateAssistantContent(JPanel container, String text) {
         if (container == null) return;
         String content = text != null ? text : "";
+        if (SwingUtilities.getAncestorOfClass(MessageCard.class, container) instanceof MessageCard owner) {
+            owner.setRawText(content);
+            SwingUtilities.invokeLater(() -> inheritMenu(owner)); // the rendered Markdown panels are new children
+        }
         if (!MarkdownTableParser.containsMarkdown(content)) {
             if (container.getComponentCount() == 1 && container.getComponent(0) instanceof JTextArea ta) {
                 if (!ta.getText().equals(content)) {
@@ -1960,6 +2042,7 @@ public class AIAgentPanel extends JPanel {
         inner.add(area, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.SYSTEM, inner, null);
+        card.setRawText(text);
         card.setBorder(new EmptyBorder(2, 4, 2, 4));
         card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.ELBOW, 14, UIUtils.mutedForeground()), inner), BorderLayout.CENTER);
         addCard(card, 2);
@@ -2004,6 +2087,7 @@ public class AIAgentPanel extends JPanel {
         body.add(contentPanel, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.TOOL_REQUEST, contentPanel, toggle, true);
+        card.setRawText(toolName + " " + (input != null ? input : ""));
         wireToggle(card, toggle, header);
         card.setBorder(new EmptyBorder(4, 4, 0, 4));
         card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.DOT, 14, UIUtils.SUCCESS_COLOR), body), BorderLayout.CENTER);
@@ -2044,6 +2128,7 @@ public class AIAgentPanel extends JPanel {
         body.add(contentPanel, BorderLayout.CENTER);
 
         MessageCard card = new MessageCard(MessageDisplayType.TOOL_RESPONSE, contentPanel, toggle, true);
+        card.setRawText(text);
         wireToggle(card, toggle, header);
         // Indented under the tool call, like Claude Code's "  ⎿  result"
         card.setBorder(new EmptyBorder(0, 22, 4, 4));
@@ -2118,6 +2203,267 @@ public class AIAgentPanel extends JPanel {
         revalidate();
     }
 
+    // ------------------------------------------------------------------ execution mode
+
+    /** Switches the active session to {@code mode}, saves it, and updates the selector, the hint and the Tasks panel. */
+    public void setExecutionMode(ExecutionMode mode) {
+        AgentSession s = SessionManager.getInstance().getActiveSession();
+        if (s == null || mode == null) return;
+        boolean changed = s.getExecutionMode() != mode;
+        s.setExecutionMode(mode);
+        boolean wasUpdating = updatingSessionUi;
+        updatingSessionUi = true;
+        try {
+            modeCombo.setSelectedItem(mode);
+        } finally {
+            updatingSessionUi = wasUpdating;
+        }
+        updateModeHint(mode);
+        if (changed) {
+            SessionManager.getInstance().autoSaveCurrentProjectSessions();
+            SessionManager.getInstance().notifyListeners();
+        }
+    }
+
+    private void updateModeHint(ExecutionMode mode) {
+        switch (mode) {
+            case PLAN -> {
+                modeHint.setText("📝 Plan mode — the agent reads and plans; edits and commands are blocked (Shift+Tab to switch)");
+                modeHint.setForeground(UIUtils.ACCENT_COLOR);
+                modeHint.setVisible(true);
+            }
+            case MANUAL -> {
+                modeHint.setText("✋ Manual mode — you approve each tool call that changes files or runs commands");
+                modeHint.setForeground(UIUtils.WARNING_COLOR);
+                modeHint.setVisible(true);
+            }
+            default -> modeHint.setVisible(false);
+        }
+    }
+
+    /** /plan, /manual and /auto: switch, and send the rest of the line as the prompt when there is one. */
+    private void switchModeAndSend(ExecutionMode mode, String request) {
+        setExecutionMode(mode);
+        if (request != null && !request.isBlank()) {
+            SwingUtilities.invokeLater(() -> sendPromptDirectly(request.strip()));
+        } else {
+            Toast.info(this, mode.label() + " mode — " + mode.description());
+        }
+    }
+
+    /**
+     * After a Plan-mode answer: the plan's numbered steps go to the Tasks panel (unless the agent already keeps an
+     * open task list), and buttons switch mode and ask the agent to carry the plan out.
+     */
+    void appendPlanActions(String sessionId, String plan) {
+        AgentSession s = SessionManager.getInstance().findSession(sessionId);
+        if (s == null || plan == null || plan.isBlank()) return;
+        List<String> steps = TaskBoard.stepsFromPlan(plan);
+        boolean added = false;
+        if (!steps.isEmpty() && !TaskBoard.hasOpenTasks(s)) {
+            List<SessionTask> tasks = new ArrayList<>();
+            for (String step : steps) tasks.add(new SessionTask(step, SessionTask.Status.PENDING, "agent"));
+            TaskBoard.getInstance().replace(s, tasks);
+            added = true;
+        }
+        int n = s.getTasks().size();
+        JLabel msg = new JLabel("<html><b>Plan ready.</b> " + (added ? steps.size() + " steps were added to the Tasks panel. "
+                : n > 0 ? "The task list has " + n + " steps. " : "") + "Review the plan, then:</html>");
+        msg.setFont(transcriptFont(Font.PLAIN, -1f));
+        JPanel buttons = new JPanel(new WrapLayout(FlowLayout.LEFT, 6, 2));
+        buttons.setOpaque(false);
+        JButton auto = new JButton("Implement (Auto)");
+        auto.setToolTipText("Switch to Auto mode and carry out the plan");
+        JButton manual = new JButton("Implement (Manual)");
+        manual.setToolTipText("Switch to Manual mode: you approve each change while the plan is carried out");
+        JButton showTasks = new JButton("Show tasks");
+        JButton keep = new JButton("Keep planning");
+        auto.addActionListener(e -> implementPlan(sessionId, ExecutionMode.AUTO, buttons));
+        manual.addActionListener(e -> implementPlan(sessionId, ExecutionMode.MANUAL, buttons));
+        showTasks.addActionListener(e -> ideActions.showSidebarView(com.github.axiomate.agentic.ide.ui.IdeActions.VIEW_TASKS));
+        keep.addActionListener(e -> inputArea.requestFocusInWindow());
+        for (JButton b : List.of(auto, manual, showTasks, keep)) buttons.add(b);
+        JPanel inner = new JPanel(new BorderLayout(0, 4));
+        inner.setOpaque(false);
+        inner.add(msg, BorderLayout.NORTH);
+        inner.add(buttons, BorderLayout.CENTER);
+        MessageCard card = new MessageCard(MessageDisplayType.SYSTEM, inner, null);
+        card.setRawText("Plan ready");
+        card.setBorder(new EmptyBorder(4, 4, 4, 4));
+        card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.SPARK, 14, UIUtils.ACCENT_COLOR), inner), BorderLayout.CENTER);
+        addCard(card, 6);
+    }
+
+    static final String IMPLEMENT_PLAN_PROMPT = "Implement the plan above, step by step. Mark each task in_progress "
+            + "when you start it and completed when it is done.";
+
+    private void implementPlan(String sessionId, ExecutionMode mode, JPanel buttons) {
+        AgentSession active = SessionManager.getInstance().getActiveSession();
+        if (active == null || !active.getId().equals(sessionId)) {
+            if (SessionManager.getInstance().findSession(sessionId) == null) return;
+            SessionManager.getInstance().switchSession(sessionId);
+        }
+        setExecutionMode(mode);
+        for (Component c : buttons.getComponents()) c.setEnabled(false);
+        sendPromptDirectly(IMPLEMENT_PLAN_PROMPT);
+    }
+
+    // ------------------------------------------------------------------ copy and fork
+
+    /** Right-click menu of a transcript entry: copy it, copy the conversation, fork from this point. */
+    private void installMessageMenu(MessageCard card) {
+        JPopupMenu menu = new JPopupMenu();
+        menu.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+                menu.removeAll();
+                fillMessageMenu(menu, card); // built on opening: whether the agent is busy changes
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) {
+            }
+
+            @Override
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {
+            }
+        });
+        card.setComponentPopupMenu(menu);
+        inheritMenu(card);
+    }
+
+    /** Children without a menu of their own show the card's menu (text areas, rendered Markdown). */
+    private static void inheritMenu(Container c) {
+        for (Component k : c.getComponents()) {
+            if (k instanceof JComponent j && j.getComponentPopupMenu() == null) j.setInheritsPopupMenu(true);
+            if (k instanceof Container cc) inheritMenu(cc);
+        }
+    }
+
+    void fillMessageMenu(JPopupMenu menu, MessageCard card) {
+        String text = cardText(card);
+        JMenuItem copy = menuItem("Copy message", () -> copyWithToast(text, "Message copied"));
+        copy.setEnabled(!text.isBlank());
+        menu.add(copy);
+        menu.add(menuItem("Copy conversation as Markdown", () -> copyWithToast(conversationMarkdown(), "Conversation copied")));
+        menu.add(menuItem("Copy last answer", () -> copyWithToast(lastAnswer(), "Last answer copied")));
+        menu.addSeparator();
+
+        int turn = turnOf(card);
+        boolean busy = thinkingIndicator.isRunning();
+        String busyTip = "Wait for the agent to finish, or stop it, first";
+        if (card.getDisplayType() == MessageDisplayType.USER) {
+            JMenuItem edit = menuItem("Edit & resend in a fork", () -> editAndResendInFork(turn));
+            edit.setToolTipText("A new session with the conversation before this prompt, and the prompt in the box to change and send");
+            edit.setEnabled(!busy);
+            if (busy) edit.setToolTipText(busyTip);
+            menu.add(edit);
+        }
+        JMenuItem fork = menuItem("Fork from here", () -> {
+            AgentSession s = SessionManager.getInstance().getActiveSession();
+            if (s != null) forkActiveSession(AgentSession.endOfTurn(s.getMessages(), turn));
+        });
+        fork.setToolTipText(busy ? busyTip : "A new session with the conversation up to the end of this turn");
+        fork.setEnabled(!busy);
+        JMenuItem forkAll = menuItem("Fork whole session", () -> forkActiveSession(-1));
+        forkAll.setEnabled(!busy);
+        menu.add(fork);
+        menu.add(forkAll);
+    }
+
+    /**
+     * Which prompt's turn a card belongs to: 0 for the first prompt and the answers after it. Each prompt shows as
+     * exactly one user card and is saved as exactly one user message, so the count matches the session.
+     */
+    int turnOf(MessageCard card) {
+        int users = 0;
+        for (Component c : chatBox.getComponents()) {
+            if (c == card) return card.getDisplayType() == MessageDisplayType.USER ? users : users - 1;
+            if (c instanceof MessageCard m && m.getDisplayType() == MessageDisplayType.USER) users++;
+        }
+        return users - 1;
+    }
+
+    /** Forks the active session keeping {@code endExclusive} messages (-1 for all) and opens the fork. */
+    AgentSession forkActiveSession(int endExclusive) {
+        AgentSession s = SessionManager.getInstance().getActiveSession();
+        if (s == null) return null;
+        int end = endExclusive < 0 ? s.getMessages().size() : endExclusive;
+        AgentSession fork = SessionManager.getInstance().forkSession(s.getId(), end, null);
+        if (fork != null) Toast.success(this, "Forked into '" + fork.getName() + "'");
+        return fork;
+    }
+
+    /** A fork ending just before the {@code turn}-th prompt, with that prompt in the box to change and send. */
+    AgentSession editAndResendInFork(int turn) {
+        AgentSession s = SessionManager.getInstance().getActiveSession();
+        if (s == null) return null;
+        int index = AgentSession.indexOfUserMessage(s.getMessages(), turn);
+        if (index < 0) return null;
+        String original = s.getMessages().get(index).getContent();
+        AgentSession fork = SessionManager.getInstance().forkSession(s.getId(), index, s.getName() + " (edit)");
+        if (fork != null) {
+            prefillPrompt(original);
+            inputArea.selectAll();
+            Toast.info(this, "Edit the prompt and send it — the original session is unchanged");
+        }
+        return fork;
+    }
+
+    private static String cardText(MessageCard card) {
+        if (card.getRawText() != null) return card.getRawText();
+        StringBuilder sb = new StringBuilder();
+        collectText(card, sb);
+        return sb.toString().strip();
+    }
+
+    private static void collectText(Container c, StringBuilder sb) {
+        for (Component k : c.getComponents()) {
+            if (k instanceof javax.swing.text.JTextComponent t) {
+                if (!sb.isEmpty()) sb.append('\n');
+                sb.append(t.getText());
+            } else if (k instanceof Container cc) {
+                collectText(cc, sb);
+            }
+        }
+    }
+
+    /** The active session as Markdown (prompts, answers and tool calls, without tool output). */
+    String conversationMarkdown() {
+        AgentSession s = SessionManager.getInstance().getActiveSession();
+        return s == null || s.getMessages().isEmpty() ? ""
+                : com.github.axiomate.agentic.ide.interop.SessionTranscriptExporter.toMarkdown(s, false);
+    }
+
+    /** The newest final answer of the active session. */
+    String lastAnswer() {
+        AgentSession s = SessionManager.getInstance().getActiveSession();
+        if (s == null) return "";
+        List<AgentMessage> messages = s.getMessages();
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            AgentMessage m = messages.get(i);
+            if (m.isAssistant() && !m.isInterim() && !m.getContent().isBlank()) return m.getContent();
+        }
+        return "";
+    }
+
+    private void copyWithToast(String text, String done) {
+        if (text == null || text.isBlank()) {
+            Toast.info(this, "Nothing to copy yet");
+        } else if (copyToClipboard(text)) {
+            Toast.success(this, done);
+        }
+    }
+
+    static boolean copyToClipboard(String text) {
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(text), null);
+            return true;
+        } catch (Exception e) {
+            return false; // headless, or the clipboard is held by another application
+        }
+    }
+
     private JPopupMenu buildOverflowMenu() {
         JPopupMenu menu = new JPopupMenu();
         JMenu session = new JMenu("Session");
@@ -2125,7 +2471,52 @@ public class AIAgentPanel extends JPanel {
         session.add(menuItem("Rename session…", this::promptRenameSession));
         session.add(menuItem("Close session", this::closeActiveSession));
         session.add(menuItem("Load / import sessions…", this::promptLoadOrImportSessions));
+        session.addSeparator();
+        session.add(menuItem("Fork session", () -> forkActiveSession(-1)));
+        session.add(menuItem("Copy conversation as Markdown", () -> copyWithToast(conversationMarkdown(), "Conversation copied")));
+        session.add(menuItem("Copy last answer", () -> copyWithToast(lastAnswer(), "Last answer copied")));
         menu.add(session);
+
+        JMenu modes = new JMenu("Execution mode");
+        AgentSession active = SessionManager.getInstance().getActiveSession();
+        ButtonGroup group = new ButtonGroup();
+        for (ExecutionMode m : ExecutionMode.values()) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(m.label() + " — " + m.description(),
+                    active != null && active.getExecutionMode() == m);
+            item.addActionListener(e -> setExecutionMode(m));
+            group.add(item);
+            modes.add(item);
+        }
+        modes.addSeparator();
+        JCheckBoxMenuItem askReads = new JCheckBoxMenuItem("Manual mode: also ask before read-only tools",
+                ConfigManager.getInstance().getConfig().isManualModeAsksForReadOnlyTools());
+        askReads.addActionListener(e -> {
+            IdeConfig cfg = ConfigManager.getInstance().getConfig();
+            cfg.setManualModeAsksForReadOnlyTools(askReads.isSelected());
+            ConfigManager.getInstance().saveConfig(cfg);
+        });
+        modes.add(askReads);
+        JMenu defaults = new JMenu("Mode for new sessions");
+        ButtonGroup defaultGroup = new ButtonGroup();
+        for (ExecutionMode m : ExecutionMode.values()) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(m.label(),
+                    ConfigManager.getInstance().getConfig().getDefaultExecutionMode() == m);
+            item.addActionListener(e -> {
+                IdeConfig cfg = ConfigManager.getInstance().getConfig();
+                cfg.setDefaultExecutionMode(m);
+                ConfigManager.getInstance().saveConfig(cfg);
+            });
+            defaultGroup.add(item);
+            defaults.add(item);
+        }
+        modes.add(defaults);
+        if (active != null && !active.getAllowedTools().isEmpty()) {
+            modes.add(menuItem("Forget \"always allow\" choices (" + String.join(", ", active.getAllowedTools()) + ")", () -> {
+                active.getAllowedTools().clear();
+                SessionManager.getInstance().autoSaveCurrentProjectSessions();
+            }));
+        }
+        menu.add(modes);
 
         JMenu quick = new JMenu("Quick actions");
         for (JButton b : quickActions) quick.add(menuItem(b.getText(), b::doClick));
@@ -2207,9 +2598,36 @@ public class AIAgentPanel extends JPanel {
             AgentSession s = SessionManager.getInstance().getActiveSession();
             if (s != null && !args.isBlank()) SessionManager.getInstance().renameSession(s.getId(), args.trim());
         }));
-        reg.register(new SlashCommand("fork", "Duplicate the current session", null, "builtin", args -> {
+        reg.register(new SlashCommand("plan", "Plan mode: read and search only, then propose a plan: /plan [request]", null,
+                "builtin", args -> switchModeAndSend(ExecutionMode.PLAN, args)));
+        reg.register(new SlashCommand("manual", "Manual mode: ask before each tool that changes something: /manual [request]",
+                null, "builtin", args -> switchModeAndSend(ExecutionMode.MANUAL, args)));
+        reg.register(new SlashCommand("auto", "Auto mode: run tools without asking: /auto [request]", null, "builtin",
+                args -> switchModeAndSend(ExecutionMode.AUTO, args)));
+        reg.register(new SlashCommand("mode", "Show or set the execution mode: /mode [plan|manual|auto]", null, "builtin", args -> {
+            ExecutionMode m = ExecutionMode.parse(args);
+            if (m != null) {
+                setExecutionMode(m);
+            } else {
+                AgentSession s = SessionManager.getInstance().getActiveSession();
+                appendSystemBubble("Execution mode: " + (s != null ? s.getExecutionMode().label() : "Auto")
+                        + "\n/plan · /manual · /auto, or Shift+Tab in the prompt box.");
+            }
+        }));
+        reg.register(new SlashCommand("copy", "Copy the last answer (or /copy all for the conversation as Markdown)", null,
+                "builtin", args -> {
+            boolean all = args != null && args.strip().equalsIgnoreCase("all");
+            String text = all ? conversationMarkdown() : lastAnswer();
+            if (text == null || text.isBlank()) {
+                appendSystemBubble("Nothing to copy yet.");
+            } else {
+                copyToClipboard(text);
+                Toast.info(this, all ? "Conversation copied as Markdown" : "Last answer copied");
+            }
+        }));
+        reg.register(new SlashCommand("fork", "Fork the current session: /fork [name]", null, "builtin", args -> {
             AgentSession s = SessionManager.getInstance().getActiveSession();
-            if (s != null) SessionManager.getInstance().duplicateSession(s.getId());
+            if (s != null) SessionManager.getInstance().forkSession(s.getId(), s.getMessages().size(), args);
         }));
         reg.register(new SlashCommand("export", "Export the current session as Markdown", null, "builtin", args -> {
             AgentSession s = SessionManager.getInstance().getActiveSession();
@@ -2280,6 +2698,8 @@ public class AIAgentPanel extends JPanel {
         private final JComponent contentComponent;
         private final JButton toggleBtn;
         private boolean collapsed = false;
+        /** The message as written (Markdown for answers), for "Copy message". */
+        private String rawText;
 
         public MessageCard(MessageDisplayType displayType, JComponent contentComponent, JButton toggleBtn) {
             this(displayType, contentComponent, toggleBtn, false);
@@ -2331,6 +2751,14 @@ public class AIAgentPanel extends JPanel {
 
         public JComponent getContentComponent() {
             return contentComponent;
+        }
+
+        public String getRawText() {
+            return rawText;
+        }
+
+        public void setRawText(String rawText) {
+            this.rawText = rawText;
         }
     }
 }
