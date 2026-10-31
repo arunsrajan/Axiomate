@@ -12,6 +12,14 @@
     <name>Axiomate Agent IDE</name>
     <description>Modern Java Desktop IDE with Integrated Agentic AI Memory and Autonomous Coding Agent</description>
 
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>

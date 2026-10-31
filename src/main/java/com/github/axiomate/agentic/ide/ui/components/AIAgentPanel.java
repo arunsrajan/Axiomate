@@ -946,6 +946,8 @@ public class AIAgentPanel extends JPanel {
                     appendThinkingBubble(msg.getContent());
                 } else if (msg.getRole() == AgentRole.SYSTEM) {
                     appendSystemBubble(msg.getContent());
+                } else if (msg.getRole() == AgentRole.FILE_CHANGES) {
+                    appendChangesCard(com.github.axiomate.agentic.ide.agent.FileChangeTracker.parse(msg.getContent()));
                 }
             }
         }
@@ -1381,6 +1383,9 @@ public class AIAgentPanel extends JPanel {
         final AgentRunTracker.Run run = AgentRunTracker.getInstance().start(taskSessionId,
                 taskSession != null ? taskSession.getName() : "", prompt, taskMode);
         currentRun = run;
+        // The files this run changes, shown after its answer
+        final java.util.concurrent.atomic.AtomicReference<List<com.github.axiomate.agentic.ide.agent.FileChangeTracker.FileChange>> runChanges =
+                new java.util.concurrent.atomic.AtomicReference<>();
         agentService.sendMessage(prompt, contextCode, activeFilePath, images, new AgentListener() {
             /** Still the latest task (not stopped or superseded). */
             private boolean current() {
@@ -1460,6 +1465,16 @@ public class AIAgentPanel extends JPanel {
             }
 
             @Override
+            public void onFilesChanged(List<com.github.axiomate.agentic.ide.agent.FileChangeTracker.FileChange> changes) {
+                runChanges.set(changes);
+                SwingUtilities.invokeLater(() -> {
+                    if (!current() || serviceRecords) return;
+                    recordSessionMessageIfNew(new AgentMessage(AgentRole.FILE_CHANGES,
+                            com.github.axiomate.agentic.ide.agent.FileChangeTracker.describe(changes), null));
+                });
+            }
+
+            @Override
             public void onComplete(String fullResponse) {
                 SwingUtilities.invokeLater(() -> {
                     if (!current()) return;
@@ -1483,6 +1498,7 @@ public class AIAgentPanel extends JPanel {
                     }
                     setAgentState("Ready", UIUtils.SUCCESS_COLOR, false);
                     AgentRunTracker.getInstance().finish(run, AgentRunTracker.Status.COMPLETED, null);
+                    if (visible()) appendChangesCard(runChanges.get());
                     if (taskMode == ExecutionMode.PLAN) {
                         String plan = fullResponse != null && !fullResponse.isBlank() ? fullResponse
                                 : visible() && currentStreamingBuffer != null ? currentStreamingBuffer.toString() : "";
@@ -1503,6 +1519,7 @@ public class AIAgentPanel extends JPanel {
                     AgentRunTracker.getInstance().finish(run, AgentRunTracker.Status.FAILED, throwable.getMessage());
                     releasePlanWindow(taskSessionId, "The revision failed: " + throwable.getMessage());
                     if (visible()) appendAssistantBubble("⚠️ **Error occurred:** " + throwable.getMessage());
+                    if (visible()) appendChangesCard(runChanges.get());
                     terminalPanel.appendAgentLog("ERROR", throwable.toString());
                     updateTokenDisplay();
                 });
@@ -2097,11 +2114,100 @@ public class AIAgentPanel extends JPanel {
         addCard(card, 0);
     }
 
+    /** An edit's line counts at the end of a tool result: "SUCCESS: … (+4 -1)". */
+    static final java.util.regex.Pattern EDIT_DELTA = java.util.regex.Pattern.compile("\\s*\\(\\+(\\d+) -(\\d+)\\)\\s*$");
+
+    /** Opens a changed file named in the chat (the IDE's editor). */
+    private java.util.function.Consumer<File> fileOpener = f -> { };
+
+    public void setFileOpener(java.util.function.Consumer<File> opener) {
+        if (opener != null) this.fileOpener = opener;
+    }
+
+    /** "+12 −3" in green and red. */
+    static String deltaHtml(int added, int removed) {
+        return "<html><span style='color:" + hex(UIUtils.SUCCESS_COLOR) + "'>+" + added + "</span>&nbsp;<span style='color:"
+                + hex(UIUtils.ERROR_COLOR) + "'>−" + removed + "</span></html>";
+    }
+
+    private static String hex(Color c) {
+        return String.format("#%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
+    }
+
+    /**
+     * After the answer: the files the run changed, "Changed 3 files +42 −7" and a line per file with its added and
+     * removed lines. A file's name opens it in the editor.
+     */
+    void appendChangesCard(List<com.github.axiomate.agentic.ide.agent.FileChangeTracker.FileChange> changes) {
+        if (changes == null || changes.isEmpty()) return;
+        int added = 0;
+        int removed = 0;
+        for (var c : changes) {
+            if (c.counted()) {
+                added += c.added();
+                removed += c.removed();
+            }
+        }
+        JPanel inner = new JPanel();
+        inner.setLayout(new BoxLayout(inner, BoxLayout.Y_AXIS));
+        inner.setOpaque(false);
+        JLabel header = new JLabel("<html><b>Changed " + changes.size() + (changes.size() == 1 ? " file" : " files") + "</b>&nbsp;&nbsp;"
+                + deltaHtml(added, removed).replace("<html>", "").replace("</html>", "") + "</html>");
+        header.setFont(transcriptFont(Font.PLAIN, 0f));
+        header.setAlignmentX(Component.LEFT_ALIGNMENT);
+        inner.add(header);
+        File project = ProjectManager.getInstance().getCurrentProjectDirectory();
+        for (var c : changes) {
+            String counts = c.counted() ? "&nbsp;&nbsp;" + deltaHtml(c.added(), c.removed()).replace("<html>", "").replace("</html>", "")
+                    : "&nbsp;&nbsp;<span style='color:gray'>not counted</span>";
+            String tag = switch (c.kind()) {
+                case CREATED -> "&nbsp;&nbsp;<span style='color:gray'>new</span>";
+                case DELETED -> "&nbsp;&nbsp;<span style='color:gray'>deleted</span>";
+                default -> "";
+            };
+            boolean openable = c.kind() != com.github.axiomate.agentic.ide.agent.FileChangeTracker.Kind.DELETED;
+            String name = escapeHtml(c.path());
+            JLabel row = new JLabel("<html>" + (openable ? "<u>" + name + "</u>" : "<s>" + name + "</s>") + counts + tag + "</html>");
+            row.setFont(transcriptFont(Font.PLAIN, -1f));
+            row.setBorder(new EmptyBorder(2, 12, 0, 0));
+            row.setAlignmentX(Component.LEFT_ALIGNMENT);
+            if (openable) {
+                File file = new File(c.path()).isAbsolute() ? new File(c.path()) : new File(project, c.path());
+                row.setToolTipText("Open " + c.path());
+                row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                row.addMouseListener(new java.awt.event.MouseAdapter() {
+                    @Override
+                    public void mouseClicked(java.awt.event.MouseEvent e) {
+                        if (SwingUtilities.isLeftMouseButton(e)) fileOpener.accept(file);
+                    }
+                });
+            }
+            inner.add(row);
+        }
+        MessageCard card = new MessageCard(MessageDisplayType.SYSTEM, inner, null);
+        card.setRawText(com.github.axiomate.agentic.ide.agent.FileChangeTracker.describe(changes));
+        card.setBorder(new EmptyBorder(4, 4, 6, 4));
+        card.add(transcriptRow(UIUtils.glyph(UIUtils.Glyph.EXPLORER, 14, UIUtils.ACCENT_COLOR), inner), BorderLayout.CENTER);
+        addCard(card, 6);
+    }
+
+    private static String escapeHtml(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
     private void appendToolResultBubble(String toolName, String output) {
         String text = output != null ? output : "(empty)";
         String[] lines = text.split("\r\n|\r|\n");
         boolean failed = text.startsWith("ERROR") || text.startsWith("[error]");
         String first = lines.length > 0 ? lines[0].strip() : "";
+        // An edit's "(+4 -1)" is shown in colour beside the title, where truncating a long line cannot hide it
+        java.util.regex.Matcher delta = EDIT_DELTA.matcher(first);
+        JLabel deltaLabel = new JLabel();
+        if (!failed && delta.find()) {
+            deltaLabel.setText(deltaHtml(Integer.parseInt(delta.group(1)), Integer.parseInt(delta.group(2))));
+            deltaLabel.setFont(transcriptFont(Font.PLAIN, -1f));
+            first = first.substring(0, delta.start()).strip();
+        }
         if (first.length() > 90) first = first.substring(0, 89) + "…";
         JLabel title = new JLabel(first.isEmpty() ? "(no output)" : first);
         title.setFont(transcriptFont(Font.PLAIN, -1f));
@@ -2112,7 +2218,11 @@ public class AIAgentPanel extends JPanel {
         JPanel titleRow = new JPanel(new BorderLayout(8, 0));
         titleRow.setOpaque(false);
         titleRow.add(title, BorderLayout.CENTER);
-        titleRow.add(more, BorderLayout.EAST);
+        JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        east.setOpaque(false);
+        if (deltaLabel.getText() != null && !deltaLabel.getText().isEmpty()) east.add(deltaLabel);
+        east.add(more);
+        titleRow.add(east, BorderLayout.EAST);
 
         JButton toggle = createCollapseToggleButton(true);
         JTextArea area = createBubbleTextArea(text);

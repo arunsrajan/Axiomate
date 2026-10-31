@@ -91,6 +91,7 @@ public class MainFrame extends JFrame implements IdeActions {
         aiAgentPanel.setIdeActions(this);
 
         editorPanel.setImageAttachHandler(aiAgentPanel::attachImageFile);
+        aiAgentPanel.setFileOpener(editorPanel::openFile);
         projectTreePanel = new ProjectTreePanel(
                 editorPanel::openFile,
                 file -> {

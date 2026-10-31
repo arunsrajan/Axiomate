@@ -118,11 +118,17 @@ public class FileSystemTool implements AgentTool {
         if (path.getParent() != null && !Files.exists(path.getParent())) {
             Files.createDirectories(path.getParent());
         }
+        // The file as it was, for the run's change summary and this write's "+added -removed" lines
+        boolean existed = Files.isRegularFile(path);
+        String before = com.github.axiomate.agentic.ide.agent.FileChangeTracker.readText(path.toFile());
+        boolean countable = !existed || before != null;
+        if (countable) com.github.axiomate.agentic.ide.agent.FileChangeTracker.recordBefore(path.toFile(), before);
         Files.writeString(path, content, java.nio.charset.StandardCharsets.UTF_8);
         log.info("AI Agent wrote {} bytes to {}", content.length(), path);
         // Open editor tabs show the new text instead of keeping (and later saving over it with) the old one
         ProjectManager.getInstance().notifyFileModified(path.toFile(), content);
-        return "SUCCESS: Wrote " + content.length() + " characters to " + path.toAbsolutePath();
+        return "SUCCESS: Wrote " + content.length() + " characters to " + path.toAbsolutePath()
+                + (countable ? com.github.axiomate.agentic.ide.agent.FileChangeTracker.deltaLabel(before, content) : "");
     }
 
     private String listFiles(Path path) throws IOException {

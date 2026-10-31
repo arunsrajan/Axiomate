@@ -38,6 +38,23 @@ public final class SessionTranscriptExporter {
                 case TOOL -> {
                     if (includeToolOutput) details(sb, "📥 Tool result: " + nameOf(m), m.getContent(), "text");
                 }
+                case FILE_CHANGES -> {
+                    String header = m.getContent().strip().lines().findFirst().orElse("Changed files");
+                    sb.append("**📝 ").append(header).append("**\n\n");
+                    for (com.github.axiomate.agentic.ide.agent.FileChangeTracker.FileChange c
+                            : com.github.axiomate.agentic.ide.agent.FileChangeTracker.parse(m.getContent())) {
+                        sb.append("- `").append(c.path()).append('`');
+                        if (c.counted()) sb.append(" +").append(c.added()).append(" −").append(c.removed());
+                        switch (c.kind()) {
+                            case CREATED -> sb.append(" (new)");
+                            case DELETED -> sb.append(" (deleted)");
+                            default -> {
+                            }
+                        }
+                        sb.append('\n');
+                    }
+                    sb.append('\n');
+                }
             }
         }
         return sb.toString();
