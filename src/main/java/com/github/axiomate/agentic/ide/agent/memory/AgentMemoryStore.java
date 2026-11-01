@@ -60,6 +60,11 @@ public interface AgentMemoryStore {
 
     String getRelevantContext(String prompt);
 
+    /** Like {@link #getRelevantContext(String)}, with each memory cut to {@code maxItemChars} (0 = whole). */
+    default String getRelevantContext(String prompt, int maxItemChars) {
+        return getRelevantContext(prompt);
+    }
+
     /**
      * Imports all memories from a JSON file, Markdown file, or an entire directory.
      *
