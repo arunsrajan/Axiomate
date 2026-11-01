@@ -241,8 +241,16 @@ public class LangChainAgentService implements AIAgentService {
                     systemPromptBuilder.append("\n\nSession Focus:\n").append(session.getSystemPrompt());
                 }
 
+                // Stable prompt prefix (per provider): what changes from turn to turn goes into this turn's request
+                // instead of the system prompt, so the prompt's beginning stays the same and can be reused
+                boolean stablePrefix = providerConfig != null && providerConfig.isStablePromptPrefix();
+                StringBuilder turnContext = new StringBuilder();
                 if (!memoryContext.isBlank()) {
-                    systemPromptBuilder.append("\n\n").append(memoryContext);
+                    if (stablePrefix) {
+                        turnContext.append(memoryContext.strip()).append("\n\n");
+                    } else {
+                        systemPromptBuilder.append("\n\n").append(memoryContext);
+                    }
                 }
 
                 // Earlier turns that context compression condensed into a summary
@@ -262,7 +270,13 @@ public class LangChainAgentService implements AIAgentService {
                     systemPromptBuilder.append("- The current host OS is LINUX / UNIX / MACOS. For command-line execution, running builds/tests, or scripts, ALWAYS invoke the 'bash' tool (or 'terminal' which defaults to Bash).\n");
                     systemPromptBuilder.append("- Do NOT invoke Windows-specific cmdlets or powershell unless explicitly requested by the user.\n");
                 }
-                systemPromptBuilder.append(executionModeInstructions(session));
+                if (stablePrefix) {
+                    systemPromptBuilder.append(executionModeInstructions(session, false));
+                    String tasks = taskListContext(session);
+                    if (!tasks.isEmpty()) turnContext.append(tasks).append("\n\n");
+                } else {
+                    systemPromptBuilder.append(executionModeInstructions(session));
+                }
 
                 messages.add(new SystemMessage(systemPromptBuilder.toString()));
 
@@ -289,7 +303,7 @@ public class LangChainAgentService implements AIAgentService {
                     }
                 }
 
-                StringBuilder userContent = new StringBuilder();
+                StringBuilder userContent = new StringBuilder(turnContext);
                 if (activeFilePath != null && !activeFilePath.isBlank()) {
                     userContent.append("Active file: ").append(activeFilePath).append("\n");
                 }
@@ -326,12 +340,23 @@ public class LangChainAgentService implements AIAgentService {
 
                 // 7. Multi-Turn Autonomous Tool Calling Execution Loop
                 int maxIterations = config.getMaxAgentIterations();
+                int contextWindow = contextWindowOf(providerConfig, targetModel, session);
+                boolean compactResults = providerConfig != null && providerConfig.isCompactToolResults();
+                boolean capOutputs = providerConfig != null && providerConfig.isCapToolOutputs();
                 ToolCallGuard toolGuard = new ToolCallGuard(MAX_IDENTICAL_TOOL_CALLS);
                 boolean finished = false;
                 int iteration = 0;
                 int continuations = 0;
                 while (iteration++ < maxIterations && !cancel.get()) {
                     listener.onThinking("Reasoning with " + targetModel + " (Step " + iteration + ")...");
+
+                    if (compactResults) {
+                        int compacted = compactToolResults(messages, (long) (contextWindow * COMPACT_AT), KEEP_RECENT_TOOL_RESULTS);
+                        if (compacted > 0) {
+                            listener.onThinking("🗜 Removed " + compacted + " older tool output" + (compacted == 1 ? "" : "s")
+                                    + " from the request to stay within " + targetModel + "'s context.");
+                        }
+                    }
 
                     StepStream stream = new StepStream(listener, cancel);
                     Response<AiMessage> response = callModel(chatModel, messages, toolSpecs,
@@ -438,7 +463,9 @@ public class LangChainAgentService implements AIAgentService {
                             }
 
                             listener.onToolResult(toolName, toolResult);
-                            messages.add(ToolExecutionResultMessage.from(req, toolResult));
+                            // The model gets a capped copy (per provider); the transcript keeps the full output
+                            messages.add(ToolExecutionResultMessage.from(req,
+                                    capOutputs ? capToolOutput(toolResult, toolOutputCap(contextWindow)) : toolResult));
 
                             // Record tool execution in session
                             session.addMessage(new AgentMessage(AgentRole.TOOL, toolResult, toolName));
@@ -566,8 +593,80 @@ public class LangChainAgentService implements AIAgentService {
         if (listener != null) listener.onFilesChanged(changes);
     }
 
+    /** Requests are compacted above this share of the model's context window. */
+    static final double COMPACT_AT = 0.75;
+    /** The latest tool outputs always stay whole. */
+    static final int KEEP_RECENT_TOOL_RESULTS = 3;
+    private static final String STUB_PREFIX = "[Output of ";
+    private static final String STUB_MARK = " removed to keep the request within the model's context";
+
+    /** The model's context window in tokens: its definition, or the session's limit when the model is not listed. */
+    static int contextWindowOf(ProviderConfig provider, String model, AgentSession session) {
+        com.github.axiomate.agentic.ide.config.ModelDefinition m = provider != null ? provider.findExactModel(model) : null;
+        if (m != null && m.getMaxContextTokens() > 0) return m.getMaxContextTokens();
+        return session.getTokenTracker().getMaxContextTokens();
+    }
+
+    /** Most characters of one tool output the model gets: about a fifth of the window, between 8,000 and 40,000. */
+    static int toolOutputCap(int contextWindow) {
+        return (int) Math.max(8_000, Math.min(40_000, contextWindow * 4L / 5));
+    }
+
+    /**
+     * Cuts a long tool output to {@code maxChars}, keeping its beginning and end (where errors and summaries are)
+     * and saying how much was left out.
+     */
+    static String capToolOutput(String text, int maxChars) {
+        if (text == null || text.length() <= maxChars) return text;
+        int head = maxChars * 2 / 3;
+        int tail = maxChars - head;
+        String cut = text.substring(head, text.length() - tail);
+        long lines = cut.chars().filter(c -> c == '\n').count();
+        return text.substring(0, head) + "\n\n[… " + cut.length() + " characters (" + lines + " lines) cut to fit the "
+                + "context. Ask for a line range or a narrower command if you need them …]\n\n" + text.substring(text.length() - tail);
+    }
+
+    /**
+     * When the request is over {@code budgetTokens}, replaces the oldest tool outputs with short notes, oldest first,
+     * until it fits; the latest {@code keepRecent} outputs stay whole. Each call keeps its result (APIs require the
+     * pair), only its text shrinks.
+     *
+     * @return how many outputs were replaced
+     */
+    static int compactToolResults(List<ChatMessage> messages, long budgetTokens, int keepRecent) {
+        if (estimateTokens(messages) <= budgetTokens) return 0;
+        List<Integer> results = new ArrayList<>();
+        for (int i = 0; i < messages.size(); i++) {
+            if (messages.get(i) instanceof ToolExecutionResultMessage) results.add(i);
+        }
+        int compacted = 0;
+        for (int k = 0; k < results.size() - keepRecent; k++) {
+            int i = results.get(k);
+            ToolExecutionResultMessage tr = (ToolExecutionResultMessage) messages.get(i);
+            String text = tr.text() != null ? tr.text() : "";
+            if (text.startsWith(STUB_PREFIX) && text.contains(STUB_MARK)) continue;
+            messages.set(i, ToolExecutionResultMessage.from(tr.id(), tr.toolName(), STUB_PREFIX + tr.toolName() + STUB_MARK
+                    + " (" + text.length() + " characters). Run the tool again if you still need it.]"));
+            compacted++;
+            if (estimateTokens(messages) <= budgetTokens) break;
+        }
+        return compacted;
+    }
+
     /** System-prompt section for the session's execution mode and its task list. */
     static String executionModeInstructions(AgentSession session) {
+        return executionModeInstructions(session, true);
+    }
+
+    /** The session's task list for this turn's request (stable prompt prefix), or "" when it has none. */
+    static String taskListContext(AgentSession session) {
+        if (session.getTasks().isEmpty()) return "";
+        int[] p = com.github.axiomate.agentic.ide.agent.session.TaskBoard.progress(session);
+        return "## Current task list (" + p[0] + "/" + p[1] + " done)\n"
+                + com.github.axiomate.agentic.ide.agent.session.TaskBoard.describe(session.getTasks());
+    }
+
+    static String executionModeInstructions(AgentSession session, boolean includeTasks) {
         StringBuilder sb = new StringBuilder("\n\n## Execution Mode: ");
         ExecutionMode mode = session.getExecutionMode();
         sb.append(mode.label().toUpperCase()).append('\n');
@@ -590,7 +689,7 @@ public class LangChainAgentService implements AIAgentService {
         }
         sb.append("- For work with several steps, keep the task list with task_list: mark a step in_progress while ")
                 .append("you work on it and completed when it is done.\n");
-        if (!session.getTasks().isEmpty()) {
+        if (includeTasks && !session.getTasks().isEmpty()) {
             int[] p = com.github.axiomate.agentic.ide.agent.session.TaskBoard.progress(session);
             sb.append("- Current task list (").append(p[0]).append('/').append(p[1]).append(" done):\n")
                     .append(com.github.axiomate.agentic.ide.agent.session.TaskBoard.describe(session.getTasks())).append('\n');

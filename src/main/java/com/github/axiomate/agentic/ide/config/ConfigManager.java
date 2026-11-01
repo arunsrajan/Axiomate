@@ -88,6 +88,9 @@ public class ConfigManager {
             try {
                 IdeConfig loaded = objectMapper.readValue(configPath.toFile(), IdeConfig.class);
                 log.info("Loaded IDE config from {}", configPath);
+                if (loaded.getProviders() != null && loaded.ensureColibriProvider()) {
+                    log.info("Added the Colibri provider preset (disabled) to the saved config");
+                }
                 return loaded;
             } catch (Exception e) {
                 log.error("Failed to parse config file, creating default config", e);
