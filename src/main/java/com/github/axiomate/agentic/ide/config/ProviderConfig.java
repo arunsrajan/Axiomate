@@ -21,6 +21,37 @@ public class ProviderConfig {
     private boolean enabled = true;
     private List<ModelDefinition> models = new ArrayList<>();
     private String defaultModel = "";
+    /** Context handling (off unless ticked in Settings; the Colibri preset has them on). */
+    private boolean compactToolResults = false;
+    private boolean capToolOutputs = false;
+    private boolean stablePromptPrefix = false;
+
+    /** Replace older tool outputs with short notes once a request passes 75% of the model's context. */
+    public boolean isCompactToolResults() {
+        return compactToolResults;
+    }
+
+    public void setCompactToolResults(boolean compactToolResults) {
+        this.compactToolResults = compactToolResults;
+    }
+
+    /** Cut a single tool output the model receives to a size that fits its context. */
+    public boolean isCapToolOutputs() {
+        return capToolOutputs;
+    }
+
+    public void setCapToolOutputs(boolean capToolOutputs) {
+        this.capToolOutputs = capToolOutputs;
+    }
+
+    /** Keep the system prompt the same from turn to turn (per-turn context goes into the request) for prefix reuse. */
+    public boolean isStablePromptPrefix() {
+        return stablePromptPrefix;
+    }
+
+    public void setStablePromptPrefix(boolean stablePromptPrefix) {
+        this.stablePromptPrefix = stablePromptPrefix;
+    }
 
     public ProviderConfig() {
     }

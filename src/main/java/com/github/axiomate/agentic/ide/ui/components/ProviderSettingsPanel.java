@@ -30,6 +30,9 @@ public class ProviderSettingsPanel extends JPanel {
     private final JCheckBox providerEnabledCheck;
     private final JTextField baseUrlField;
     private final JPasswordField apiKeyField;
+    final JCheckBox compactResultsCheck = new JCheckBox("Compact older tool outputs when the request nears the context limit");
+    final JCheckBox capOutputsCheck = new JCheckBox("Cap each tool output sent to the model");
+    final JCheckBox stablePrefixCheck = new JCheckBox("Keep the prompt's beginning stable so the server can reuse it");
     private final JComboBox<String> defaultModelCombo;
     private final DefaultTableModel modelsTableModel;
     private final JTable modelsTable;
@@ -215,6 +218,31 @@ public class ProviderSettingsPanel extends JPanel {
         defaultModelCombo = new JComboBox<>();
         defaultModelCombo.setEditable(true);
         credentialsPanel.add(defaultModelCombo, gbc);
+
+        // Context handling: off unless ticked, so a provider behaves as before
+        gbc.gridx = 0; gbc.gridy = 5; gbc.weightx = 0.25;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        JLabel contextLabel = new JLabel("Context handling:");
+        contextLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        credentialsPanel.add(contextLabel, gbc);
+
+        gbc.gridx = 1; gbc.gridy = 5; gbc.weightx = 0.75;
+        JPanel contextOptions = new JPanel();
+        contextOptions.setLayout(new BoxLayout(contextOptions, BoxLayout.Y_AXIS));
+        contextOptions.setOpaque(false);
+        compactResultsCheck.setToolTipText("<html>During a run, once the request passes 75% of the model's context window,<br>"
+                + "the oldest tool outputs are replaced with a short note (the latest three stay whole).</html>");
+        capOutputsCheck.setToolTipText("<html>A long file read or command output is cut to about a fifth of the context window<br>"
+                + "(8,000-40,000 characters), keeping its beginning and end. The chat still shows all of it.</html>");
+        stablePrefixCheck.setToolTipText("<html>Memory and the task list go into each request instead of the system prompt,<br>"
+                + "so local servers such as Colibri and providers with prompt caching can reuse the unchanged beginning.</html>");
+        for (JCheckBox c : List.of(compactResultsCheck, capOutputsCheck, stablePrefixCheck)) {
+            c.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            c.setOpaque(false);
+            contextOptions.add(c);
+        }
+        credentialsPanel.add(contextOptions, gbc);
+        gbc.anchor = GridBagConstraints.CENTER;
 
         detailsPanel.add(credentialsPanel);
         detailsPanel.add(Box.createVerticalStrut(10));
@@ -425,6 +453,9 @@ public class ProviderSettingsPanel extends JPanel {
             providerEnabledCheck.setSelected(prov.isEnabled());
             baseUrlField.setText(prov.getBaseUrl());
             apiKeyField.setText(prov.getApiKey());
+            compactResultsCheck.setSelected(prov.isCompactToolResults());
+            capOutputsCheck.setSelected(prov.isCapToolOutputs());
+            stablePrefixCheck.setSelected(prov.isStablePromptPrefix());
 
             defaultModelCombo.removeAllItems();
             modelsTableModel.setRowCount(0);
@@ -453,6 +484,9 @@ public class ProviderSettingsPanel extends JPanel {
             prov.setEnabled(providerEnabledCheck.isSelected());
             prov.setBaseUrl(baseUrlField.getText().trim());
             prov.setApiKey(new String(apiKeyField.getPassword()).trim());
+            prov.setCompactToolResults(compactResultsCheck.isSelected());
+            prov.setCapToolOutputs(capOutputsCheck.isSelected());
+            prov.setStablePromptPrefix(stablePrefixCheck.isSelected());
             Object def = defaultModelCombo.getSelectedItem();
             if (def != null && !def.toString().trim().isBlank()) {
                 String defModel = def.toString().trim();
@@ -848,6 +882,9 @@ public class ProviderSettingsPanel extends JPanel {
         );
         copy.setApiKey(original.getApiKey());
         copy.setEnabled(original.isEnabled());
+        copy.setCompactToolResults(original.isCompactToolResults());
+        copy.setCapToolOutputs(original.isCapToolOutputs());
+        copy.setStablePromptPrefix(original.isStablePromptPrefix());
         return copy;
     }
 

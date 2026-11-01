@@ -11,6 +11,37 @@ import java.util.*;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class IdeConfig {
 
+    public static final String COLIBRI_PROVIDER_ID = "COLIBRI";
+
+    /**
+     * Colibri (github.com/JustVugg/colibri) serving a local model through its OpenAI-compatible API. Disabled until
+     * the user starts `coli serve` and enables it; context handling on, since a local model's prompt reading is slow
+     * and its context small. Check the model id with `coli status` and the context with GET /v1/models.
+     */
+    public static ProviderConfig colibriPreset() {
+        ProviderConfig colibri = new ProviderConfig(
+                COLIBRI_PROVIDER_ID, "CUSTOM", "Colibri (local)",
+                "http://127.0.0.1:8000/v1",
+                "qwen3-coder-30b-a3b-colibri",
+                new ArrayList<>(List.of(
+                        new ModelDefinition("qwen3-coder-30b-a3b-colibri", "Qwen3-Coder 30B-A3B (Colibri)", 65_536, 8_192, List.of("coding", "tools", "local")),
+                        new ModelDefinition("qwen3.6-colibri", "Qwen3.6 35B-A3B (Colibri)", 65_536, 8_192, List.of("coding", "tools", "reasoning", "local"))
+                )));
+        colibri.setApiKey("local");
+        colibri.setEnabled(false);
+        colibri.setCompactToolResults(true);
+        colibri.setCapToolOutputs(true);
+        colibri.setStablePromptPrefix(true);
+        return colibri;
+    }
+
+    /** Adds the Colibri preset to a config saved before it existed; true when it was added. */
+    public boolean ensureColibriProvider() {
+        if (providers.containsKey(COLIBRI_PROVIDER_ID)) return false;
+        providers.put(COLIBRI_PROVIDER_ID, colibriPreset());
+        return true;
+    }
+
     private String theme = "Claude Dark";
     private int fontSize = 14;
     private String fontFamily = "Consolas";
@@ -122,6 +153,7 @@ public class IdeConfig {
                 )
         );
         providers.put("CUSTOM", custom);
+        providers.put(COLIBRI_PROVIDER_ID, colibriPreset());
 
         // 5. Mock Simulator Provider
         ProviderConfig mock = new ProviderConfig(

@@ -271,6 +271,13 @@ Each session has a mode, shown in the chat footer (*Mode: …*) and switched wit
 - **What is counted**: every file the agent's file tools change. In a git repository, files changed any other way during the run — for example by a shell command — are found as well, by comparing `git status` before and after; build output ignored by git is left out, and files you had already modified are counted from how they were when the run started. Binary and very large files are listed without line counts.
 - The summary is saved with the session (shown again when it is reopened, included in Markdown exports) but is not sent to the model.
 
+### 24. 🐦 Colibri (Local Models) & Context Handling
+- **Colibri preset**: a ready-made provider for [Colibri](https://github.com/JustVugg/colibri), which runs open models locally behind an OpenAI-compatible API. It points at `http://127.0.0.1:8000/v1` with key `local` and starts **disabled**: run `coli serve`, check the model id with `coli status` and the context size with `GET /v1/models`, then enable it in **Settings → AI Providers**. Keep streaming on: a local model can take minutes to read a long prompt.
+- **Context handling** (per provider, Settings → AI Providers; ticked for Colibri, off for every other provider, which keep working as before):
+  - *Compact older tool outputs*: during a run, once a request passes 75% of the model's context window, the oldest tool outputs are replaced with a short note (the latest three stay whole), so long runs do not fail with "context length exceeded".
+  - *Cap each tool output*: what the model receives from one tool call is cut to about a fifth of the window (8,000-40,000 characters), keeping its beginning and end; the chat still shows the full output.
+  - *Keep the prompt's beginning stable*: memory and the task list go into each request instead of the system prompt, so a server that reuses an unchanged prompt beginning (Colibri) or a provider with prompt caching reads only what is new.
+
 ## 🚀 Quick Start
 
 ### Prerequisites
