@@ -206,6 +206,11 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
 
     @Override
     public String getRelevantContext(String prompt) {
+        return getRelevantContext(prompt, 0);
+    }
+
+    @Override
+    public String getRelevantContext(String prompt, int maxItemChars) {
         List<MemoryItem> relevant = search(prompt, 4);
         if (relevant.isEmpty()) {
             // fallback to project rules visible in the active project scope
@@ -220,8 +225,13 @@ public class JsonAgentMemoryStore implements AgentMemoryStore {
 
         StringBuilder sb = new StringBuilder("### Agentic AI Memory & Knowledge Context:\n");
         for (MemoryItem item : relevant) {
+            String content = item.getContent() != null ? item.getContent().replace("\n", " ") : "";
+            if (maxItemChars > 0 && content.length() > maxItemChars) {
+                content = content.substring(0, maxItemChars) + " … [" + (content.length() - maxItemChars)
+                        + " more characters; agent_memory search can show the rest]";
+            }
             sb.append("- **[").append(item.getType()).append("] ").append(item.getTitle()).append("**: ")
-                    .append(item.getContent() != null ? item.getContent().replace("\n", " ") : "")
+                    .append(content)
                     .append("\n");
         }
         sb.append("\n");

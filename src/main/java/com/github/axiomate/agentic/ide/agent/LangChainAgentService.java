@@ -226,8 +226,25 @@ public class LangChainAgentService implements AIAgentService {
                 listener.onThinking(String.format("Connecting to %s [%s] at URL: %s",
                         activeProviderName, activeTargetModel, activeEndpointUrl));
 
+                // Fit to the context (per provider): use the window the server really runs with, and keep large
+                // memories and context code from filling it
+                boolean compactResults = providerConfig != null && providerConfig.isCompactToolResults();
+                int contextWindow = contextWindowOf(providerConfig, targetModel, session);
+                if (compactResults) {
+                    int served = ContextWindowProbe.window(providerConfig, targetModel, contextWindow);
+                    if (served < contextWindow) {
+                        listener.onThinking("📏 " + activeEndpointUrl + " runs " + targetModel + " with a "
+                                + String.format("%,d", served) + "-token context (configured: "
+                                + String.format("%,d", contextWindow) + "). Fitting requests to it.");
+                    }
+                    contextWindow = served;
+                }
+                String code = compactResults && contextCode != null
+                        ? capToolOutput(contextCode, toolOutputCap(contextWindow)) : contextCode;
+
                 // 3. Retrieve Agentic Memory context
-                String memoryContext = MemoryManager.getInstance().getMemoryStore().getRelevantContext(prompt);
+                String memoryContext = MemoryManager.getInstance().getMemoryStore()
+                        .getRelevantContext(prompt, compactResults ? MEMORY_ITEM_CHARS : 0);
 
                 // 4. Build ChatLanguageModel via Universal Factory
                 ChatLanguageModel chatModel = UniversalChatModelFactory.createChatModel(
@@ -307,8 +324,8 @@ public class LangChainAgentService implements AIAgentService {
                 if (activeFilePath != null && !activeFilePath.isBlank()) {
                     userContent.append("Active file: ").append(activeFilePath).append("\n");
                 }
-                if (contextCode != null && !contextCode.isBlank()) {
-                    userContent.append("Context Code:\n```\n").append(contextCode).append("\n```\n\n");
+                if (code != null && !code.isBlank()) {
+                    userContent.append("Context Code:\n```\n").append(code).append("\n```\n\n");
                 }
                 userContent.append("User Request: ").append(safePrompt != null && !safePrompt.isBlank() ? safePrompt : "Process task");
 
@@ -316,6 +333,7 @@ public class LangChainAgentService implements AIAgentService {
                 if (userText.isEmpty()) {
                     userText = "Process task";
                 }
+                int requestIndex = messages.size();
                 if (!attached.isEmpty() && vision) {
                     messages.add(UserMessage.from(VisionSupport.toContents(
                             userText + "\n\nAttached image(s): " + VisionSupport.describe(attached), attached)));
@@ -336,12 +354,12 @@ public class LangChainAgentService implements AIAgentService {
                 session.addMessage(userRecord);
 
                 // 6. Convert registered tools (FileSystem, Terminal, CodeRefactor, Memory, and all MCP tools)
-                List<ToolSpecification> toolSpecs = buildToolSpecifications();
+                List<ToolSpecification> toolSpecs = buildToolSpecifications(compactResults);
 
                 // 7. Multi-Turn Autonomous Tool Calling Execution Loop
                 int maxIterations = config.getMaxAgentIterations();
-                int contextWindow = contextWindowOf(providerConfig, targetModel, session);
-                boolean compactResults = providerConfig != null && providerConfig.isCompactToolResults();
+                int maxOutput = UniversalChatModelFactory.resolveMaxOutputTokens(providerConfig, targetModel, 4_096);
+                double tokenScale = 1.0; // real tokens per estimated token, once a server has said how it counted
                 boolean capOutputs = providerConfig != null && providerConfig.isCapToolOutputs();
                 ToolCallGuard toolGuard = new ToolCallGuard(MAX_IDENTICAL_TOOL_CALLS);
                 boolean finished = false;
@@ -358,9 +376,35 @@ public class LangChainAgentService implements AIAgentService {
                         }
                     }
 
-                    StepStream stream = new StepStream(listener, cancel);
-                    Response<AiMessage> response = callModel(chatModel, messages, toolSpecs,
-                            config.isStreamingEnabled(), stream);
+                    StepStream stream = null;
+                    Response<AiMessage> response = null;
+                    for (int attempt = 0; response == null; attempt++) {
+                        if (compactResults) {
+                            Fit fit = fitToContext(messages, toolSpecs,
+                                    (long) (budgetFor(contextWindow, maxOutput) / tokenScale), requestIndex);
+                            requestIndex = fit.requestIndex();
+                            if (!fit.note().isEmpty()) {
+                                listener.onThinking("🗜 Fitted the request to " + targetModel + "'s "
+                                        + String.format("%,d", contextWindow) + "-token context: " + fit.note() + ".");
+                            }
+                        }
+                        stream = new StepStream(listener, cancel);
+                        try {
+                            response = callModel(chatModel, messages, toolSpecs, config.isStreamingEnabled(), stream);
+                        } catch (RuntimeException e) {
+                            // The server named its real limit: learn it, fit the request to it and try once more
+                            int limit = compactResults && attempt == 0 && !cancel.get() ? ContextWindowProbe.limitIn(e) : 0;
+                            if (limit <= 0) throw e;
+                            long estimated = estimateTokens(messages) + estimateToolTokens(toolSpecs);
+                            int used = ContextWindowProbe.usedIn(e);
+                            if (used > estimated && estimated > 0) tokenScale = (double) used / estimated;
+                            contextWindow = limit;
+                            ContextWindowProbe.remember(providerConfig, targetModel, limit);
+                            listener.onThinking("🗜 " + targetModel + " runs with a " + String.format("%,d", limit)
+                                    + "-token context" + (used > 0 ? " and the request was " + String.format("%,d", used) + " tokens" : "")
+                                    + ". Fitting the request and trying again...");
+                        }
+                    }
                     if (cancel.get()) {
                         break; // stopped while the model was answering: report nothing more
                     }
@@ -705,14 +749,18 @@ public class LangChainAgentService implements AIAgentService {
         return false;
     }
 
-    private List<ToolSpecification> buildToolSpecifications() {
+    /**
+     * The registered tools for the request. {@code briefArguments}: the argument's description points at the tool's
+     * description instead of repeating it, which otherwise sends every tool's text (MCP schemas too) twice.
+     */
+    List<ToolSpecification> buildToolSpecifications(boolean briefArguments) {
         List<ToolSpecification> specs = new ArrayList<>();
         for (AgentTool tool : tools) {
             Map<String, Map<String, Object>> properties = new HashMap<>();
 
             Map<String, Object> inputProp = new HashMap<>();
             inputProp.put("type", "string");
-            inputProp.put("description", "Arguments conforming to: " + tool.getDescription());
+            inputProp.put("description", briefArguments ? BRIEF_ARGUMENTS : "Arguments conforming to: " + tool.getDescription());
             properties.put("input", inputProp);
 
             ToolParameters parameters = ToolParameters.builder()
@@ -751,20 +799,121 @@ public class LangChainAgentService implements AIAgentService {
     /** Rough token count of messages, for providers that report no usage. */
     static long estimateTokens(List<ChatMessage> messages) {
         long total = 0;
-        for (ChatMessage m : messages) {
-            if (m instanceof SystemMessage sm) total += TokenTracker.estimateTokens(sm.text());
-            else if (m instanceof UserMessage um) {
-                for (dev.langchain4j.data.message.Content c : um.contents()) {
-                    if (c instanceof dev.langchain4j.data.message.TextContent tc) total += TokenTracker.estimateTokens(tc.text());
+        for (ChatMessage m : messages) total += estimateTokens(m);
+        return total;
+    }
+
+    static long estimateTokens(ChatMessage m) {
+        long total = 0;
+        if (m instanceof SystemMessage sm) total += TokenTracker.estimateTokens(sm.text());
+        else if (m instanceof UserMessage um) {
+            for (dev.langchain4j.data.message.Content c : um.contents()) {
+                if (c instanceof dev.langchain4j.data.message.TextContent tc) total += TokenTracker.estimateTokens(tc.text());
+            }
+        } else if (m instanceof AiMessage am) {
+            total += TokenTracker.estimateTokens(am.text());
+            if (am.hasToolExecutionRequests()) {
+                for (ToolExecutionRequest r : am.toolExecutionRequests()) total += TokenTracker.estimateTokens(r.arguments());
+            }
+        } else if (m instanceof ToolExecutionResultMessage tr) total += TokenTracker.estimateTokens(tr.text());
+        return total;
+    }
+
+    /** Rough token count of the tool definitions sent with every request. */
+    static long estimateToolTokens(List<ToolSpecification> specs) {
+        long total = 0;
+        for (ToolSpecification s : specs) {
+            total += 10 + TokenTracker.estimateTokens(s.name()) + TokenTracker.estimateTokens(s.description());
+            if (s.parameters() != null) {
+                for (Map<String, Object> p : s.parameters().properties().values()) {
+                    Object d = p.get("description");
+                    if (d != null) total += TokenTracker.estimateTokens(d.toString());
                 }
-            } else if (m instanceof AiMessage am) {
-                total += TokenTracker.estimateTokens(am.text());
-                if (am.hasToolExecutionRequests()) {
-                    for (ToolExecutionRequest r : am.toolExecutionRequests()) total += TokenTracker.estimateTokens(r.arguments());
-                }
-            } else if (m instanceof ToolExecutionResultMessage tr) total += TokenTracker.estimateTokens(tr.text());
+            }
         }
         return total;
+    }
+
+    private static final String BRIEF_ARGUMENTS = "The arguments, in the form the tool's description gives.";
+    /** Each memory in the request is cut to this many characters when requests are fitted to the context. */
+    static final int MEMORY_ITEM_CHARS = 1_500;
+    /** Tool descriptions are cut to this when the request still does not fit. */
+    static final int SHORT_TOOL_DESCRIPTION = 400;
+    /**
+     * Share of the window (less the answer's room) the estimate may fill: the estimate counts four characters a
+     * token, and tokenizers count code, JSON and schemas in fewer.
+     */
+    static final double FIT_AT = 0.8;
+
+    /** Estimated tokens a request may have in a {@code window}-token context, leaving room for the answer. */
+    static long budgetFor(int window, int maxOutput) {
+        int reserve = Math.min(Math.max(maxOutput, 0), window / 4);
+        return (long) ((window - reserve) * FIT_AT);
+    }
+
+    /** A fitted request: where this turn's request now is, and what was changed ("" when nothing was). */
+    record Fit(int requestIndex, String note) {
+    }
+
+    /**
+     * Brings a request under {@code budgetTokens}, stopping as soon as it fits: leaves out the oldest earlier turns,
+     * then shortens tool descriptions, then cuts the request and the system prompt (keeping their beginning and end).
+     * {@code requestIndex} is where this turn's request is; the turns replayed before it hold only plain text, and
+     * the tool calls after it are never touched, so every call keeps its result.
+     */
+    static Fit fitToContext(List<ChatMessage> messages, List<ToolSpecification> specs, long budgetTokens, int requestIndex) {
+        long over = estimateTokens(messages) + estimateToolTokens(specs) - budgetTokens;
+        if (over <= 0) return new Fit(requestIndex, "");
+        List<String> notes = new ArrayList<>();
+
+        int dropped = 0;
+        while (over > 0 && requestIndex > 1) {
+            over -= estimateTokens(messages.remove(1));
+            requestIndex--;
+            dropped++;
+        }
+        while (requestIndex > 1 && !(messages.get(1) instanceof UserMessage)) { // what is left starts with a request
+            over -= estimateTokens(messages.remove(1));
+            requestIndex--;
+            dropped++;
+        }
+        if (dropped > 0) notes.add(dropped + " earlier message" + (dropped == 1 ? "" : "s") + " left out");
+
+        if (over > 0) {
+            long before = estimateToolTokens(specs);
+            for (int i = 0; i < specs.size(); i++) {
+                ToolSpecification s = specs.get(i);
+                if (s.description() != null && s.description().length() > SHORT_TOOL_DESCRIPTION) {
+                    specs.set(i, ToolSpecification.builder().name(s.name())
+                            .description(s.description().substring(0, SHORT_TOOL_DESCRIPTION) + " …")
+                            .parameters(s.parameters()).build());
+                }
+            }
+            long saved = before - estimateToolTokens(specs);
+            if (saved > 0) {
+                over -= saved;
+                notes.add("tool descriptions shortened");
+            }
+        }
+
+        if (over > 0 && requestIndex < messages.size() && messages.get(requestIndex) instanceof UserMessage um && um.hasSingleText()) {
+            String text = um.singleText();
+            int keep = (int) Math.max(2_000, (TokenTracker.estimateTokens(text) - over) * 4);
+            if (keep < text.length()) {
+                messages.set(requestIndex, UserMessage.from(capToolOutput(text, keep)));
+                over -= estimateTokens(um) - estimateTokens(messages.get(requestIndex));
+                notes.add("the request cut to " + String.format("%,d", keep) + " characters");
+            }
+        }
+        if (over > 0 && !messages.isEmpty() && messages.get(0) instanceof SystemMessage sm) {
+            String text = sm.text();
+            int keep = (int) Math.max(4_000, (TokenTracker.estimateTokens(text) - over) * 4);
+            if (keep < text.length()) {
+                messages.set(0, new SystemMessage(capToolOutput(text, keep)));
+                notes.add("the system prompt cut to " + String.format("%,d", keep) + " characters");
+            }
+        }
+        return new Fit(requestIndex, String.join(", ", notes));
     }
 
     private AgentTool findTool(String name) {
